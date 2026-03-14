@@ -208,6 +208,66 @@ if ($route === 'action' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
+if ($route === 'logs') {
+    require_login();
+
+    $instanceId = (string) ($_GET['instance_id'] ?? '');
+    $server = find_instance_with_host($instanceId);
+
+    if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
+        flash('Managed host for this server is missing or disabled.');
+        header('Location: /');
+        exit;
+    }
+
+    $agent = agent_post_for_host($server, '/instance/action', [
+        'instance_id' => $instanceId,
+        'action' => 'logs',
+    ]);
+
+    $logOutput = $agent['result']['stdout'] ?? ($agent['result']['stderr'] ?? 'No logs returned');
+    ?><!doctype html>
+    <html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <title><?= h($server['server_name']) ?> Logs</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            * { box-sizing: border-box; }
+            body { margin: 0; font-family: Arial, sans-serif; background: #0b1020; color: #f2f4f8; }
+            .page { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; }
+            .topbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px 20px; border-bottom: 1px solid #243041; background: #121826; }
+            .meta { display: grid; gap: 4px; }
+            .muted { color: #a8b3c7; font-size: 14px; }
+            .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+            .button-link { display: inline-block; padding: 10px 14px; border-radius: 8px; background: #475569; color: #fff; text-decoration: none; }
+            .button-link.primary { background: #2563eb; }
+            .content { padding: 20px; }
+            pre { margin: 0; white-space: pre-wrap; word-break: break-word; background: #050814; border: 1px solid #243041; border-radius: 12px; padding: 16px; min-height: calc(100vh - 120px); overflow: auto; }
+        </style>
+    </head>
+    <body>
+    <div class="page">
+        <div class="topbar">
+            <div class="meta">
+                <strong><?= h($server['server_name']) ?></strong>
+                <div class="muted"><?= h($server['instance_id']) ?> on <?= h($server['host_name'] ?? 'managed host') ?></div>
+            </div>
+            <div class="actions">
+                <a class="button-link" href="/">Back to Panel</a>
+                <a class="button-link primary" href="/?route=logs&amp;instance_id=<?= h($server['instance_id']) ?>">Refresh Logs</a>
+            </div>
+        </div>
+        <div class="content">
+            <pre><?= h($logOutput) ?></pre>
+        </div>
+    </div>
+    </body>
+    </html>
+    <?php
+    exit;
+}
+
 if ($route === 'delete' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     require_login();
 
@@ -641,13 +701,14 @@ unset($_SESSION['logs']);
                         </td>
                         <td>
                             <div class="flex">
-                                <?php foreach (['start','stop','restart','pull','rebuild','logs'] as $act): ?>
+                                <?php foreach (['start','stop','restart','pull','rebuild'] as $act): ?>
                                     <form method="post" action="/?route=action">
                                         <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
                                         <input type="hidden" name="action" value="<?= h($act) ?>">
                                         <button class="<?= $act === 'logs' ? 'gray' : '' ?>" type="submit"><?= h($act) ?></button>
                                     </form>
                                 <?php endforeach; ?>
+                                <a class="button-link" href="/?route=logs&amp;instance_id=<?= h($server['instance_id']) ?>">logs</a>
                                 <form method="post" action="/?route=delete" onsubmit="return confirm('Delete this server? This removes the instance folder.');">
                                     <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
                                     <button class="danger" type="submit">delete</button>
