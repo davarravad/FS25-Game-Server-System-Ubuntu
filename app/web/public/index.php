@@ -259,6 +259,139 @@ if ($route === 'upload' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
+if ($route === 'console') {
+    require_login();
+
+    $instanceId = (string) ($_GET['instance_id'] ?? '');
+    $server = find_instance_with_host($instanceId);
+
+    if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
+        flash('Managed host for this server is missing or disabled.');
+        header('Location: /');
+        exit;
+    }
+
+    $novncUrl = instance_access_url($server, 'novnc');
+
+    if (!$novncUrl) {
+        flash('noVNC URL is not available for this server.');
+        header('Location: /');
+        exit;
+    }
+
+    $webUrl = instance_access_url($server, 'web');
+    $flash = flash();
+    ?><!doctype html>
+    <html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <title><?= h($server['server_name']) ?> Console</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            * { box-sizing: border-box; }
+            body { margin: 0; font-family: Arial, sans-serif; background: #0b1020; color: #f2f4f8; }
+            .console-shell { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; }
+            .console-bar { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px 20px; border-bottom: 1px solid #243041; background: #121826; }
+            .console-meta { display: grid; gap: 4px; }
+            .console-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+            .button-link { display: inline-block; padding: 10px 14px; border-radius: 8px; background: #475569; color: #fff; text-decoration: none; }
+            .button-link.primary { background: #2563eb; }
+            .muted { color: #a8b3c7; font-size: 14px; }
+            .flash { margin: 12px 20px 0; padding: 12px; background: #1d4ed8; border-radius: 10px; }
+            iframe { width: 100%; height: calc(100vh - 81px); border: 0; background: #050814; }
+        </style>
+    </head>
+    <body>
+    <div class="console-shell">
+        <div>
+            <?php if ($flash): ?><div class="flash"><?= h($flash) ?></div><?php endif; ?>
+            <div class="console-bar">
+                <div class="console-meta">
+                    <strong><?= h($server['server_name']) ?></strong>
+                    <div class="muted"><?= h($server['instance_id']) ?> on <?= h($server['host_name'] ?? 'managed host') ?></div>
+                </div>
+                <div class="console-actions">
+                    <a class="button-link" href="/">Back to Panel</a>
+                    <?php if ($webUrl): ?>
+                        <a class="button-link" href="/?route=web_admin&amp;instance_id=<?= h($server['instance_id']) ?>">Web Admin</a>
+                    <?php endif; ?>
+                    <a class="button-link primary" href="<?= h($novncUrl) ?>" target="_blank" rel="noreferrer">Open Direct</a>
+                </div>
+            </div>
+        </div>
+        <iframe src="<?= h($novncUrl) ?>" allowfullscreen loading="eager"></iframe>
+    </div>
+    </body>
+    </html>
+    <?php
+    exit;
+}
+
+if ($route === 'web_admin') {
+    require_login();
+
+    $instanceId = (string) ($_GET['instance_id'] ?? '');
+    $server = find_instance_with_host($instanceId);
+
+    if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
+        flash('Managed host for this server is missing or disabled.');
+        header('Location: /');
+        exit;
+    }
+
+    $webUrl = instance_access_url($server, 'web');
+
+    if (!$webUrl) {
+        flash('Web admin URL is not available for this server.');
+        header('Location: /');
+        exit;
+    }
+
+    $flash = flash();
+    ?><!doctype html>
+    <html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <title><?= h($server['server_name']) ?> Web Admin</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            * { box-sizing: border-box; }
+            body { margin: 0; font-family: Arial, sans-serif; background: #0b1020; color: #f2f4f8; }
+            .console-shell { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; }
+            .console-bar { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px 20px; border-bottom: 1px solid #243041; background: #121826; }
+            .console-meta { display: grid; gap: 4px; }
+            .console-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+            .button-link { display: inline-block; padding: 10px 14px; border-radius: 8px; background: #475569; color: #fff; text-decoration: none; }
+            .button-link.primary { background: #2563eb; }
+            .muted { color: #a8b3c7; font-size: 14px; }
+            .flash { margin: 12px 20px 0; padding: 12px; background: #1d4ed8; border-radius: 10px; }
+            iframe { width: 100%; height: calc(100vh - 81px); border: 0; background: #fff; }
+        </style>
+    </head>
+    <body>
+    <div class="console-shell">
+        <div>
+            <?php if ($flash): ?><div class="flash"><?= h($flash) ?></div><?php endif; ?>
+            <div class="console-bar">
+                <div class="console-meta">
+                    <strong><?= h($server['server_name']) ?></strong>
+                    <div class="muted"><?= h($server['instance_id']) ?> on <?= h($server['host_name'] ?? 'managed host') ?></div>
+                </div>
+                <div class="console-actions">
+                    <a class="button-link" href="/">Back to Panel</a>
+                    <a class="button-link" href="/?route=console&amp;instance_id=<?= h($server['instance_id']) ?>">noVNC</a>
+                    <a class="button-link primary" href="<?= h($webUrl) ?>" target="_blank" rel="noreferrer">Open Direct</a>
+                </div>
+            </div>
+        </div>
+        <iframe src="<?= h($webUrl) ?>" loading="eager"></iframe>
+    </div>
+    </body>
+    </html>
+    <?php
+    exit;
+}
+
 if (!current_user() && $route !== 'login') {
     header('Location: /?route=login');
     exit;
@@ -491,11 +624,11 @@ unset($_SESSION['logs']);
                         <td><?= h((string)$server['novnc_port']) ?></td>
                         <td>
                             <div class="flex">
-                                <?php if ($webUrl): ?>
-                                    <a class="button-link" href="<?= h($webUrl) ?>" target="_blank" rel="noreferrer">web admin</a>
-                                <?php endif; ?>
                                 <?php if ($novncUrl): ?>
-                                    <a class="button-link" href="<?= h($novncUrl) ?>" target="_blank" rel="noreferrer">noVNC</a>
+                                    <a class="button-link" href="/?route=console&amp;instance_id=<?= h($server['instance_id']) ?>">noVNC</a>
+                                <?php endif; ?>
+                                <?php if ($webUrl): ?>
+                                    <a class="button-link" href="/?route=web_admin&amp;instance_id=<?= h($server['instance_id']) ?>">web admin</a>
                                 <?php endif; ?>
                             </div>
                         </td>
