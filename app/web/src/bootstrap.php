@@ -211,6 +211,59 @@ function find_instance_with_host(string $instanceId): ?array
     return $server ?: null;
 }
 
+function upload_instance_file_for_host(array $host, string $instanceId, string $target, array $file): array
+{
+    if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+        return ['ok' => false, 'error' => 'Upload failed before transfer to host'];
+    }
+
+    $tmpPath = (string) ($file['tmp_name'] ?? '');
+    if ($tmpPath === '' || !is_uploaded_file($tmpPath)) {
+        return ['ok' => false, 'error' => 'Invalid upload payload'];
+    }
+
+    $filename = basename((string) ($file['name'] ?? ''));
+    $content = file_get_contents($tmpPath);
+
+    if ($content === false) {
+        return ['ok' => false, 'error' => 'Unable to read uploaded file'];
+    }
+
+    return agent_post_for_host($host, '/instance/upload', [
+        'instance_id' => $instanceId,
+        'target' => $target,
+        'filename' => $filename,
+        'content_base64' => base64_encode($content),
+    ]);
+}
+
+function instance_access_url(array $server, string $kind): ?string
+{
+    $agentUrl = (string) ($server['agent_url'] ?? '');
+    if ($agentUrl === '') {
+        return null;
+    }
+
+    $parts = parse_url($agentUrl);
+    if (!is_array($parts) || empty($parts['host'])) {
+        return null;
+    }
+
+    $scheme = $parts['scheme'] ?? 'http';
+    $host = $parts['host'];
+    $port = match ($kind) {
+        'web' => (int) ($server['web_port'] ?? 0),
+        'novnc' => (int) ($server['novnc_port'] ?? 0),
+        default => 0,
+    };
+
+    if ($port <= 0) {
+        return null;
+    }
+
+    return sprintf('%s://%s:%d', $scheme, $host, $port);
+}
+
 function h(string $value): string
 {
     return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');

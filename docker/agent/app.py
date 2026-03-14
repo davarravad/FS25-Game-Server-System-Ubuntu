@@ -1,4 +1,5 @@
 import json
+import base64
 import os
 import re
 import subprocess
@@ -44,11 +45,20 @@ def write_file(path: Path, content: str):
     path.write_text(content, encoding="utf-8")
 
 
+def write_binary_file(path: Path, content: bytes):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+
+
 def render_template(content: str, values: dict) -> str:
     out = content
     for key, value in values.items():
         out = out.replace("{{" + key + "}}", str(value))
     return out
+
+
+def safe_upload_name(filename: str) -> bool:
+    return re.fullmatch(r"[a-zA-Z0-9._ -]+", filename or "") is not None
 
 
 @app.before_request
@@ -171,6 +181,49 @@ def delete_instance():
         instance_dir.rmdir()
 
     return jsonify({"ok": True})
+
+
+@app.post("/instance/upload")
+def upload_instance_file():
+    payload = request.get_json(force=True)
+    instance_id = payload.get("instance_id", "").strip()
+    target = payload.get("target", "").strip().lower()
+    filename = payload.get("filename", "").strip()
+    file_content = payload.get("content_base64", "").strip()
+
+    if not safe_instance_id(instance_id):
+        return jsonify({"ok": False, "error": "invalid instance id"}), 400
+
+    if not safe_upload_name(filename):
+        return jsonify({"ok": False, "error": "invalid filename"}), 400
+
+    target_map = {
+        "mods": "data/mods",
+        "saves": "data/saves",
+        "config": "data/config",
+        "game": "data/game",
+    }
+
+    if target not in target_map:
+        return jsonify({"ok": False, "error": "unsupported upload target"}), 400
+
+    instance_dir = INSTANCE_BASE_PATH / instance_id
+    if not instance_dir.exists():
+        return jsonify({"ok": False, "error": "instance not found"}), 404
+
+    try:
+        decoded = base64.b64decode(file_content, validate=True)
+    except Exception:
+        return jsonify({"ok": False, "error": "invalid file payload"}), 400
+
+    destination = instance_dir / target_map[target] / filename
+    write_binary_file(destination, decoded)
+
+    return jsonify({
+        "ok": True,
+        "path": str(destination),
+        "size": len(decoded),
+    })
 
 
 if __name__ == "__main__":

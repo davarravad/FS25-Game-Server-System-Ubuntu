@@ -191,6 +191,29 @@ if ($route === 'delete' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
+if ($route === 'upload' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    require_login();
+
+    $instanceId = (string) ($_POST['instance_id'] ?? '');
+    $target = (string) ($_POST['target'] ?? 'mods');
+    $server = find_instance_with_host($instanceId);
+
+    if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
+        flash('Managed host for this server is missing or disabled.');
+        header('Location: /');
+        exit;
+    }
+
+    $result = upload_instance_file_for_host($server, $instanceId, $target, $_FILES['upload_file'] ?? []);
+
+    flash(($result['ok'] ?? false)
+        ? 'File uploaded.'
+        : 'Upload failed: ' . ($result['error'] ?? 'Unknown error'));
+
+    header('Location: /');
+    exit;
+}
+
 if (!current_user() && $route !== 'login') {
     header('Location: /?route=login');
     exit;
@@ -214,6 +237,7 @@ unset($_SESSION['logs']);
         button { padding: 10px 14px; border-radius: 8px; border: 0; cursor: pointer; background: #2563eb; color: #fff; }
         button.danger { background: #b91c1c; }
         button.gray { background: #475569; }
+        .button-link { display: inline-block; padding: 10px 14px; border-radius: 8px; background: #475569; color: #fff; }
         .grid { display: grid; gap: 14px; }
         .grid-2 { grid-template-columns: repeat(2, 1fr); }
         .grid-4 { grid-template-columns: repeat(4, 1fr); }
@@ -368,11 +392,16 @@ unset($_SESSION['logs']);
                         <th>Admin</th>
                         <th>VNC</th>
                         <th>noVNC</th>
+                        <th>Access</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                 <?php foreach ($servers as $server): ?>
+                    <?php
+                        $webUrl = instance_access_url($server, 'web');
+                        $novncUrl = instance_access_url($server, 'novnc');
+                    ?>
                     <tr>
                         <td><?= h($server['host_name'] ?? 'unassigned') ?></td>
                         <td><?= h($server['instance_id']) ?></td>
@@ -382,6 +411,16 @@ unset($_SESSION['logs']);
                         <td><?= h((string)$server['web_port']) ?></td>
                         <td><?= h((string)$server['vnc_port']) ?></td>
                         <td><?= h((string)$server['novnc_port']) ?></td>
+                        <td>
+                            <div class="flex">
+                                <?php if ($webUrl): ?>
+                                    <a class="button-link" href="<?= h($webUrl) ?>" target="_blank" rel="noreferrer">web admin</a>
+                                <?php endif; ?>
+                                <?php if ($novncUrl): ?>
+                                    <a class="button-link" href="<?= h($novncUrl) ?>" target="_blank" rel="noreferrer">noVNC</a>
+                                <?php endif; ?>
+                            </div>
+                        </td>
                         <td>
                             <div class="flex">
                                 <?php foreach (['start','stop','restart','pull','rebuild','logs'] as $act): ?>
@@ -396,11 +435,22 @@ unset($_SESSION['logs']);
                                     <button class="danger" type="submit">delete</button>
                                 </form>
                             </div>
+                            <form method="post" action="/?route=upload" enctype="multipart/form-data" class="flex" style="margin-top:10px;">
+                                <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
+                                <select name="target" style="width:auto;">
+                                    <option value="mods">mods</option>
+                                    <option value="saves">saves</option>
+                                    <option value="config">config</option>
+                                    <option value="game">game</option>
+                                </select>
+                                <input name="upload_file" type="file" required style="max-width:260px;">
+                                <button class="gray" type="submit">upload</button>
+                            </form>
                         </td>
                     </tr>
                 <?php endforeach; ?>
                 <?php if (!$servers): ?>
-                    <tr><td colspan="9" class="muted">No servers created yet.</td></tr>
+                    <tr><td colspan="10" class="muted">No servers created yet.</td></tr>
                 <?php endif; ?>
                 </tbody>
             </table>
