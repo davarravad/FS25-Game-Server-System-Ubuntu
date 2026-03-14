@@ -98,10 +98,29 @@ if ($route === 'installer_upload_token') {
     header('Content-Type: application/json');
     echo json_encode([
         'ok' => true,
-        'upload_url' => rtrim((string) ($host['agent_url'] ?? ''), '/') . '/host/upload/stream',
-        'token' => generate_host_upload_token($host, $filename),
+        'upload_url' => '/?route=installer_upload_stream&host_id=' . rawurlencode((string) $host['id']) . '&filename=' . rawurlencode($filename),
         'filename' => $filename,
     ]);
+    exit;
+}
+
+if ($route === 'installer_upload_stream' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    require_login();
+    session_write_close();
+
+    $hostId = (int) ($_GET['host_id'] ?? 0);
+    $filename = basename((string) ($_GET['filename'] ?? ''));
+    $host = find_host($hostId);
+
+    if (!$host || !(int) $host['is_enabled']) {
+        header('Content-Type: application/json', true, 404);
+        echo json_encode(['ok' => false, 'error' => 'Host not found']);
+        exit;
+    }
+
+    $result = stream_installer_upload_for_host($host, $filename);
+    header('Content-Type: application/json', true, ($result['ok'] ?? false) ? 200 : 502);
+    echo json_encode($result);
     exit;
 }
 
@@ -146,7 +165,7 @@ if ($route === 'installer_upload') {
         <div class="card">
             <h1>Installer Upload</h1>
             <p class="muted">Upload large installer files directly to <strong><?= h($host['shared_installer_path'] ?? '/opt/fs25/installer') ?></strong> on <?= h($host['name']) ?>.</p>
-            <p class="muted">This path streams the file directly to the host agent and supports multi-GB uploads. Installer folder only.</p>
+            <p class="muted">This path streams the file through the panel to the host agent and supports multi-GB uploads. Installer folder only.</p>
             <input id="upload-file" type="file" required>
             <div class="actions">
                 <button id="start-upload" type="button">Start Upload</button>
@@ -221,8 +240,6 @@ if ($route === 'installer_upload') {
             const startedAt = Date.now();
 
             xhr.open('POST', tokenData.upload_url, true);
-            xhr.setRequestHeader('X-Upload-Token', tokenData.token);
-            xhr.setRequestHeader('X-Upload-Filename', tokenData.filename);
             xhr.upload.onprogress = (event) => {
                 if (!event.lengthComputable) {
                     return;

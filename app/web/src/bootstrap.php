@@ -303,6 +303,67 @@ function generate_host_upload_token(array $host, string $filename, string $targe
     return $payloadEncoded . '.' . base64url_encode($signature);
 }
 
+function stream_installer_upload_for_host(array $host, string $filename): array
+{
+    $filename = basename($filename);
+    if ($filename === '') {
+        return ['ok' => false, 'error' => 'Filename is required'];
+    }
+
+    $input = fopen('php://input', 'rb');
+    if ($input === false) {
+        return ['ok' => false, 'error' => 'Unable to read upload stream'];
+    }
+
+    $url = rtrim((string) ($host['agent_url'] ?? ''), '/') . '/host/upload/stream';
+    $token = generate_host_upload_token($host, $filename);
+    $headers = [
+        'Content-Type: application/octet-stream',
+        'X-Upload-Token: ' . $token,
+        'X-Upload-Filename: ' . $filename,
+    ];
+
+    $contentLength = $_SERVER['CONTENT_LENGTH'] ?? null;
+    if (is_string($contentLength) && ctype_digit($contentLength)) {
+        $headers[] = 'Content-Length: ' . $contentLength;
+    }
+
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_CUSTOMREQUEST => 'POST',
+        CURLOPT_UPLOAD => true,
+        CURLOPT_INFILE => $input,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_HTTPHEADER => $headers,
+        CURLOPT_TIMEOUT => 0,
+    ]);
+
+    if (is_string($contentLength) && ctype_digit($contentLength)) {
+        curl_setopt($ch, CURLOPT_INFILESIZE_LARGE, (int) $contentLength);
+    }
+
+    $response = curl_exec($ch);
+    $error = curl_error($ch);
+    $status = curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    curl_close($ch);
+    fclose($input);
+
+    if ($response === false) {
+        return ['ok' => false, 'error' => $error ?: 'Installer upload proxy failed'];
+    }
+
+    $decoded = json_decode($response, true);
+    if (!is_array($decoded)) {
+        return ['ok' => false, 'error' => 'Invalid upload response', 'status' => $status, 'raw' => $response];
+    }
+
+    if ($status >= 400) {
+        $decoded['ok'] = false;
+    }
+
+    return $decoded;
+}
+
 function instance_access_url(array $server, string $kind): ?string
 {
     $agentUrl = (string) ($server['agent_url'] ?? '');
