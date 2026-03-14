@@ -203,6 +203,8 @@ But this repo adds:
 - Installer uploads use retryable chunked transfer with browser-side progress, current upload speed, and ETA.
 - Each server row includes direct launch links for the game host's web admin and noVNC endpoints.
 - Each server can also expose its own SFTP endpoint, limited to that server's `FarmingSimulator2025` profile/config folder for mod and log access.
+- The host agent now remembers which instances were meant to be running and restores them after a host reboot.
+- Combined with Docker restart policies, instances that were online before a reboot are brought back with their previous running/stopped state.
 
 ### Admin SFTP
 - The main stack now includes a host-level admin SFTP service for full file access.

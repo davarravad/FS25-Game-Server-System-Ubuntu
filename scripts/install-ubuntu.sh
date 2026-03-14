@@ -101,6 +101,9 @@ install_docker_if_needed() {
   echo "[2/7] Installing Docker..."
   apt-get update
   apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  systemctl enable docker >/dev/null 2>&1 || true
+  systemctl enable containerd >/dev/null 2>&1 || true
+  systemctl start docker >/dev/null 2>&1 || true
 }
 
 gather_settings() {

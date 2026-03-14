@@ -7,6 +7,7 @@ import re
 import subprocess
 import tempfile
 import time
+from contextlib import suppress
 from pathlib import Path
 
 from flask import Flask, jsonify, request
@@ -17,6 +18,7 @@ INSTANCE_BASE_PATH = Path(os.getenv("INSTANCE_BASE_PATH", "/opt/fsg-panel/instan
 BACKUP_BASE_PATH = Path(os.getenv("BACKUP_BASE_PATH", "/opt/fsg-panel/backups"))
 AGENT_SHARED_TOKEN = os.getenv("AGENT_SHARED_TOKEN", "")
 TEMPLATE_DIR = Path("/app/templates/fs25")
+STATE_FILE_NAME = ".panel-state.json"
 
 
 def require_auth():
@@ -90,6 +92,47 @@ def ensure_shared_storage(payload):
         "dlc": str(shared_paths[1]),
         "installer": str(shared_paths[2]),
     }
+
+
+def instance_state_path(instance_id: str) -> Path:
+    return INSTANCE_BASE_PATH / instance_id / STATE_FILE_NAME
+
+
+def write_instance_state(instance_id: str, desired_running: bool):
+    state_path = instance_state_path(instance_id)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps({"desired_running": desired_running, "updated_at": int(time.time())}),
+        encoding="utf-8",
+    )
+
+
+def read_instance_state(instance_id: str) -> dict:
+    state_path = instance_state_path(instance_id)
+    if not state_path.exists():
+        return {"desired_running": False}
+
+    try:
+        return json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {"desired_running": False}
+
+
+def restore_desired_instances():
+    INSTANCE_BASE_PATH.mkdir(parents=True, exist_ok=True)
+
+    for instance_dir in INSTANCE_BASE_PATH.iterdir():
+        if not instance_dir.is_dir():
+            continue
+
+        instance_id = instance_dir.name
+        compose_file = instance_dir / "compose.yml"
+        state = read_instance_state(instance_id)
+
+        if not compose_file.exists() or not bool(state.get("desired_running")):
+            continue
+
+        run_command(["docker", "compose", "-f", str(compose_file), "up", "-d"], cwd=str(instance_dir))
 
 
 def decode_base64url(value: str) -> bytes:
@@ -207,6 +250,7 @@ def create_instance():
 
     write_file(instance_dir / "compose.yml", render_template(compose_tpl, values))
     write_file(instance_dir / ".env", render_template(env_tpl, values))
+    write_instance_state(instance_id, False)
 
     return jsonify({"ok": True, "instance_dir": str(instance_dir)})
 
@@ -240,6 +284,13 @@ def instance_action():
         return jsonify({"ok": False, "error": "unsupported action"}), 400
 
     result = run_command(action_map[action], cwd=str(instance_dir))
+
+    if result["code"] == 0:
+        if action in {"start", "restart", "rebuild"}:
+            write_instance_state(instance_id, True)
+        elif action in {"stop", "down"}:
+            write_instance_state(instance_id, False)
+
     return jsonify({"ok": True, "result": result})
 
 
@@ -264,6 +315,9 @@ def delete_instance():
             for d in dirs:
                 Path(root, d).rmdir()
         instance_dir.rmdir()
+
+    with suppress(FileNotFoundError):
+        instance_state_path(instance_id).unlink()
 
     return jsonify({"ok": True})
 
@@ -350,6 +404,34 @@ def upload_host_file():
         "ok": True,
         "path": str(destination),
         "size": len(decoded),
+    })
+
+
+@app.post("/host/installer/unzip")
+def unzip_installer_archive():
+    payload = request.get_json(force=True)
+    filename = payload.get("filename", "").strip()
+    installer_root = Path(payload.get("shared_installer_path", os.getenv("SHARED_INSTALLER_PATH", "/opt/fs25/installer")))
+
+    if not safe_upload_name(filename):
+        return jsonify({"ok": False, "error": "invalid filename"}), 400
+
+    archive_path = installer_root / filename
+    if not archive_path.exists():
+        return jsonify({"ok": False, "error": "archive not found"}), 404
+
+    if archive_path.suffix.lower() != ".zip":
+        return jsonify({"ok": False, "error": "only .zip archives are supported"}), 400
+
+    result = run_command(["unzip", "-o", str(archive_path), "-d", str(installer_root)], cwd=str(installer_root))
+    if result["code"] != 0:
+        return jsonify({"ok": False, "error": "unzip failed", "result": result}), 500
+
+    return jsonify({
+        "ok": True,
+        "archive": str(archive_path),
+        "destination": str(installer_root),
+        "result": result,
     })
 
 
@@ -466,4 +548,5 @@ def upload_host_file_chunk():
 
 
 if __name__ == "__main__":
+    restore_desired_instances()
     app.run(host="0.0.0.0", port=8081)
