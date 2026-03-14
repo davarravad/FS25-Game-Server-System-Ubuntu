@@ -103,6 +103,7 @@ What it does:
   - `.env`: real runtime config used by Docker Compose
 - creates the instance and backup directories
 - builds and starts the panel stack automatically
+- verifies that the panel containers are running and that the website responds before finishing
 
 After setup completes, open the panel URL printed by the script and sign in with the admin username and password you entered.
 

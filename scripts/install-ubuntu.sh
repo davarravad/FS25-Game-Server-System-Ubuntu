@@ -159,6 +159,35 @@ start_stack() {
   docker compose -f "${REPO_DIR}/docker-compose.yml" up -d --build
 }
 
+verify_stack() {
+  echo "Verifying containers and panel response..."
+
+  local compose_file="${REPO_DIR}/docker-compose.yml"
+  local attempt=0
+  local max_attempts=30
+  local panel_check_url="http://127.0.0.1:${PANEL_PORT}/?route=login"
+
+  while [ "${attempt}" -lt "${max_attempts}" ]; do
+    if docker compose -f "${compose_file}" ps --status running | grep -q "fsg-panel-nginx" \
+      && docker compose -f "${compose_file}" ps --status running | grep -q "fsg-panel-web" \
+      && docker compose -f "${compose_file}" ps --status running | grep -q "fsg-panel-db" \
+      && curl -fsS "${panel_check_url}" >/dev/null 2>&1; then
+      echo "Panel is responding on ${panel_check_url}"
+      return
+    fi
+
+    attempt=$((attempt + 1))
+    sleep 2
+  done
+
+  echo "Panel did not become ready in time. Recent container status:"
+  docker compose -f "${compose_file}" ps || true
+  echo
+  echo "Recent panel logs:"
+  docker compose -f "${compose_file}" logs --tail=80 nginx web db agent || true
+  exit 1
+}
+
 print_summary() {
   echo "[7/7] Done."
   echo
@@ -191,6 +220,7 @@ main() {
   write_env_file
   prepare_directories
   start_stack
+  verify_stack
   print_summary
 }
 
