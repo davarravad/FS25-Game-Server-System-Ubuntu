@@ -27,7 +27,17 @@ require_root() {
 }
 
 random_secret() {
-  tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32
+  local chars='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+  local out=''
+  local idx=''
+
+  while [ "${#out}" -lt 32 ]; do
+    idx="$(od -An -N2 -tu2 /dev/urandom)"
+    idx="${idx//[[:space:]]/}"
+    out="${out}${chars:$((idx % ${#chars})):1}"
+  done
+
+  printf '%s' "${out}"
 }
 
 prompt_value() {
