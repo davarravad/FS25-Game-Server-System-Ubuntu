@@ -39,7 +39,7 @@ function db(): PDO
 
 function ensure_schema(PDO $pdo): void
 {
-    $pdo->exec('
+    $pdo->exec("
         CREATE TABLE IF NOT EXISTS managed_hosts (
             id INT AUTO_INCREMENT PRIMARY KEY,
             name VARCHAR(150) NOT NULL,
@@ -52,7 +52,7 @@ function ensure_schema(PDO $pdo): void
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
-    ');
+    ");
 
     $pdo->exec("ALTER TABLE managed_hosts ADD COLUMN IF NOT EXISTS shared_game_path VARCHAR(255) NOT NULL DEFAULT '/opt/fs25/game' AFTER agent_token");
     $pdo->exec("ALTER TABLE managed_hosts ADD COLUMN IF NOT EXISTS shared_dlc_path VARCHAR(255) NOT NULL DEFAULT '/opt/fs25/dlc' AFTER shared_game_path");
