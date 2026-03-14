@@ -4,6 +4,12 @@ declare(strict_types=1);
 
 require __DIR__ . '/../src/bootstrap.php';
 
+function redirect_route(string $route): void
+{
+    header('Location: /?route=' . rawurlencode($route));
+    exit;
+}
+
 $route = $_GET['route'] ?? 'dashboard';
 
 if ($route === 'login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -16,8 +22,7 @@ if ($route === 'login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($user && password_verify($password, $user['password_hash'])) {
         $_SESSION['user'] = ['id' => $user['id'], 'username' => $user['username']];
-        header('Location: /');
-        exit;
+        redirect_route('game_servers');
     }
 
     flash('Invalid username or password.');
@@ -43,8 +48,7 @@ if ($route === 'host_create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($name === '' || $agentUrl === '' || $agentToken === '') {
         flash('Host name, API URL, and token are required.');
-        header('Location: /');
-        exit;
+        redirect_route('managed_hosts');
     }
 
     $stmt = db()->prepare('
@@ -54,8 +58,7 @@ if ($route === 'host_create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $stmt->execute([$name, $agentUrl, $agentToken, $sharedGamePath, $sharedDlcPath, $sharedInstallerPath]);
 
     flash('Managed host added.');
-    header('Location: /');
-    exit;
+    redirect_route('managed_hosts');
 }
 
 if ($route === 'host_prepare' && $_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -66,14 +69,12 @@ if ($route === 'host_prepare' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$host || !(int) $host['is_enabled']) {
         flash('Select a valid managed host.');
-        header('Location: /');
-        exit;
+        redirect_route('managed_hosts');
     }
 
     $result = host_storage_prepare($host);
     flash(($result['ok'] ?? false) ? 'Shared FS storage prepared on host.' : 'Host prepare failed: ' . ($result['error'] ?? 'Unknown error'));
-    header('Location: /');
-    exit;
+    redirect_route('managed_hosts');
 }
 
 if ($route === 'installer_unzip' && $_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -85,22 +86,19 @@ if ($route === 'installer_unzip' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$host || !(int) $host['is_enabled']) {
         flash('Select a valid managed host.');
-        header('Location: /');
-        exit;
+        redirect_route('file_management');
     }
 
     if ($filename === '') {
         flash('Installer zip filename is required.');
-        header('Location: /');
-        exit;
+        redirect_route('file_management');
     }
 
     $result = unzip_installer_archive_for_host($host, $filename);
     flash(($result['ok'] ?? false)
         ? 'Installer zip extracted.'
         : 'Installer unzip failed: ' . ($result['error'] ?? 'Unknown error'));
-    header('Location: /');
-    exit;
+    redirect_route('file_management');
 }
 
 if ($route === 'installer_upload_token') {
@@ -162,8 +160,7 @@ if ($route === 'installer_upload') {
 
     if (!$host || !(int) $host['is_enabled']) {
         flash('Select a valid managed host.');
-        header('Location: /');
-        exit;
+        redirect_route('file_management');
     }
 
     ?><!doctype html>
@@ -199,7 +196,7 @@ if ($route === 'installer_upload') {
             <input id="upload-file" type="file" required>
             <div class="actions">
                 <button id="start-upload" type="button">Start Upload</button>
-                <a class="button-link gray" href="/">Back to Panel</a>
+                <a class="button-link gray" href="/?route=file_management">Back to File Management</a>
             </div>
             <div class="progress-shell">
                 <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
@@ -356,8 +353,7 @@ if ($route === 'create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$host || !(int) $host['is_enabled']) {
         flash('Select a valid managed host.');
-        header('Location: /');
-        exit;
+        redirect_route('create_server');
     }
 
     $payload = [
@@ -396,8 +392,7 @@ if ($route === 'create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!($agent['ok'] ?? false)) {
         flash('Create failed: ' . ($agent['error'] ?? 'Unknown error'));
-        header('Location: /');
-        exit;
+        redirect_route('create_server');
     }
 
     $stmt = db()->prepare('
@@ -425,8 +420,7 @@ if ($route === 'create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     ]);
 
     flash('Server created.');
-    header('Location: /');
-    exit;
+    redirect_route('game_servers');
 }
 
 if ($route === 'action' && $_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -438,8 +432,7 @@ if ($route === 'action' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
         flash('Managed host for this server is missing or disabled.');
-        header('Location: /');
-        exit;
+        redirect_route('game_servers');
     }
 
     $agent = agent_post_for_host($server, '/instance/action', [
@@ -458,8 +451,7 @@ if ($route === 'action' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         flash(($agent['ok'] ?? false) ? 'Action completed.' : 'Action failed.');
     }
 
-    header('Location: /');
-    exit;
+    redirect_route('game_servers');
 }
 
 if ($route === 'logs') {
@@ -470,8 +462,7 @@ if ($route === 'logs') {
 
     if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
         flash('Managed host for this server is missing or disabled.');
-        header('Location: /');
-        exit;
+        redirect_route('game_servers');
     }
 
     $agent = agent_post_for_host($server, '/instance/action', [
@@ -508,7 +499,7 @@ if ($route === 'logs') {
                 <div class="muted"><?= h($server['instance_id']) ?> on <?= h($server['host_name'] ?? 'managed host') ?></div>
             </div>
             <div class="actions">
-                <a class="button-link" href="/">Back to Panel</a>
+                <a class="button-link" href="/?route=game_servers">Back to Game Servers</a>
                 <a class="button-link primary" href="/?route=logs&amp;instance_id=<?= h($server['instance_id']) ?>">Refresh Logs</a>
             </div>
         </div>
@@ -530,8 +521,7 @@ if ($route === 'delete' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
         flash('Managed host for this server is missing or disabled.');
-        header('Location: /');
-        exit;
+        redirect_route('game_servers');
     }
 
     $agent = agent_post_for_host($server, '/instance/delete', [
@@ -546,8 +536,7 @@ if ($route === 'delete' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         flash('Delete failed.');
     }
 
-    header('Location: /');
-    exit;
+    redirect_route('game_servers');
 }
 
 if ($route === 'upload' && $_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -559,8 +548,7 @@ if ($route === 'upload' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
         flash('Managed host for this server is missing or disabled.');
-        header('Location: /');
-        exit;
+        redirect_route('game_servers');
     }
 
     $result = upload_instance_file_for_host($server, $instanceId, $target, $_FILES['upload_file'] ?? []);
@@ -569,8 +557,7 @@ if ($route === 'upload' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         ? 'File uploaded.'
         : 'Upload failed: ' . ($result['error'] ?? 'Unknown error'));
 
-    header('Location: /');
-    exit;
+    redirect_route('game_servers');
 }
 
 if ($route === 'console') {
@@ -581,16 +568,14 @@ if ($route === 'console') {
 
     if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
         flash('Managed host for this server is missing or disabled.');
-        header('Location: /');
-        exit;
+        redirect_route('game_servers');
     }
 
     $novncUrl = instance_access_url($server, 'novnc');
 
     if (!$novncUrl) {
         flash('noVNC URL is not available for this server.');
-        header('Location: /');
-        exit;
+        redirect_route('game_servers');
     }
 
     $webUrl = instance_access_url($server, 'web');
@@ -625,7 +610,7 @@ if ($route === 'console') {
                     <div class="muted"><?= h($server['instance_id']) ?> on <?= h($server['host_name'] ?? 'managed host') ?></div>
                 </div>
                 <div class="console-actions">
-                    <a class="button-link" href="/">Back to Panel</a>
+                    <a class="button-link" href="/?route=game_servers">Back to Game Servers</a>
                     <?php if ($webUrl): ?>
                         <a class="button-link" href="/?route=web_admin&amp;instance_id=<?= h($server['instance_id']) ?>">Game Webpage</a>
                     <?php endif; ?>
@@ -649,16 +634,14 @@ if ($route === 'web_admin') {
 
     if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
         flash('Managed host for this server is missing or disabled.');
-        header('Location: /');
-        exit;
+        redirect_route('game_servers');
     }
 
     $webUrl = instance_access_url($server, 'web');
 
     if (!$webUrl) {
         flash('Web admin URL is not available for this server.');
-        header('Location: /');
-        exit;
+        redirect_route('game_servers');
     }
 
     $flash = flash();
@@ -692,7 +675,7 @@ if ($route === 'web_admin') {
                     <div class="muted"><?= h($server['instance_id']) ?> on <?= h($server['host_name'] ?? 'managed host') ?> | use this viewer to install FS25 and enter the CD key when needed</div>
                 </div>
                 <div class="console-actions">
-                    <a class="button-link" href="/">Back to Panel</a>
+                    <a class="button-link" href="/?route=game_servers">Back to Game Servers</a>
                     <a class="button-link" href="/?route=console&amp;instance_id=<?= h($server['instance_id']) ?>">VNC Viewer</a>
                     <a class="button-link primary" href="<?= h($webUrl) ?>" target="_blank" rel="noreferrer">Open Direct</a>
                 </div>
@@ -714,6 +697,9 @@ if (!current_user() && $route !== 'login') {
 $flash = flash();
 $logs = $_SESSION['logs'] ?? null;
 unset($_SESSION['logs']);
+$pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers', 'create_server'], true)
+    ? $route
+    : 'game_servers';
 
 ?><!doctype html>
 <html lang="en">
@@ -723,9 +709,23 @@ unset($_SESSION['logs']);
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         * { box-sizing: border-box; }
-        body { font-family: Arial, sans-serif; background: #10131a; color: #f2f4f8; margin: 0; }
-        .wrap { max-width: 1200px; margin: 0 auto; padding: 24px; }
-        .card { background: #171c25; border: 1px solid #2a3240; border-radius: 14px; padding: 18px; margin-bottom: 20px; }
+        body { font-family: Arial, sans-serif; background: linear-gradient(180deg, #0c1118 0%, #101722 45%, #0d131d 100%); color: #f2f4f8; margin: 0; }
+        .shell { min-height: 100vh; display: grid; grid-template-rows: auto 1fr auto; }
+        .topbar { position: sticky; top: 0; z-index: 20; backdrop-filter: blur(12px); background: rgba(10, 14, 22, 0.92); border-bottom: 1px solid #243041; }
+        .topbar-inner { max-width: 1240px; margin: 0 auto; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; gap: 20px; }
+        .brand { display: grid; gap: 4px; }
+        .brand-title { font-size: 20px; font-weight: 700; letter-spacing: 0.02em; }
+        .brand-copy { color: #8ea0bc; font-size: 13px; }
+        .nav { display: flex; gap: 10px; flex-wrap: wrap; }
+        .nav-link { display: inline-block; padding: 10px 14px; border-radius: 999px; color: #c5d0e0; border: 1px solid #243041; background: rgba(17, 24, 38, 0.72); text-decoration: none; }
+        .nav-link.active { background: linear-gradient(135deg, #2563eb, #0891b2); border-color: transparent; color: #fff; }
+        .wrap { max-width: 1240px; margin: 0 auto; padding: 28px 24px 40px; }
+        .hero { display: grid; gap: 10px; margin-bottom: 24px; padding: 24px; border-radius: 18px; border: 1px solid #243041; background: radial-gradient(circle at top left, rgba(37, 99, 235, 0.18), rgba(14, 20, 32, 0.98) 45%), #121826; }
+        .hero h1 { margin: 0; font-size: 34px; }
+        .hero p { margin: 0; max-width: 880px; color: #b2bfd3; }
+        .page-grid { display: grid; gap: 20px; }
+        .page-grid.two { grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr); align-items: start; }
+        .card { background: rgba(23, 28, 37, 0.96); border: 1px solid #2a3240; border-radius: 16px; padding: 20px; margin-bottom: 20px; box-shadow: 0 18px 40px rgba(0, 0, 0, 0.18); }
         input, select { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #fff; }
         button { padding: 10px 14px; border-radius: 8px; border: 0; cursor: pointer; background: #2563eb; color: #fff; }
         button.danger { background: #b91c1c; }
@@ -751,31 +751,37 @@ unset($_SESSION['logs']);
         .small { font-size: 13px; }
         .dir-list { display: grid; gap: 8px; margin-top: 12px; }
         .dir-item { display: grid; gap: 6px; padding: 10px; border: 1px solid #243041; border-radius: 10px; background: #0f172a; }
+        .notice { padding: 14px 16px; border-radius: 12px; background: #101827; border: 1px solid #243041; color: #bdc8d8; }
+        .footer { border-top: 1px solid #243041; background: rgba(10, 14, 22, 0.9); }
+        .footer-inner { max-width: 1240px; margin: 0 auto; padding: 18px 24px 24px; display: flex; justify-content: space-between; gap: 18px; flex-wrap: wrap; color: #8ea0bc; font-size: 13px; }
         @media (max-width: 900px) {
-            .grid-2, .grid-4 { grid-template-columns: 1fr; }
+            .grid-2, .grid-4, .page-grid.two { grid-template-columns: 1fr; }
+            .topbar-inner { align-items: start; flex-direction: column; }
         }
     </style>
 </head>
 <body>
-<div class="wrap">
+<div class="shell">
     <?php if ($route === 'login'): ?>
-        <div class="card" style="max-width: 420px; margin: 80px auto;">
-            <h1>FSG FS25 Panel</h1>
-            <p class="muted">Sign in to manage FS25 server instances.</p>
-            <?php if ($flash): ?><div class="flash"><?= h($flash) ?></div><?php endif; ?>
-            <form method="post" action="/?route=login" class="grid">
-                <div>
-                    <label>Username</label>
-                    <input name="username" required>
-                </div>
-                <div>
-                    <label>Password</label>
-                    <input name="password" type="password" required>
-                </div>
-                <div>
-                    <button type="submit">Login</button>
-                </div>
-            </form>
+        <div class="wrap" style="display:grid;place-items:center;">
+            <div class="card" style="width:min(100%, 440px); margin: 80px auto;">
+                <h1>FSG FS25 Panel</h1>
+                <p class="muted">Sign in to manage hosts, installer files, and FS25 server instances from one control plane.</p>
+                <?php if ($flash): ?><div class="flash"><?= h($flash) ?></div><?php endif; ?>
+                <form method="post" action="/?route=login" class="grid">
+                    <div>
+                        <label>Username</label>
+                        <input name="username" required>
+                    </div>
+                    <div>
+                        <label>Password</label>
+                        <input name="password" type="password" required>
+                    </div>
+                    <div>
+                        <button type="submit">Login</button>
+                    </div>
+                </form>
+            </div>
         </div>
     <?php else: ?>
         <?php
@@ -790,32 +796,75 @@ unset($_SESSION['logs']);
             $hosts = all_hosts();
             $createHosts = enabled_hosts();
         ?>
-        <div class="flex" style="justify-content: space-between; align-items: center;">
-            <div>
-                <h1>FSG FS25 Panel</h1>
-                <div class="muted">Logged in as <?= h(current_user()['username']) ?> | central API control for managed hosts</div>
+        <header class="topbar">
+            <div class="topbar-inner">
+                <div class="brand">
+                    <div class="brand-title">FSG FS25 Control Panel</div>
+                    <div class="brand-copy">Logged in as <?= h(current_user()['username']) ?>. Manage hosts, files, and servers from one place.</div>
+                </div>
+                <nav class="nav">
+                    <a class="nav-link <?= $pageRoute === 'managed_hosts' ? 'active' : '' ?>" href="/?route=managed_hosts">Managed Hosts</a>
+                    <a class="nav-link <?= $pageRoute === 'file_management' ? 'active' : '' ?>" href="/?route=file_management">File Management</a>
+                    <a class="nav-link <?= $pageRoute === 'game_servers' ? 'active' : '' ?>" href="/?route=game_servers">Game Servers</a>
+                    <a class="nav-link <?= $pageRoute === 'create_server' ? 'active' : '' ?>" href="/?route=create_server">Create Server</a>
+                    <a class="nav-link" href="/?route=logout">Logout</a>
+                </nav>
             </div>
-            <div><a href="/?route=logout">Logout</a></div>
-        </div>
-
+        </header>
+        <main class="wrap">
         <?php if ($flash): ?><div class="flash"><?= h($flash) ?></div><?php endif; ?>
 
+        <?php if ($pageRoute === 'managed_hosts'): ?>
+            <section class="hero">
+                <h1>Managed Hosts</h1>
+                <p>This page defines which machines the panel can control. Add a host once, set its shared FS paths, prepare storage, and confirm the agent is reachable before creating servers on it.</p>
+            </section>
+        <?php elseif ($pageRoute === 'file_management'): ?>
+            <section class="hero">
+                <h1>File Management</h1>
+                <p>Use this page to handle shared installer files and host-level content. This is where you upload large installer archives, review what is present, and unzip installer packages in place.</p>
+            </section>
+        <?php elseif ($pageRoute === 'create_server'): ?>
+            <section class="hero">
+                <h1>Create Server</h1>
+                <p>Build a new FS25 server instance on a managed host. Choose a prepared host, set unique ports, and provision a new server from one form.</p>
+            </section>
+        <?php else: ?>
+            <section class="hero">
+                <h1>Game Servers</h1>
+                <p>This page is the operational view for existing servers. Open the VNC viewer, inspect logs, upload per-server files, and run lifecycle actions from here.</p>
+            </section>
+        <?php endif; ?>
+
+        <?php if ($pageRoute === 'managed_hosts'): ?>
+        <div class="page-grid two">
         <div class="card">
             <h2>Managed Hosts</h2>
-            <div class="grid grid-2">
-                <div>
-                    <form method="post" action="/?route=host_create" class="grid">
-                        <div><label>Host Name</label><input name="name" placeholder="Node A" required></div>
-                        <div><label>Agent API URL</label><input name="agent_url" placeholder="http://host-or-agent:8081" required></div>
-                        <div><label>Agent Token</label><input name="agent_token" type="password" required></div>
-                        <div><label>Shared Game Path</label><input name="shared_game_path" value="/opt/fs25/game" required></div>
-                        <div><label>Shared DLC Path</label><input name="shared_dlc_path" value="/opt/fs25/dlc" required></div>
-                        <div><label>Shared Installer Path</label><input name="shared_installer_path" value="/opt/fs25/installer" required></div>
-                        <div><button type="submit">Add Managed Host</button></div>
-                    </form>
-                </div>
-                <div>
-                    <table>
+            <div class="notice" style="margin-bottom:16px;">Register a machine running the internal agent. The shared paths tell the panel where host-wide game files, DLC, and installers live.</div>
+            <form method="post" action="/?route=host_create" class="grid">
+                <div><label>Host Name</label><input name="name" placeholder="Node A" required></div>
+                <div><label>Agent API URL</label><input name="agent_url" placeholder="http://host-or-agent:8081" required></div>
+                <div><label>Agent Token</label><input name="agent_token" type="password" required></div>
+                <div><label>Shared Game Path</label><input name="shared_game_path" value="/opt/fs25/game" required></div>
+                <div><label>Shared DLC Path</label><input name="shared_dlc_path" value="/opt/fs25/dlc" required></div>
+                <div><label>Shared Installer Path</label><input name="shared_installer_path" value="/opt/fs25/installer" required></div>
+                <div><button type="submit">Add Managed Host</button></div>
+            </form>
+        </div>
+        <div class="card">
+            <h2>How To Use This Page</h2>
+            <div class="stack muted">
+                <div>1. Add the host with its agent URL and token.</div>
+                <div>2. Verify the host shows as online.</div>
+                <div>3. Prepare storage once so shared folders exist.</div>
+                <div>4. Use File Management to upload installer archives or DLC.</div>
+                <div>5. Create servers on this host after the shared files are ready.</div>
+            </div>
+        </div>
+        </div>
+        <div class="card">
+            <h2>Registered Hosts</h2>
+            <table>
                         <thead>
                             <tr>
                                 <th>Name</th>
@@ -827,10 +876,7 @@ unset($_SESSION['logs']);
                         </thead>
                         <tbody>
                         <?php foreach ($hosts as $host): ?>
-                            <?php
-                                $health = agent_health_for_host($host);
-                                $installerListing = ($health['ok'] ?? false) ? installer_directory_listing_for_host($host) : ['ok' => false, 'files' => []];
-                            ?>
+                            <?php $health = agent_health_for_host($host); ?>
                             <tr>
                                 <td><?= h($host['name']) ?></td>
                                 <td><?= h($host['agent_url']) ?></td>
@@ -847,25 +893,7 @@ unset($_SESSION['logs']);
                                         <input type="hidden" name="host_id" value="<?= h((string) $host['id']) ?>">
                                         <button class="gray" type="submit">prepare storage</button>
                                     </form>
-                                    <a class="button-link" href="/?route=installer_upload&amp;host_id=<?= h((string) $host['id']) ?>">installer upload</a>
-                                    <div class="dir-list">
-                                        <?php foreach (($installerListing['files'] ?? []) as $entry): ?>
-                                            <div class="dir-item">
-                                                <div class="muted"><?= h($entry['name']) ?></div>
-                                                <div class="muted small"><?= h($entry['is_dir'] ? 'directory' : 'file') ?><?php if ($entry['is_file']): ?> | <?= h((string) $entry['size']) ?> bytes<?php endif; ?></div>
-                                                <?php if (($entry['is_zip'] ?? false) === true): ?>
-                                                    <form method="post" action="/?route=installer_unzip">
-                                                        <input type="hidden" name="host_id" value="<?= h((string) $host['id']) ?>">
-                                                        <input type="hidden" name="filename" value="<?= h($entry['name']) ?>">
-                                                        <button class="gray" type="submit">unzip zip</button>
-                                                    </form>
-                                                <?php endif; ?>
-                                            </div>
-                                        <?php endforeach; ?>
-                                        <?php if (!(($installerListing['files'] ?? []))): ?>
-                                            <div class="muted small">No installer files found.</div>
-                                        <?php endif; ?>
-                                    </div>
+                                    <a class="button-link" href="/?route=file_management">open file management</a>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
@@ -874,10 +902,67 @@ unset($_SESSION['logs']);
                         <?php endif; ?>
                         </tbody>
                     </table>
+        </div>
+        <?php endif; ?>
+
+        <?php if ($pageRoute === 'file_management'): ?>
+        <div class="page-grid two">
+            <div class="card">
+                <h2>How To Use This Page</h2>
+                <div class="stack muted">
+                    <div>1. Open installer upload for the host you want to prepare.</div>
+                    <div>2. Verify uploaded files appear in the installer listing.</div>
+                    <div>3. Use the unzip button on any zip archive found in that folder.</div>
+                    <div>4. Use the Game Servers page for per-server uploads like mods and saves.</div>
                 </div>
             </div>
+            <div class="card">
+                <h2>What This Page Does</h2>
+                <div class="notice">This page is focused on host-wide file operations. It shows the shared installer folder for each host and gives you upload and unzip actions in one place.</div>
+            </div>
         </div>
+        <?php if (!$hosts): ?>
+            <div class="card">
+                <div class="notice">No managed hosts are configured yet. Add a host on the Managed Hosts page before using file operations.</div>
+            </div>
+        <?php endif; ?>
+        <?php foreach ($hosts as $host): ?>
+            <?php
+                $health = agent_health_for_host($host);
+                $installerListing = ($health['ok'] ?? false) ? installer_directory_listing_for_host($host) : ['ok' => false, 'files' => []];
+            ?>
+            <div class="card">
+                <div class="flex" style="justify-content:space-between;align-items:center;">
+                    <div>
+                        <h2 style="margin-bottom:6px;"><?= h($host['name']) ?></h2>
+                        <div class="muted">Installer path: <?= h($host['shared_installer_path'] ?? '/opt/fs25/installer') ?> | Status: <?= h(($health['ok'] ?? false) ? 'online' : 'offline') ?></div>
+                    </div>
+                    <a class="button-link" href="/?route=installer_upload&amp;host_id=<?= h((string) $host['id']) ?>">installer upload</a>
+                </div>
+                <div class="dir-list">
+                    <?php foreach (($installerListing['files'] ?? []) as $entry): ?>
+                        <div class="dir-item">
+                            <div class="muted"><?= h($entry['name']) ?></div>
+                            <div class="muted small"><?= h($entry['is_dir'] ? 'directory' : 'file') ?><?php if ($entry['is_file']): ?> | <?= h((string) $entry['size']) ?> bytes<?php endif; ?></div>
+                            <?php if (($entry['is_zip'] ?? false) === true): ?>
+                                <form method="post" action="/?route=installer_unzip">
+                                    <input type="hidden" name="host_id" value="<?= h((string) $host['id']) ?>">
+                                    <input type="hidden" name="filename" value="<?= h($entry['name']) ?>">
+                                    <button class="gray" type="submit">unzip zip</button>
+                                </form>
+                            <?php endif; ?>
+                        </div>
+                    <?php endforeach; ?>
+                    <?php if (!(($installerListing['files'] ?? []))): ?>
+                        <div class="muted small">No installer files found.</div>
+                    <?php endif; ?>
+                </div>
+            </div>
+        <?php endforeach; ?>
+        <?php endif; ?>
 
+        <?php if ($pageRoute === 'create_server'): ?>
+        <div class="page-grid two">
         <div class="card">
             <h2>Create Server</h2>
             <form method="post" action="/?route=create" class="grid grid-4">
@@ -931,7 +1016,38 @@ unset($_SESSION['logs']);
                 <div style="display:flex;align-items:end;"><button type="submit">Create Server</button></div>
             </form>
         </div>
+        <div class="card">
+            <h2>How To Use This Page</h2>
+            <div class="stack muted">
+                <div>1. Pick a managed host that already has shared files ready.</div>
+                <div>2. Set unique ports for game, web admin, VNC, noVNC, and SFTP.</div>
+                <div>3. Choose startup behavior based on whether the server should boot automatically.</div>
+                <div>4. Create the server, then switch to Game Servers to start it and open the viewer pages.</div>
+            </div>
+        </div>
+        </div>
+        <?php endif; ?>
 
+        <?php if ($pageRoute === 'game_servers'): ?>
+        <div class="page-grid two">
+            <div class="card">
+                <h2>How To Use This Page</h2>
+                <div class="stack muted">
+                    <div>1. Use the access section to open VNC Viewer or the game webpage.</div>
+                    <div>2. Use the action row for lifecycle tasks like start, stop, restart, pull, and rebuild.</div>
+                    <div>3. Use the logs button to inspect runtime output for one server.</div>
+                    <div>4. Upload mods, saves, or config files in the per-server upload form.</div>
+                </div>
+            </div>
+            <div class="card">
+                <h2>Current Estate</h2>
+                <div class="stack muted">
+                    <div>Managed hosts: <?= h((string) count($hosts)) ?></div>
+                    <div>Game servers: <?= h((string) count($servers)) ?></div>
+                    <div>Page purpose: day-to-day server operations</div>
+                </div>
+            </div>
+        </div>
         <div class="card">
             <h2>Server Instances</h2>
             <table>
@@ -1022,6 +1138,7 @@ unset($_SESSION['logs']);
                 </tbody>
             </table>
         </div>
+        <?php endif; ?>
 
         <?php if ($logs): ?>
             <div class="card">
@@ -1029,6 +1146,13 @@ unset($_SESSION['logs']);
                 <pre><?= h($logs) ?></pre>
             </div>
         <?php endif; ?>
+        </main>
+        <footer class="footer">
+            <div class="footer-inner">
+                <div>FSG FS25 Control Panel</div>
+                <div>Use Managed Hosts to connect machines, File Management to handle installers, Create Server for provisioning, and Game Servers for day-to-day operations.</div>
+            </div>
+        </footer>
     <?php endif; ?>
 </div>
 </body>
