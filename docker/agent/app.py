@@ -129,6 +129,10 @@ def verify_upload_token(token: str, filename: str, target: str):
     return True, payload
 
 
+def part_path_for(destination: Path) -> Path:
+    return destination.with_name(destination.name + ".part")
+
+
 @app.before_request
 def block_unauthorized():
     if request.method == "OPTIONS" and request.path == "/host/upload/stream":
@@ -392,6 +396,70 @@ def upload_host_file_stream():
         "size": bytes_written,
     })
     return add_cors_headers(response)
+
+
+@app.post("/host/upload/chunk")
+def upload_host_file_chunk():
+    token = request.headers.get("X-Upload-Token", "").strip()
+    filename = request.headers.get("X-Upload-Filename", "").strip()
+    target = "installer"
+
+    try:
+        offset = int(request.headers.get("X-Upload-Offset", "0").strip())
+        total_size = int(request.headers.get("X-Upload-Total-Size", "0").strip())
+        is_last_chunk = request.headers.get("X-Upload-Is-Last", "0").strip() == "1"
+    except ValueError:
+        return jsonify({"ok": False, "error": "invalid chunk metadata"}), 400
+
+    if not safe_upload_name(filename):
+        return jsonify({"ok": False, "error": "invalid filename"}), 400
+
+    is_valid, token_data = verify_upload_token(token, filename, target)
+    if not is_valid:
+        return jsonify({"ok": False, "error": token_data}), 401
+
+    destination_root = Path(str(token_data.get("path", os.getenv("SHARED_INSTALLER_PATH", "/opt/fs25/installer"))))
+    destination_root.mkdir(parents=True, exist_ok=True)
+    destination = destination_root / filename
+    temp_destination = part_path_for(destination)
+
+    chunk = request.get_data(cache=False, as_text=False)
+    if chunk is None:
+        return jsonify({"ok": False, "error": "missing chunk payload"}), 400
+
+    temp_destination.parent.mkdir(parents=True, exist_ok=True)
+
+    current_size = temp_destination.stat().st_size if temp_destination.exists() else 0
+    if current_size != offset:
+        return jsonify({
+            "ok": False,
+            "error": "chunk offset mismatch",
+            "expected_offset": current_size,
+        }), 409
+
+    with open(temp_destination, "ab") as upload_file:
+        upload_file.write(chunk)
+
+    written_size = temp_destination.stat().st_size
+
+    if is_last_chunk:
+        if total_size > 0 and written_size != total_size:
+            return jsonify({
+                "ok": False,
+                "error": "final size mismatch",
+                "written_size": written_size,
+                "expected_size": total_size,
+            }), 409
+
+        os.replace(temp_destination, destination)
+
+    return jsonify({
+        "ok": True,
+        "received_offset": offset,
+        "written_size": written_size,
+        "completed": is_last_chunk,
+        "path": str(destination if is_last_chunk else temp_destination),
+    })
 
 
 if __name__ == "__main__":

@@ -98,18 +98,21 @@ if ($route === 'installer_upload_token') {
     header('Content-Type: application/json');
     echo json_encode([
         'ok' => true,
-        'upload_url' => '/?route=installer_upload_stream&host_id=' . rawurlencode((string) $host['id']) . '&filename=' . rawurlencode($filename),
+        'upload_url' => '/?route=installer_upload_chunk&host_id=' . rawurlencode((string) $host['id']) . '&filename=' . rawurlencode($filename),
         'filename' => $filename,
     ]);
     exit;
 }
 
-if ($route === 'installer_upload_stream' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($route === 'installer_upload_chunk' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     require_login();
     session_write_close();
 
     $hostId = (int) ($_GET['host_id'] ?? 0);
     $filename = basename((string) ($_GET['filename'] ?? ''));
+    $offset = (int) ($_GET['offset'] ?? 0);
+    $totalSize = (int) ($_GET['total_size'] ?? 0);
+    $isLastChunk = (string) ($_GET['is_last'] ?? '0') === '1';
     $host = find_host($hostId);
 
     if (!$host || !(int) $host['is_enabled']) {
@@ -118,7 +121,7 @@ if ($route === 'installer_upload_stream' && $_SERVER['REQUEST_METHOD'] === 'POST
         exit;
     }
 
-    $result = stream_installer_upload_for_host($host, $filename);
+    $result = stream_installer_chunk_for_host($host, $filename, $offset, $totalSize, $isLastChunk);
     header('Content-Type: application/json', true, ($result['ok'] ?? false) ? 200 : 502);
     echo json_encode($result);
     exit;
@@ -165,7 +168,7 @@ if ($route === 'installer_upload') {
         <div class="card">
             <h1>Installer Upload</h1>
             <p class="muted">Upload large installer files directly to <strong><?= h($host['shared_installer_path'] ?? '/opt/fs25/installer') ?></strong> on <?= h($host['name']) ?>.</p>
-            <p class="muted">This path streams the file through the panel to the host agent and supports multi-GB uploads. Installer folder only.</p>
+            <p class="muted">This path uploads retryable chunks through the panel to the host agent and supports multi-GB uploads. Installer folder only.</p>
             <input id="upload-file" type="file" required>
             <div class="actions">
                 <button id="start-upload" type="button">Start Upload</button>
@@ -236,53 +239,72 @@ if ($route === 'installer_upload') {
                 throw new Error(tokenData.error || 'Failed to get upload token');
             }
 
-            const xhr = new XMLHttpRequest();
             const startedAt = Date.now();
+            const chunkSize = 64 * 1024 * 1024;
+            let uploadedBytes = 0;
 
-            xhr.open('POST', tokenData.upload_url, true);
-            xhr.upload.onprogress = (event) => {
-                if (!event.lengthComputable) {
-                    return;
-                }
+            async function uploadChunk(start, attempt = 1) {
+                const end = Math.min(start + chunkSize, file.size);
+                const chunk = file.slice(start, end);
+                const isLastChunk = end >= file.size;
+                const uploadUrl = `${tokenData.upload_url}&offset=${encodeURIComponent(start)}&total_size=${encodeURIComponent(file.size)}&is_last=${isLastChunk ? '1' : '0'}`;
 
-                const elapsedSeconds = Math.max((Date.now() - startedAt) / 1000, 0.001);
-                const uploaded = event.loaded;
-                const total = event.total;
-                const percent = (uploaded / total) * 100;
-                const bytesPerSecond = uploaded / elapsedSeconds;
-                const remainingSeconds = bytesPerSecond > 0 ? (total - uploaded) / bytesPerSecond : Infinity;
+                return new Promise((resolve, reject) => {
+                    const xhr = new XMLHttpRequest();
+                    xhr.open('POST', uploadUrl, true);
 
-                progressFill.style.width = `${percent.toFixed(2)}%`;
-                progressText.textContent = `Progress: ${percent.toFixed(2)}% (${formatBytes(uploaded)} / ${formatBytes(total)})`;
-                speedText.textContent = `Speed: ${formatBytes(bytesPerSecond)}/s`;
-                etaText.textContent = `ETA: ${formatDuration(remainingSeconds)}`;
-                statusText.textContent = 'Status: uploading';
-                statusText.className = 'muted';
-            };
+                    xhr.upload.onprogress = (event) => {
+                        if (!event.lengthComputable) {
+                            return;
+                        }
 
-            xhr.onload = () => {
-                startButton.disabled = false;
-                if (xhr.status >= 200 && xhr.status < 300) {
-                    progressFill.style.width = '100%';
-                    progressText.textContent = `Progress: 100.00% (${formatBytes(file.size)} / ${formatBytes(file.size)})`;
-                    speedText.textContent = speedText.textContent;
-                    etaText.textContent = 'ETA: 0s';
-                    statusText.textContent = 'Status: upload completed';
-                    statusText.className = 'ok';
-                    return;
-                }
+                        const currentUploaded = start + event.loaded;
+                        const elapsedSeconds = Math.max((Date.now() - startedAt) / 1000, 0.001);
+                        const percent = (currentUploaded / file.size) * 100;
+                        const bytesPerSecond = currentUploaded / elapsedSeconds;
+                        const remainingSeconds = bytesPerSecond > 0 ? (file.size - currentUploaded) / bytesPerSecond : Infinity;
 
-                statusText.textContent = `Status: upload failed (${xhr.status})`;
-                statusText.className = 'error';
-            };
+                        progressFill.style.width = `${percent.toFixed(2)}%`;
+                        progressText.textContent = `Progress: ${percent.toFixed(2)}% (${formatBytes(currentUploaded)} / ${formatBytes(file.size)})`;
+                        speedText.textContent = `Speed: ${formatBytes(bytesPerSecond)}/s`;
+                        etaText.textContent = `ETA: ${formatDuration(remainingSeconds)}`;
+                        statusText.textContent = `Status: uploading chunk ${Math.floor(start / chunkSize) + 1}`;
+                        statusText.className = 'muted';
+                    };
 
-            xhr.onerror = () => {
-                startButton.disabled = false;
-                statusText.textContent = 'Status: upload failed due to network error';
-                statusText.className = 'error';
-            };
+                    xhr.onload = () => {
+                        if (xhr.status >= 200 && xhr.status < 300) {
+                            resolve(end);
+                            return;
+                        }
 
-            xhr.send(file);
+                        reject(new Error(`Chunk upload failed (${xhr.status})`));
+                    };
+
+                    xhr.onerror = () => reject(new Error('Network error'));
+                    xhr.send(chunk);
+                }).catch(async (error) => {
+                    if (attempt >= 5) {
+                        throw error;
+                    }
+
+                    statusText.textContent = `Status: retrying chunk after error (${attempt}/5)`;
+                    statusText.className = 'error';
+                    await new Promise((resolve) => setTimeout(resolve, 1500 * attempt));
+                    return uploadChunk(start, attempt + 1);
+                });
+            }
+
+            while (uploadedBytes < file.size) {
+                uploadedBytes = await uploadChunk(uploadedBytes);
+            }
+
+            progressFill.style.width = '100%';
+            progressText.textContent = `Progress: 100.00% (${formatBytes(file.size)} / ${formatBytes(file.size)})`;
+            etaText.textContent = 'ETA: 0s';
+            statusText.textContent = 'Status: upload completed';
+            statusText.className = 'ok';
+            startButton.disabled = false;
         } catch (error) {
             startButton.disabled = false;
             statusText.textContent = `Status: ${error.message}`;
@@ -544,7 +566,7 @@ if ($route === 'console') {
     <html lang="en">
     <head>
         <meta charset="utf-8">
-        <title><?= h($server['server_name']) ?> Console</title>
+        <title><?= h($server['server_name']) ?> VNC Viewer</title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
             * { box-sizing: border-box; }
@@ -572,9 +594,9 @@ if ($route === 'console') {
                 <div class="console-actions">
                     <a class="button-link" href="/">Back to Panel</a>
                     <?php if ($webUrl): ?>
-                        <a class="button-link" href="/?route=web_admin&amp;instance_id=<?= h($server['instance_id']) ?>">Web Admin</a>
+                        <a class="button-link" href="/?route=web_admin&amp;instance_id=<?= h($server['instance_id']) ?>">Game Webpage</a>
                     <?php endif; ?>
-                    <a class="button-link primary" href="<?= h($novncUrl) ?>" target="_blank" rel="noreferrer">Open Direct</a>
+                    <a class="button-link primary" href="<?= h($novncUrl) ?>" target="_blank" rel="noreferrer">Open Direct VNC</a>
                 </div>
             </div>
         </div>
@@ -634,11 +656,11 @@ if ($route === 'web_admin') {
             <div class="console-bar">
                 <div class="console-meta">
                     <strong><?= h($server['server_name']) ?></strong>
-                    <div class="muted"><?= h($server['instance_id']) ?> on <?= h($server['host_name'] ?? 'managed host') ?></div>
+                    <div class="muted"><?= h($server['instance_id']) ?> on <?= h($server['host_name'] ?? 'managed host') ?> | use this viewer to install FS25 and enter the CD key when needed</div>
                 </div>
                 <div class="console-actions">
                     <a class="button-link" href="/">Back to Panel</a>
-                    <a class="button-link" href="/?route=console&amp;instance_id=<?= h($server['instance_id']) ?>">noVNC</a>
+                    <a class="button-link" href="/?route=console&amp;instance_id=<?= h($server['instance_id']) ?>">VNC Viewer</a>
                     <a class="button-link primary" href="<?= h($webUrl) ?>" target="_blank" rel="noreferrer">Open Direct</a>
                 </div>
             </div>
@@ -882,7 +904,7 @@ unset($_SESSION['logs']);
                         <td>
                             <div class="flex">
                                 <?php if ($novncUrl): ?>
-                                    <a class="button-link" href="/?route=console&amp;instance_id=<?= h($server['instance_id']) ?>">noVNC</a>
+                                    <a class="button-link" href="/?route=console&amp;instance_id=<?= h($server['instance_id']) ?>">VNC Viewer</a>
                                 <?php endif; ?>
                                 <?php if ($webUrl): ?>
                                     <a class="button-link" href="<?= h($webUrl) ?>" target="_blank" rel="noreferrer">game webpage</a>

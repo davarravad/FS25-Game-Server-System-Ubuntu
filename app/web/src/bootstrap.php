@@ -303,11 +303,15 @@ function generate_host_upload_token(array $host, string $filename, string $targe
     return $payloadEncoded . '.' . base64url_encode($signature);
 }
 
-function stream_installer_upload_for_host(array $host, string $filename): array
+function stream_installer_chunk_for_host(array $host, string $filename, int $offset, int $totalSize, bool $isLastChunk): array
 {
     $filename = basename($filename);
     if ($filename === '') {
         return ['ok' => false, 'error' => 'Filename is required'];
+    }
+
+    if ($offset < 0 || $totalSize < 0) {
+        return ['ok' => false, 'error' => 'Invalid upload chunk metadata'];
     }
 
     $input = fopen('php://input', 'rb');
@@ -315,12 +319,15 @@ function stream_installer_upload_for_host(array $host, string $filename): array
         return ['ok' => false, 'error' => 'Unable to read upload stream'];
     }
 
-    $url = rtrim((string) ($host['agent_url'] ?? ''), '/') . '/host/upload/stream';
+    $url = rtrim((string) ($host['agent_url'] ?? ''), '/') . '/host/upload/chunk';
     $token = generate_host_upload_token($host, $filename);
     $headers = [
         'Content-Type: application/octet-stream',
         'X-Upload-Token: ' . $token,
         'X-Upload-Filename: ' . $filename,
+        'X-Upload-Offset: ' . $offset,
+        'X-Upload-Total-Size: ' . $totalSize,
+        'X-Upload-Is-Last: ' . ($isLastChunk ? '1' : '0'),
     ];
 
     $contentLength = $_SERVER['CONTENT_LENGTH'] ?? null;
