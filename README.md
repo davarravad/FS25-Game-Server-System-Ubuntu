@@ -79,7 +79,9 @@ This makes each instance:
 - easy to duplicate
 - easy to delete safely
 
-## Quick start
+## Install
+
+### Central panel host
 
 ### 1. Clone the repo
 ```bash
@@ -92,7 +94,7 @@ cd fsg-fs25-panel
 cp .env.example .env
 ```
 
-### 3. Edit env values
+### 3. Edit panel env values
 Set secure values for:
 - `APP_KEY`
 - `APP_URL`
@@ -102,13 +104,18 @@ Set secure values for:
 - `ADMIN_DEFAULT_PASSWORD`
 - `AGENT_SHARED_TOKEN`
 
-### 4. Start the panel
+Important:
+- `AGENT_URL` and `AGENT_SHARED_TOKEN` are only used to bootstrap the first managed host entry.
+- If the panel host is also a game host, leave `AGENT_URL=http://agent:8081`.
+- If the panel host is website-only, you can still leave the local agent enabled or replace that first host later in the UI.
+
+### 4. Start the panel stack
 ```bash
 docker compose up -d --build
 ```
 
-### 5. Open the panel
-Visit:
+### 5. Sign in to the panel
+Open:
 ```text
 http://YOUR_SERVER_IP:8080
 ```
@@ -116,6 +123,31 @@ http://YOUR_SERVER_IP:8080
 Default login:
 - username: `admin`
 - password: value of `ADMIN_DEFAULT_PASSWORD`
+
+### Managed game hosts
+
+Each game host that will actually run FS25 instances needs:
+- Docker Engine
+- Docker Compose plugin
+- writable instance storage at `/opt/fsg-panel/instances`
+- writable backup storage at `/opt/fsg-panel/backups`
+- the agent service running with the same templates and a host-specific `AGENT_SHARED_TOKEN`
+
+Minimum host setup:
+```bash
+sudo mkdir -p /opt/fsg-panel/instances /opt/fsg-panel/backups
+```
+
+The host agent must expose its API to the panel host on a reachable URL such as:
+```text
+http://GAME_HOST_IP:8081
+```
+
+After the host agent is reachable:
+1. sign in to the website panel
+2. add the host in the `Managed Hosts` section
+3. enter the host name, agent API URL, and that host's token
+4. create new FS25 servers against that host
 
 ## Production notes
 
@@ -204,7 +236,11 @@ Use:
 sudo bash scripts/install-ubuntu.sh
 ```
 
-This script installs Docker, Compose plugin, creates base directories, copies `.env` if needed, and starts the panel.
+For a combined panel-plus-agent host, this script installs Docker, Compose plugin, creates base directories, copies `.env` if needed, and starts the local stack.
+
+For a website-only panel host, run it on the panel machine and then add your remote managed hosts in the UI.
+
+For remote game hosts, use the same Docker and directory prerequisites, then run the agent there and register that host in the panel.
 
 ## Important note about FS25 licensing
 
