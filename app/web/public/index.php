@@ -76,11 +76,39 @@ if ($route === 'host_prepare' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
-if ($route === 'host_upload' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($route === 'installer_upload_token') {
     require_login();
 
-    $hostId = (int) ($_POST['host_id'] ?? 0);
-    $target = (string) ($_POST['target'] ?? 'game');
+    $hostId = (int) ($_GET['host_id'] ?? 0);
+    $filename = basename((string) ($_GET['filename'] ?? ''));
+    $host = find_host($hostId);
+
+    if (!$host || !(int) $host['is_enabled']) {
+        header('Content-Type: application/json', true, 404);
+        echo json_encode(['ok' => false, 'error' => 'Host not found']);
+        exit;
+    }
+
+    if ($filename === '') {
+        header('Content-Type: application/json', true, 400);
+        echo json_encode(['ok' => false, 'error' => 'Filename is required']);
+        exit;
+    }
+
+    header('Content-Type: application/json');
+    echo json_encode([
+        'ok' => true,
+        'upload_url' => rtrim((string) ($host['agent_url'] ?? ''), '/') . '/host/upload/stream',
+        'token' => generate_host_upload_token($host, $filename),
+        'filename' => $filename,
+    ]);
+    exit;
+}
+
+if ($route === 'installer_upload') {
+    require_login();
+
+    $hostId = (int) ($_GET['host_id'] ?? 0);
     $host = find_host($hostId);
 
     if (!$host || !(int) $host['is_enabled']) {
@@ -89,11 +117,165 @@ if ($route === 'host_upload' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
-    $result = upload_shared_host_file($host, $target, $_FILES['upload_file'] ?? []);
-    flash(($result['ok'] ?? false)
-        ? 'Shared FS file uploaded.'
-        : 'Host upload failed: ' . ($result['error'] ?? 'Unknown error'));
-    header('Location: /');
+    ?><!doctype html>
+    <html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <title><?= h($host['name']) ?> Installer Upload</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            * { box-sizing: border-box; }
+            body { margin: 0; font-family: Arial, sans-serif; background: #0b1020; color: #f2f4f8; }
+            .page { max-width: 860px; margin: 0 auto; padding: 32px 20px; }
+            .card { background: #171c25; border: 1px solid #2a3240; border-radius: 14px; padding: 24px; }
+            .muted { color: #a8b3c7; }
+            .button-link, button { display: inline-block; padding: 10px 14px; border-radius: 8px; border: 0; background: #2563eb; color: #fff; text-decoration: none; cursor: pointer; }
+            .button-link.gray { background: #475569; }
+            input[type="file"] { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #fff; }
+            .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+            .progress-shell { margin-top: 24px; display: grid; gap: 12px; }
+            .progress-bar { width: 100%; height: 20px; border-radius: 999px; overflow: hidden; background: #0f172a; border: 1px solid #243041; }
+            .progress-fill { width: 0%; height: 100%; background: linear-gradient(90deg, #2563eb, #06b6d4); transition: width 0.15s linear; }
+            .stats { display: grid; gap: 8px; }
+            .error { color: #fca5a5; }
+            .ok { color: #86efac; }
+        </style>
+    </head>
+    <body>
+    <div class="page">
+        <div class="card">
+            <h1>Installer Upload</h1>
+            <p class="muted">Upload large installer files directly to <strong><?= h($host['shared_installer_path'] ?? '/opt/fs25/installer') ?></strong> on <?= h($host['name']) ?>.</p>
+            <p class="muted">This path streams the file directly to the host agent and supports multi-GB uploads. Installer folder only.</p>
+            <input id="upload-file" type="file" required>
+            <div class="actions">
+                <button id="start-upload" type="button">Start Upload</button>
+                <a class="button-link gray" href="/">Back to Panel</a>
+            </div>
+            <div class="progress-shell">
+                <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
+                <div class="stats">
+                    <div id="progress-text" class="muted">No upload in progress.</div>
+                    <div id="speed-text" class="muted">Speed: n/a</div>
+                    <div id="eta-text" class="muted">ETA: n/a</div>
+                    <div id="status-text" class="muted">Status: idle</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script>
+    const fileInput = document.getElementById('upload-file');
+    const startButton = document.getElementById('start-upload');
+    const progressFill = document.getElementById('progress-fill');
+    const progressText = document.getElementById('progress-text');
+    const speedText = document.getElementById('speed-text');
+    const etaText = document.getElementById('eta-text');
+    const statusText = document.getElementById('status-text');
+    const hostId = <?= json_encode((string) $host['id']) ?>;
+
+    function formatBytes(bytes) {
+        if (!Number.isFinite(bytes) || bytes < 0) return 'n/a';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        let value = bytes;
+        let unitIndex = 0;
+        while (value >= 1024 && unitIndex < units.length - 1) {
+            value /= 1024;
+            unitIndex += 1;
+        }
+        return `${value.toFixed(value >= 100 ? 0 : 1)} ${units[unitIndex]}`;
+    }
+
+    function formatDuration(seconds) {
+        if (!Number.isFinite(seconds) || seconds < 0) return 'n/a';
+        const hrs = Math.floor(seconds / 3600);
+        const mins = Math.floor((seconds % 3600) / 60);
+        const secs = Math.floor(seconds % 60);
+        if (hrs > 0) return `${hrs}h ${mins}m ${secs}s`;
+        if (mins > 0) return `${mins}m ${secs}s`;
+        return `${secs}s`;
+    }
+
+    startButton.addEventListener('click', async () => {
+        const file = fileInput.files[0];
+        if (!file) {
+            statusText.textContent = 'Status: choose a file first';
+            statusText.className = 'error';
+            return;
+        }
+
+        startButton.disabled = true;
+        statusText.textContent = 'Status: requesting upload token';
+        statusText.className = 'muted';
+
+        try {
+            const tokenResponse = await fetch(`/?route=installer_upload_token&host_id=${encodeURIComponent(hostId)}&filename=${encodeURIComponent(file.name)}`, {
+                credentials: 'same-origin',
+            });
+            const tokenData = await tokenResponse.json();
+
+            if (!tokenData.ok) {
+                throw new Error(tokenData.error || 'Failed to get upload token');
+            }
+
+            const xhr = new XMLHttpRequest();
+            const startedAt = Date.now();
+
+            xhr.open('POST', tokenData.upload_url, true);
+            xhr.setRequestHeader('X-Upload-Token', tokenData.token);
+            xhr.setRequestHeader('X-Upload-Filename', tokenData.filename);
+            xhr.upload.onprogress = (event) => {
+                if (!event.lengthComputable) {
+                    return;
+                }
+
+                const elapsedSeconds = Math.max((Date.now() - startedAt) / 1000, 0.001);
+                const uploaded = event.loaded;
+                const total = event.total;
+                const percent = (uploaded / total) * 100;
+                const bytesPerSecond = uploaded / elapsedSeconds;
+                const remainingSeconds = bytesPerSecond > 0 ? (total - uploaded) / bytesPerSecond : Infinity;
+
+                progressFill.style.width = `${percent.toFixed(2)}%`;
+                progressText.textContent = `Progress: ${percent.toFixed(2)}% (${formatBytes(uploaded)} / ${formatBytes(total)})`;
+                speedText.textContent = `Speed: ${formatBytes(bytesPerSecond)}/s`;
+                etaText.textContent = `ETA: ${formatDuration(remainingSeconds)}`;
+                statusText.textContent = 'Status: uploading';
+                statusText.className = 'muted';
+            };
+
+            xhr.onload = () => {
+                startButton.disabled = false;
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    progressFill.style.width = '100%';
+                    progressText.textContent = `Progress: 100.00% (${formatBytes(file.size)} / ${formatBytes(file.size)})`;
+                    speedText.textContent = speedText.textContent;
+                    etaText.textContent = 'ETA: 0s';
+                    statusText.textContent = 'Status: upload completed';
+                    statusText.className = 'ok';
+                    return;
+                }
+
+                statusText.textContent = `Status: upload failed (${xhr.status})`;
+                statusText.className = 'error';
+            };
+
+            xhr.onerror = () => {
+                startButton.disabled = false;
+                statusText.textContent = 'Status: upload failed due to network error';
+                statusText.className = 'error';
+            };
+
+            xhr.send(file);
+        } catch (error) {
+            startButton.disabled = false;
+            statusText.textContent = `Status: ${error.message}`;
+            statusText.className = 'error';
+        }
+    });
+    </script>
+    </body>
+    </html>
+    <?php
     exit;
 }
 
@@ -584,16 +766,7 @@ unset($_SESSION['logs']);
                                         <input type="hidden" name="host_id" value="<?= h((string) $host['id']) ?>">
                                         <button class="gray" type="submit">prepare storage</button>
                                     </form>
-                                    <form method="post" action="/?route=host_upload" enctype="multipart/form-data" class="stack">
-                                        <input type="hidden" name="host_id" value="<?= h((string) $host['id']) ?>">
-                                        <select name="target">
-                                            <option value="game">shared game</option>
-                                            <option value="dlc">shared dlc</option>
-                                            <option value="installer">shared installer</option>
-                                        </select>
-                                        <input name="upload_file" type="file" required>
-                                        <button class="gray" type="submit">upload shared file</button>
-                                    </form>
+                                    <a class="button-link" href="/?route=installer_upload&amp;host_id=<?= h((string) $host['id']) ?>">installer upload</a>
                                 </td>
                             </tr>
                         <?php endforeach; ?>

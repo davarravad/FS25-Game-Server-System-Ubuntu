@@ -283,6 +283,26 @@ function upload_shared_host_file(array $host, string $target, array $file): arra
     ]);
 }
 
+function base64url_encode(string $value): string
+{
+    return rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
+}
+
+function generate_host_upload_token(array $host, string $filename, string $target = 'installer', int $ttlSeconds = 900): string
+{
+    $payload = json_encode([
+        'filename' => $filename,
+        'target' => $target,
+        'path' => (string) ($host['shared_installer_path'] ?? '/opt/fs25/installer'),
+        'exp' => time() + $ttlSeconds,
+    ], JSON_THROW_ON_ERROR);
+
+    $payloadEncoded = base64url_encode($payload);
+    $signature = hash_hmac('sha256', $payloadEncoded, (string) ($host['agent_token'] ?? ''), true);
+
+    return $payloadEncoded . '.' . base64url_encode($signature);
+}
+
 function instance_access_url(array $server, string $kind): ?string
 {
     $agentUrl = (string) ($server['agent_url'] ?? '');

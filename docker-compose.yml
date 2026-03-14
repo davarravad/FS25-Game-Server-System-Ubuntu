@@ -74,6 +74,9 @@ services:
       AGENT_SHARED_TOKEN: ${AGENT_SHARED_TOKEN}
       INSTANCE_BASE_PATH: ${INSTANCE_BASE_PATH}
       BACKUP_BASE_PATH: ${BACKUP_BASE_PATH}
+      SHARED_GAME_PATH: ${SHARED_GAME_PATH}
+      SHARED_DLC_PATH: ${SHARED_DLC_PATH}
+      SHARED_INSTALLER_PATH: ${SHARED_INSTALLER_PATH}
       TZ: ${TZ}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

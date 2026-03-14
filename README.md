@@ -199,7 +199,8 @@ But this repo adds:
 ### Website access features
 - The panel can upload files directly into an instance on the selected host.
 - Per-instance upload targets currently include `mods`, `saves`, and `config`.
-- Managed hosts support shared-file uploads for the host-wide `game`, `dlc`, and `installer` folders.
+- Managed hosts support large streamed uploads to the host-wide `installer` folder.
+- Installer uploads include browser-side progress, current upload speed, and ETA.
 - Each server row includes direct launch links for the game host's web admin and noVNC endpoints.
 - Server actions in the panel include `start`, `stop`, and `restart`.
 - Instances are generated with Docker `restart: unless-stopped`, and the panel now exposes the image's `AUTOSTART_SERVER` mode as `Auto start server`, `Web panel only`, or `Manual start`.

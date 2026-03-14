@@ -1,8 +1,12 @@
 import json
 import base64
+import hashlib
+import hmac
 import os
 import re
 import subprocess
+import tempfile
+import time
 from pathlib import Path
 
 from flask import Flask, jsonify, request
@@ -61,6 +65,16 @@ def safe_upload_name(filename: str) -> bool:
     return re.fullmatch(r"[a-zA-Z0-9._ -]+", filename or "") is not None
 
 
+def add_cors_headers(response):
+    origin = request.headers.get("Origin", "")
+    if origin:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Vary"] = "Origin"
+    response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Upload-Token, X-Upload-Filename"
+    return response
+
+
 def ensure_shared_storage(payload):
     shared_paths = [
         Path(payload.get("shared_game_path", "/opt/fs25/game")),
@@ -78,9 +92,51 @@ def ensure_shared_storage(payload):
     }
 
 
+def decode_base64url(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(value + padding)
+
+
+def verify_upload_token(token: str, filename: str, target: str):
+    if "." not in token:
+        return False, "invalid token"
+
+    payload_encoded, signature_encoded = token.split(".", 1)
+    expected_signature = hmac.new(
+        AGENT_SHARED_TOKEN.encode("utf-8"),
+        payload_encoded.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+
+    try:
+        provided_signature = decode_base64url(signature_encoded)
+        payload = json.loads(decode_base64url(payload_encoded).decode("utf-8"))
+    except Exception:
+        return False, "invalid token"
+
+    if not hmac.compare_digest(expected_signature, provided_signature):
+        return False, "invalid token signature"
+
+    if payload.get("filename") != filename:
+        return False, "filename mismatch"
+
+    if payload.get("target") != target:
+        return False, "invalid target"
+
+    if int(payload.get("exp", 0)) < int(time.time()):
+        return False, "token expired"
+
+    return True, payload
+
+
 @app.before_request
 def block_unauthorized():
+    if request.method == "OPTIONS" and request.path == "/host/upload/stream":
+        response = jsonify({"ok": True})
+        return add_cors_headers(response)
     if request.path == "/health":
+        return None
+    if request.path == "/host/upload/stream":
         return None
     if not require_auth():
         return jsonify({"ok": False, "error": "unauthorized"}), 401
@@ -288,6 +344,54 @@ def upload_host_file():
         "path": str(destination),
         "size": len(decoded),
     })
+
+
+@app.post("/host/upload/stream")
+def upload_host_file_stream():
+    token = request.headers.get("X-Upload-Token", "").strip()
+    filename = request.headers.get("X-Upload-Filename", "").strip()
+    target = "installer"
+
+    if not safe_upload_name(filename):
+        response = jsonify({"ok": False, "error": "invalid filename"})
+        return add_cors_headers(response), 400
+
+    is_valid, token_data = verify_upload_token(token, filename, target)
+    if not is_valid:
+        response = jsonify({"ok": False, "error": token_data})
+        return add_cors_headers(response), 401
+
+    destination_root = Path(str(token_data.get("path", os.getenv("SHARED_INSTALLER_PATH", "/opt/fs25/installer"))))
+    destination_root.mkdir(parents=True, exist_ok=True)
+    destination = destination_root / filename
+
+    fd, temp_name = tempfile.mkstemp(prefix="upload_", dir=str(destination_root))
+    bytes_written = 0
+
+    try:
+        with os.fdopen(fd, "wb") as temp_file:
+            while True:
+                chunk = request.stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                temp_file.write(chunk)
+                bytes_written += len(chunk)
+
+        os.replace(temp_name, destination)
+    except Exception as exc:
+        try:
+            os.unlink(temp_name)
+        except OSError:
+            pass
+        response = jsonify({"ok": False, "error": f"upload failed: {exc}"})
+        return add_cors_headers(response), 500
+
+    response = jsonify({
+        "ok": True,
+        "path": str(destination),
+        "size": bytes_written,
+    })
+    return add_cors_headers(response)
 
 
 if __name__ == "__main__":
