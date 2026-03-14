@@ -230,10 +230,11 @@ unset($_SESSION['logs']);
     <title>FSG FS25 Panel</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
+        * { box-sizing: border-box; }
         body { font-family: Arial, sans-serif; background: #10131a; color: #f2f4f8; margin: 0; }
         .wrap { max-width: 1200px; margin: 0 auto; padding: 24px; }
         .card { background: #171c25; border: 1px solid #2a3240; border-radius: 14px; padding: 18px; margin-bottom: 20px; }
-        input, select { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #fff; }
+        input, select { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #fff; }
         button { padding: 10px 14px; border-radius: 8px; border: 0; cursor: pointer; background: #2563eb; color: #fff; }
         button.danger { background: #b91c1c; }
         button.gray { background: #475569; }
@@ -248,6 +249,9 @@ unset($_SESSION['logs']);
         .muted { color: #a8b3c7; }
         a { color: #93c5fd; text-decoration: none; }
         pre { white-space: pre-wrap; background: #0b1020; padding: 14px; border-radius: 10px; overflow: auto; }
+        form.grid > div, .grid-4 > div, .grid-2 > div { padding: 6px 0; }
+        label { display: block; margin-bottom: 8px; font-size: 14px; color: #d9e1ee; }
+        .card form { width: 100%; }
         @media (max-width: 900px) {
             .grid-2, .grid-4 { grid-template-columns: 1fr; }
         }
