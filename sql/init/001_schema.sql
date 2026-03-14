@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(100) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS server_instances (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    instance_id VARCHAR(100) NOT NULL UNIQUE,
+    server_name VARCHAR(255) NOT NULL,
+    image_name VARCHAR(255) NOT NULL,
+    server_port INT NOT NULL,
+    web_port INT NOT NULL,
+    vnc_port INT NOT NULL,
+    novnc_port INT NOT NULL,
+    server_players INT NOT NULL DEFAULT 16,
+    server_region VARCHAR(32) NOT NULL DEFAULT 'en',
+    server_map VARCHAR(64) NOT NULL DEFAULT 'MapUS',
+    status VARCHAR(32) NOT NULL DEFAULT 'created',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);

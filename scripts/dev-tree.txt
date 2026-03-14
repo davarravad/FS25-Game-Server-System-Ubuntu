@@ -1,0 +1,29 @@
+fsg-fs25-panel/
+├── .env.example
+├── README.md
+├── docker-compose.yml
+├── app
+│   └── web
+│       ├── public
+│       │   └── index.php
+│       └── src
+│           └── bootstrap.php
+├── docker
+│   ├── agent
+│   │   ├── app.py
+│   │   ├── Dockerfile
+│   │   └── requirements.txt
+│   ├── nginx
+│   │   └── default.conf
+│   └── php
+│       └── Dockerfile
+├── scripts
+│   ├── dev-tree.txt
+│   └── install-ubuntu.sh
+├── sql
+│   └── init
+│       └── 001_schema.sql
+└── templates
+    └── fs25
+        ├── compose.instance.yml.tpl
+        └── server.env.tpl
