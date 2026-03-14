@@ -119,6 +119,13 @@ function unzip_installer_archive_for_host(array $host, string $filename): array
     ]);
 }
 
+function installer_directory_listing_for_host(array $host): array
+{
+    return agent_post_for_host($host, '/host/installer/list', [
+        'shared_installer_path' => $host['shared_installer_path'] ?? '/opt/fs25/installer',
+    ]);
+}
+
 function current_user(): ?array
 {
     return $_SESSION['user'] ?? null;

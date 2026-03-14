@@ -749,6 +749,8 @@ unset($_SESSION['logs']);
         .server-actions { margin-top: 12px; padding-top: 12px; border-top: 1px solid #243041; }
         .server-meta { display: grid; gap: 6px; }
         .small { font-size: 13px; }
+        .dir-list { display: grid; gap: 8px; margin-top: 12px; }
+        .dir-item { display: grid; gap: 6px; padding: 10px; border: 1px solid #243041; border-radius: 10px; background: #0f172a; }
         @media (max-width: 900px) {
             .grid-2, .grid-4 { grid-template-columns: 1fr; }
         }
@@ -825,7 +827,10 @@ unset($_SESSION['logs']);
                         </thead>
                         <tbody>
                         <?php foreach ($hosts as $host): ?>
-                            <?php $health = agent_health_for_host($host); ?>
+                            <?php
+                                $health = agent_health_for_host($host);
+                                $installerListing = ($health['ok'] ?? false) ? installer_directory_listing_for_host($host) : ['ok' => false, 'files' => []];
+                            ?>
                             <tr>
                                 <td><?= h($host['name']) ?></td>
                                 <td><?= h($host['agent_url']) ?></td>
@@ -843,11 +848,24 @@ unset($_SESSION['logs']);
                                         <button class="gray" type="submit">prepare storage</button>
                                     </form>
                                     <a class="button-link" href="/?route=installer_upload&amp;host_id=<?= h((string) $host['id']) ?>">installer upload</a>
-                                    <form method="post" action="/?route=installer_unzip" class="stack" style="margin-top:10px;">
-                                        <input type="hidden" name="host_id" value="<?= h((string) $host['id']) ?>">
-                                        <input name="filename" placeholder="FS25Installer.zip" required>
-                                        <button class="gray" type="submit">unzip installer zip</button>
-                                    </form>
+                                    <div class="dir-list">
+                                        <?php foreach (($installerListing['files'] ?? []) as $entry): ?>
+                                            <div class="dir-item">
+                                                <div class="muted"><?= h($entry['name']) ?></div>
+                                                <div class="muted small"><?= h($entry['is_dir'] ? 'directory' : 'file') ?><?php if ($entry['is_file']): ?> | <?= h((string) $entry['size']) ?> bytes<?php endif; ?></div>
+                                                <?php if (($entry['is_zip'] ?? false) === true): ?>
+                                                    <form method="post" action="/?route=installer_unzip">
+                                                        <input type="hidden" name="host_id" value="<?= h((string) $host['id']) ?>">
+                                                        <input type="hidden" name="filename" value="<?= h($entry['name']) ?>">
+                                                        <button class="gray" type="submit">unzip zip</button>
+                                                    </form>
+                                                <?php endif; ?>
+                                            </div>
+                                        <?php endforeach; ?>
+                                        <?php if (!(($installerListing['files'] ?? []))): ?>
+                                            <div class="muted small">No installer files found.</div>
+                                        <?php endif; ?>
+                                    </div>
                                 </td>
                             </tr>
                         <?php endforeach; ?>

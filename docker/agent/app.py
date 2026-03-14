@@ -435,6 +435,31 @@ def unzip_installer_archive():
     })
 
 
+@app.post("/host/installer/list")
+def list_installer_files():
+    payload = request.get_json(force=True)
+    installer_root = Path(payload.get("shared_installer_path", os.getenv("SHARED_INSTALLER_PATH", "/opt/fs25/installer")))
+    installer_root.mkdir(parents=True, exist_ok=True)
+
+    files = []
+    for entry in sorted(installer_root.iterdir(), key=lambda item: (not item.is_file(), item.name.lower())):
+        stat = entry.stat()
+        files.append({
+            "name": entry.name,
+            "is_file": entry.is_file(),
+            "is_dir": entry.is_dir(),
+            "size": stat.st_size,
+            "modified_at": int(stat.st_mtime),
+            "is_zip": entry.is_file() and entry.suffix.lower() == ".zip",
+        })
+
+    return jsonify({
+        "ok": True,
+        "path": str(installer_root),
+        "files": files,
+    })
+
+
 @app.post("/host/upload/stream")
 def upload_host_file_stream():
     token = request.headers.get("X-Upload-Token", "").strip()
