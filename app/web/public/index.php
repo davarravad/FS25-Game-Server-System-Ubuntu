@@ -133,7 +133,7 @@ if ($route === 'create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         'server_save_interval' => (float)($_POST['server_save_interval'] ?? 180),
         'server_stats_interval' => (int)($_POST['server_stats_interval'] ?? 31536000),
         'server_crossplay' => isset($_POST['server_crossplay']),
-        'autostart_server' => isset($_POST['autostart_server']),
+        'autostart_server' => (string)($_POST['autostart_server'] ?? 'true'),
         'puid' => (int)($_POST['puid'] ?? 1000),
         'pgid' => (int)($_POST['pgid'] ?? 1000),
         'vnc_password' => (string)($_POST['vnc_password'] ?? 'changeme'),
@@ -585,7 +585,14 @@ unset($_SESSION['logs']);
 
                 <div><label>PGID</label><input name="pgid" type="number" value="1000"></div>
                 <div style="display:flex;align-items:end;"><label><input type="checkbox" name="server_crossplay" checked style="width:auto;"> Crossplay</label></div>
-                <div style="display:flex;align-items:end;"><label><input type="checkbox" name="autostart_server" style="width:auto;"> Autostart</label></div>
+                <div>
+                    <label>Startup Mode</label>
+                    <select name="autostart_server">
+                        <option value="true" selected>Auto start server</option>
+                        <option value="web_only">Web panel only</option>
+                        <option value="false">Manual start</option>
+                    </select>
+                </div>
                 <div style="display:flex;align-items:end;"><button type="submit">Create Server</button></div>
             </form>
         </div>
@@ -628,7 +635,7 @@ unset($_SESSION['logs']);
                                     <a class="button-link" href="/?route=console&amp;instance_id=<?= h($server['instance_id']) ?>">noVNC</a>
                                 <?php endif; ?>
                                 <?php if ($webUrl): ?>
-                                    <a class="button-link" href="/?route=web_admin&amp;instance_id=<?= h($server['instance_id']) ?>">web admin</a>
+                                    <a class="button-link" href="<?= h($webUrl) ?>" target="_blank" rel="noreferrer">game webpage</a>
                                 <?php endif; ?>
                             </div>
                         </td>
