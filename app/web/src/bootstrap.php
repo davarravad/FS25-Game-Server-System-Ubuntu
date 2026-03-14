@@ -30,9 +30,29 @@ function db(): PDO
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
     ]);
 
+    ensure_schema($pdo);
     bootstrap_default_admin($pdo);
+    bootstrap_default_host($pdo);
 
     return $pdo;
+}
+
+function ensure_schema(PDO $pdo): void
+{
+    $pdo->exec('
+        CREATE TABLE IF NOT EXISTS managed_hosts (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(150) NOT NULL,
+            agent_url VARCHAR(255) NOT NULL,
+            agent_token VARCHAR(255) NOT NULL,
+            is_enabled TINYINT(1) NOT NULL DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )
+    ');
+
+    $pdo->exec('ALTER TABLE server_instances ADD COLUMN IF NOT EXISTS host_id INT NULL AFTER id');
+    $pdo->exec('ALTER TABLE server_instances ADD INDEX IF NOT EXISTS idx_server_instances_host_id (host_id)');
 }
 
 function bootstrap_default_admin(PDO $pdo): void
@@ -47,6 +67,27 @@ function bootstrap_default_admin(PDO $pdo): void
         $insert = $pdo->prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)');
         $insert->execute([$username, password_hash($password, PASSWORD_DEFAULT)]);
     }
+}
+
+function bootstrap_default_host(PDO $pdo): void
+{
+    $agentUrl = trim((string) env_value('AGENT_URL', 'http://agent:8081'));
+    $agentToken = (string) env_value('AGENT_SHARED_TOKEN', '');
+    $defaultName = trim((string) env_value('DEFAULT_HOST_NAME', 'Local Agent'));
+
+    $stmt = $pdo->query('SELECT id FROM managed_hosts ORDER BY id ASC LIMIT 1');
+    $firstHostId = $stmt->fetchColumn();
+
+    if (!$firstHostId) {
+        $insert = $pdo->prepare('
+            INSERT INTO managed_hosts (name, agent_url, agent_token, is_enabled)
+            VALUES (?, ?, ?, 1)
+        ');
+        $insert->execute([$defaultName, $agentUrl, $agentToken]);
+        $firstHostId = (int) $pdo->lastInsertId();
+    }
+
+    $pdo->prepare('UPDATE server_instances SET host_id = ? WHERE host_id IS NULL')->execute([(int) $firstHostId]);
 }
 
 function current_user(): ?array
@@ -74,9 +115,9 @@ function flash(?string $message = null): ?string
     return $value;
 }
 
-function agent_post(string $path, array $payload): array
+function agent_post_for_host(array $host, string $path, array $payload): array
 {
-    $url = rtrim(env_value('AGENT_URL', 'http://agent:8081'), '/') . $path;
+    $url = rtrim((string) ($host['agent_url'] ?? ''), '/') . $path;
 
     $ch = curl_init($url);
     curl_setopt_array($ch, [
@@ -84,7 +125,7 @@ function agent_post(string $path, array $payload): array
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_HTTPHEADER => [
             'Content-Type: application/json',
-            'X-Agent-Token: ' . env_value('AGENT_SHARED_TOKEN', ''),
+            'X-Agent-Token: ' . (string) ($host['agent_token'] ?? ''),
         ],
         CURLOPT_POSTFIELDS => json_encode($payload),
     ]);
@@ -104,6 +145,70 @@ function agent_post(string $path, array $payload): array
     }
 
     return $decoded;
+}
+
+function agent_health_for_host(array $host): array
+{
+    $url = rtrim((string) ($host['agent_url'] ?? ''), '/') . '/health';
+    $ch = curl_init($url);
+
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 3,
+    ]);
+
+    $response = curl_exec($ch);
+    $error = curl_error($ch);
+    $status = curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    curl_close($ch);
+
+    if ($response === false || $status >= 400) {
+        return ['ok' => false, 'error' => $error ?: 'Host unreachable'];
+    }
+
+    $decoded = json_decode($response, true);
+    return is_array($decoded) ? $decoded : ['ok' => false, 'error' => 'Invalid host response'];
+}
+
+function all_hosts(): array
+{
+    return db()->query('SELECT * FROM managed_hosts ORDER BY name ASC, id ASC')->fetchAll();
+}
+
+function enabled_hosts(): array
+{
+    $stmt = db()->prepare('SELECT * FROM managed_hosts WHERE is_enabled = 1 ORDER BY name ASC, id ASC');
+    $stmt->execute();
+    return $stmt->fetchAll();
+}
+
+function find_host(int $hostId): ?array
+{
+    $stmt = db()->prepare('SELECT * FROM managed_hosts WHERE id = ? LIMIT 1');
+    $stmt->execute([$hostId]);
+    $host = $stmt->fetch();
+
+    return $host ?: null;
+}
+
+function find_instance_with_host(string $instanceId): ?array
+{
+    $stmt = db()->prepare('
+        SELECT
+            si.*,
+            mh.name AS host_name,
+            mh.agent_url,
+            mh.agent_token,
+            mh.is_enabled
+        FROM server_instances si
+        LEFT JOIN managed_hosts mh ON mh.id = si.host_id
+        WHERE si.instance_id = ?
+        LIMIT 1
+    ');
+    $stmt->execute([$instanceId]);
+    $server = $stmt->fetch();
+
+    return $server ?: null;
 }
 
 function h(string $value): string

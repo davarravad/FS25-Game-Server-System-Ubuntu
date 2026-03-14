@@ -31,12 +31,44 @@ if ($route === 'logout') {
     exit;
 }
 
+if ($route === 'host_create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    require_login();
+
+    $name = trim((string) ($_POST['name'] ?? ''));
+    $agentUrl = trim((string) ($_POST['agent_url'] ?? ''));
+    $agentToken = trim((string) ($_POST['agent_token'] ?? ''));
+
+    if ($name === '' || $agentUrl === '' || $agentToken === '') {
+        flash('Host name, API URL, and token are required.');
+        header('Location: /');
+        exit;
+    }
+
+    $stmt = db()->prepare('
+        INSERT INTO managed_hosts (name, agent_url, agent_token, is_enabled)
+        VALUES (?, ?, ?, 1)
+    ');
+    $stmt->execute([$name, $agentUrl, $agentToken]);
+
+    flash('Managed host added.');
+    header('Location: /');
+    exit;
+}
+
 if ($route === 'create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     require_login();
 
     $instanceId = preg_replace('/[^a-zA-Z0-9_-]/', '', (string)($_POST['instance_id'] ?? ''));
     $serverName = trim((string)($_POST['server_name'] ?? ''));
     $imageName = trim((string)($_POST['image_name'] ?? 'toetje585/arch-fs25server:latest'));
+    $hostId = (int) ($_POST['host_id'] ?? 0);
+    $host = find_host($hostId);
+
+    if (!$host || !(int) $host['is_enabled']) {
+        flash('Select a valid managed host.');
+        header('Location: /');
+        exit;
+    }
 
     $payload = [
         'instance_id' => $instanceId,
@@ -64,7 +96,7 @@ if ($route === 'create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         'web_password' => (string)($_POST['web_password'] ?? 'changeme'),
     ];
 
-    $agent = agent_post('/instance/create', $payload);
+    $agent = agent_post_for_host($host, '/instance/create', $payload);
 
     if (!($agent['ok'] ?? false)) {
         flash('Create failed: ' . ($agent['error'] ?? 'Unknown error'));
@@ -74,11 +106,12 @@ if ($route === 'create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $stmt = db()->prepare('
         INSERT INTO server_instances
-        (instance_id, server_name, image_name, server_port, web_port, vnc_port, novnc_port, server_players, server_region, server_map, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (host_id, instance_id, server_name, image_name, server_port, web_port, vnc_port, novnc_port, server_players, server_region, server_map, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ');
 
     $stmt->execute([
+        $hostId,
         $payload['instance_id'],
         $payload['server_name'],
         $payload['image_name'],
@@ -102,8 +135,15 @@ if ($route === 'action' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $instanceId = (string)($_POST['instance_id'] ?? '');
     $action = (string)($_POST['action'] ?? '');
+    $server = find_instance_with_host($instanceId);
 
-    $agent = agent_post('/instance/action', [
+    if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
+        flash('Managed host for this server is missing or disabled.');
+        header('Location: /');
+        exit;
+    }
+
+    $agent = agent_post_for_host($server, '/instance/action', [
         'instance_id' => $instanceId,
         'action' => $action,
     ]);
@@ -127,7 +167,15 @@ if ($route === 'delete' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     require_login();
 
     $instanceId = (string)($_POST['instance_id'] ?? '');
-    $agent = agent_post('/instance/delete', [
+    $server = find_instance_with_host($instanceId);
+
+    if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
+        flash('Managed host for this server is missing or disabled.');
+        header('Location: /');
+        exit;
+    }
+
+    $agent = agent_post_for_host($server, '/instance/delete', [
         'instance_id' => $instanceId,
     ]);
 
@@ -204,12 +252,21 @@ unset($_SESSION['logs']);
         </div>
     <?php else: ?>
         <?php
-            $servers = db()->query('SELECT * FROM server_instances ORDER BY created_at DESC')->fetchAll();
+            $servers = db()->query('
+                SELECT
+                    si.*,
+                    mh.name AS host_name
+                FROM server_instances si
+                LEFT JOIN managed_hosts mh ON mh.id = si.host_id
+                ORDER BY si.created_at DESC
+            ')->fetchAll();
+            $hosts = all_hosts();
+            $createHosts = enabled_hosts();
         ?>
         <div class="flex" style="justify-content: space-between; align-items: center;">
             <div>
                 <h1>FSG FS25 Panel</h1>
-                <div class="muted">Logged in as <?= h(current_user()['username']) ?></div>
+                <div class="muted">Logged in as <?= h(current_user()['username']) ?> | central API control for managed hosts</div>
             </div>
             <div><a href="/?route=logout">Logout</a></div>
         </div>
@@ -217,8 +274,55 @@ unset($_SESSION['logs']);
         <?php if ($flash): ?><div class="flash"><?= h($flash) ?></div><?php endif; ?>
 
         <div class="card">
+            <h2>Managed Hosts</h2>
+            <div class="grid grid-2">
+                <div>
+                    <form method="post" action="/?route=host_create" class="grid">
+                        <div><label>Host Name</label><input name="name" placeholder="Node A" required></div>
+                        <div><label>Agent API URL</label><input name="agent_url" placeholder="http://host-or-agent:8081" required></div>
+                        <div><label>Agent Token</label><input name="agent_token" type="password" required></div>
+                        <div><button type="submit">Add Managed Host</button></div>
+                    </form>
+                </div>
+                <div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>API URL</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        <?php foreach ($hosts as $host): ?>
+                            <?php $health = agent_health_for_host($host); ?>
+                            <tr>
+                                <td><?= h($host['name']) ?></td>
+                                <td><?= h($host['agent_url']) ?></td>
+                                <td><?= h(($health['ok'] ?? false) ? 'online' : 'offline') ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                        <?php if (!$hosts): ?>
+                            <tr><td colspan="3" class="muted">No managed hosts configured yet.</td></tr>
+                        <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
             <h2>Create Server</h2>
             <form method="post" action="/?route=create" class="grid grid-4">
+                <div>
+                    <label>Managed Host</label>
+                    <select name="host_id" required>
+                        <option value="">Select host</option>
+                        <?php foreach ($createHosts as $host): ?>
+                            <option value="<?= h((string) $host['id']) ?>"><?= h($host['name']) ?> (<?= h($host['agent_url']) ?>)</option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
                 <div><label>Instance ID</label><input name="instance_id" placeholder="fs25-0001" required></div>
                 <div><label>Server Name</label><input name="server_name" placeholder="FSG Server 1" required></div>
                 <div><label>Image</label><input name="image_name" value="toetje585/arch-fs25server:latest" required></div>
@@ -256,6 +360,7 @@ unset($_SESSION['logs']);
             <table>
                 <thead>
                     <tr>
+                        <th>Host</th>
                         <th>Instance</th>
                         <th>Name</th>
                         <th>Status</th>
@@ -269,6 +374,7 @@ unset($_SESSION['logs']);
                 <tbody>
                 <?php foreach ($servers as $server): ?>
                     <tr>
+                        <td><?= h($server['host_name'] ?? 'unassigned') ?></td>
                         <td><?= h($server['instance_id']) ?></td>
                         <td><?= h($server['server_name']) ?></td>
                         <td><?= h($server['status']) ?></td>
@@ -294,7 +400,7 @@ unset($_SESSION['logs']);
                     </tr>
                 <?php endforeach; ?>
                 <?php if (!$servers): ?>
-                    <tr><td colspan="8" class="muted">No servers created yet.</td></tr>
+                    <tr><td colspan="9" class="muted">No servers created yet.</td></tr>
                 <?php endif; ?>
                 </tbody>
             </table>

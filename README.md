@@ -27,7 +27,7 @@ This repo is designed to be:
 - One-folder-per-instance design
 - Ubuntu bootstrap script
 - Database schema
-- Internal HTTP agent that controls Docker Compose locally
+- Internal HTTP agent that controls Docker Compose locally or on remote managed hosts
 
 ## Repo layout
 
@@ -51,10 +51,10 @@ storage/
 ## Architecture
 
 ### Control plane
-The panel website runs in Docker and talks to the internal agent using a private Docker network.
+The panel website is the central controller. It stores managed host API endpoints in the database and sends instance requests to the correct host agent.
 
 ### Runtime plane
-Each FS25 server gets its own folder under:
+Each managed host keeps its own FS25 servers under:
 
 ```text
 /opt/fsg-panel/instances/<instance-id>/
@@ -130,15 +130,16 @@ Before exposing this publicly, you should:
 ## How instance creation works
 
 When you create a server in the panel:
-1. the web app inserts the record into the database
-2. it calls the internal agent
+1. the web app resolves the selected managed host
+2. it calls that host's internal agent API
 3. the agent:
    - creates the instance folder
    - copies the FS25 template
    - renders `.env`
    - renders `compose.yml`
    - creates data directories
-4. the panel can then start the new instance with Docker Compose
+4. the panel stores which host owns the instance
+5. later actions like start, stop, logs, and delete are routed back to that same host
 
 ## Reference image
 
@@ -164,6 +165,13 @@ But this repo adds:
 - template rendering
 - install script
 
+### Managed host support
+- The website can now manage multiple FS25 hosts from one location.
+- Each host runs the same lightweight agent API near its local Docker engine.
+- Add hosts in the UI with a name, agent URL, and shared token.
+- New server instances are assigned to a managed host when created.
+- Existing installs bootstrap a default `Local Agent` host from `AGENT_URL` and `AGENT_SHARED_TOKEN`.
+
 ### Recommended next upgrades
 - Discord auth
 - mod upload manager
@@ -171,7 +179,6 @@ But this repo adds:
 - CPU / RAM / disk quotas
 - scheduled tasks
 - websocket log streaming
-- multiple host node support
 - audit logs
 - permissions / roles
 
