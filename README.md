@@ -201,6 +201,7 @@ But this repo adds:
 - Per-instance upload targets currently include `mods`, `saves`, and `config`.
 - Managed hosts support large streamed uploads to the host-wide `installer` folder.
 - Installer uploads use retryable chunked transfer with browser-side progress, current upload speed, and ETA.
+- Installer zip files can be extracted from the panel after upload.
 - Each server row includes direct launch links for the game host's web admin and noVNC endpoints.
 - Each server can also expose its own SFTP endpoint, limited to that server's `FarmingSimulator2025` profile/config folder for mod and log access.
 - The host agent now remembers which instances were meant to be running and restores them after a host reboot.

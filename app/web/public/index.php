@@ -76,6 +76,33 @@ if ($route === 'host_prepare' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
+if ($route === 'installer_unzip' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    require_login();
+
+    $hostId = (int) ($_POST['host_id'] ?? 0);
+    $filename = trim((string) ($_POST['filename'] ?? ''));
+    $host = find_host($hostId);
+
+    if (!$host || !(int) $host['is_enabled']) {
+        flash('Select a valid managed host.');
+        header('Location: /');
+        exit;
+    }
+
+    if ($filename === '') {
+        flash('Installer zip filename is required.');
+        header('Location: /');
+        exit;
+    }
+
+    $result = unzip_installer_archive_for_host($host, $filename);
+    flash(($result['ok'] ?? false)
+        ? 'Installer zip extracted.'
+        : 'Installer unzip failed: ' . ($result['error'] ?? 'Unknown error'));
+    header('Location: /');
+    exit;
+}
+
 if ($route === 'installer_upload_token') {
     require_login();
 
@@ -816,6 +843,11 @@ unset($_SESSION['logs']);
                                         <button class="gray" type="submit">prepare storage</button>
                                     </form>
                                     <a class="button-link" href="/?route=installer_upload&amp;host_id=<?= h((string) $host['id']) ?>">installer upload</a>
+                                    <form method="post" action="/?route=installer_unzip" class="stack" style="margin-top:10px;">
+                                        <input type="hidden" name="host_id" value="<?= h((string) $host['id']) ?>">
+                                        <input name="filename" placeholder="FS25Installer.zip" required>
+                                        <button class="gray" type="submit">unzip installer zip</button>
+                                    </form>
                                 </td>
                             </tr>
                         <?php endforeach; ?>

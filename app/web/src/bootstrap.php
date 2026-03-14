@@ -111,6 +111,14 @@ function host_storage_prepare(array $host): array
     ]);
 }
 
+function unzip_installer_archive_for_host(array $host, string $filename): array
+{
+    return agent_post_for_host($host, '/host/installer/unzip', [
+        'filename' => $filename,
+        'shared_installer_path' => $host['shared_installer_path'] ?? '/opt/fs25/installer',
+    ]);
+}
+
 function current_user(): ?array
 {
     return $_SESSION['user'] ?? null;
