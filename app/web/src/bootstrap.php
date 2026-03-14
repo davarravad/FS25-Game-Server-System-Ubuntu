@@ -10,6 +10,12 @@ function env_value(string $key, ?string $default = null): ?string
     return $value === false ? $default : $value;
 }
 
+function slugify(string $value): string
+{
+    $slug = strtolower(trim(preg_replace('/[^a-zA-Z0-9]+/', '-', $value) ?? '', '-'));
+    return $slug !== '' ? $slug : 'fs25-node';
+}
+
 function db(): PDO
 {
     static $pdo = null;
@@ -100,6 +106,91 @@ function bootstrap_default_host(PDO $pdo): void
     }
 
     $pdo->prepare('UPDATE server_instances SET host_id = ? WHERE host_id IS NULL')->execute([(int) $firstHostId]);
+}
+
+function local_node_config(): array
+{
+    $nodeName = trim((string) env_value('NODE_NAME', env_value('DEFAULT_HOST_NAME', 'FS25 Local Node')));
+    $appUrl = rtrim((string) env_value('APP_URL', 'http://localhost:8080'), '/');
+
+    return [
+        'name' => $nodeName,
+        'slug' => slugify((string) env_value('NODE_SLUG', $nodeName)),
+        'app_url' => $appUrl,
+        'api_status_url' => $appUrl . '/?route=api_node_status',
+        'api_servers_url' => $appUrl . '/?route=api_node_servers',
+        'api_hosts_url' => $appUrl . '/?route=api_node_hosts',
+    ];
+}
+
+function local_host_record(): ?array
+{
+    $stmt = db()->query('SELECT * FROM managed_hosts ORDER BY id ASC LIMIT 1');
+    $host = $stmt->fetch();
+    return $host ?: null;
+}
+
+function node_api_token(): string
+{
+    return (string) (local_node_config()['api_token'] ?? '');
+}
+
+function node_api_enabled(): bool
+{
+    return node_api_token() !== '';
+}
+
+function request_header_value(string $key): ?string
+{
+    $serverKey = 'HTTP_' . strtoupper(str_replace('-', '_', $key));
+    $value = $_SERVER[$serverKey] ?? null;
+    return is_string($value) && $value !== '' ? $value : null;
+}
+
+function node_api_request_authorized(): bool
+{
+    $expected = node_api_token();
+    if ($expected === '') {
+        return false;
+    }
+
+    $authHeader = request_header_value('Authorization');
+    $token = null;
+
+    if (is_string($authHeader) && preg_match('/^Bearer\s+(.+)$/i', $authHeader, $matches)) {
+        $token = trim($matches[1]);
+    }
+
+    if ($token === null || $token === '') {
+        $token = trim((string) (request_header_value('X-Node-Token') ?? ''));
+    }
+
+    return $token !== '' && hash_equals($expected, $token);
+}
+
+function node_summary(): array
+{
+    $hostCount = (int) db()->query('SELECT COUNT(*) FROM managed_hosts')->fetchColumn();
+    $serverCount = (int) db()->query('SELECT COUNT(*) FROM server_instances')->fetchColumn();
+    $localHost = local_host_record();
+    $localHostHealth = $localHost ? agent_health_for_host($localHost) : ['ok' => false, 'error' => 'No local host'];
+
+    return [
+        'node' => local_node_config(),
+        'local_host' => $localHost ? [
+            'id' => (int) $localHost['id'],
+            'name' => (string) $localHost['name'],
+            'agent_url' => (string) $localHost['agent_url'],
+            'shared_game_path' => (string) ($localHost['shared_game_path'] ?? '/opt/fs25/game'),
+            'shared_dlc_path' => (string) ($localHost['shared_dlc_path'] ?? '/opt/fs25/dlc'),
+            'shared_installer_path' => (string) ($localHost['shared_installer_path'] ?? '/opt/fs25/installer'),
+            'health' => $localHostHealth,
+        ] : null,
+        'counts' => [
+            'managed_hosts' => $hostCount,
+            'server_instances' => $serverCount,
+        ],
+    ];
 }
 
 function host_storage_prepare(array $host): array

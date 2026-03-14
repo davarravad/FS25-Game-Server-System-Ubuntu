@@ -16,6 +16,7 @@ DB_USER_DEFAULT="fsg_panel"
 DB_HOST_DEFAULT="db"
 DB_PORT_DEFAULT="3306"
 DEFAULT_HOST_NAME_DEFAULT="Local Agent"
+NODE_NAME_DEFAULT="FS25 Local Node"
 SHARED_GAME_PATH_DEFAULT="/opt/fs25/game"
 SHARED_DLC_PATH_DEFAULT="/opt/fs25/dlc"
 SHARED_INSTALLER_PATH_DEFAULT="/opt/fs25/installer"
@@ -112,6 +113,7 @@ gather_settings() {
   prompt_value APP_URL "Panel URL" "http://$(hostname -I | awk '{print $1}'):${PANEL_PORT_DEFAULT}"
   prompt_value PANEL_PORT "External panel port" "${PANEL_PORT_DEFAULT}"
   prompt_value TZ "Timezone" "${TZ_DEFAULT}"
+  prompt_value NODE_NAME "Local node name" "${NODE_NAME_DEFAULT}"
   prompt_value ADMIN_DEFAULT_USERNAME "Admin username" "admin"
   prompt_secret ADMIN_DEFAULT_PASSWORD "Admin password" "$(random_secret)"
   prompt_value DB_NAME "Database name" "${DB_NAME_DEFAULT}"
@@ -123,6 +125,7 @@ gather_settings() {
   prompt_value DEFAULT_HOST_NAME "Default managed host name" "${DEFAULT_HOST_NAME_DEFAULT}"
   prompt_value AGENT_URL "Default managed host agent URL" "http://agent:8081"
   prompt_secret AGENT_SHARED_TOKEN "Agent shared token" "$(random_secret)"
+  prompt_secret NODE_API_TOKEN "Node API token" "$(random_secret)"
   prompt_value SHARED_GAME_PATH "Shared game path" "${SHARED_GAME_PATH_DEFAULT}"
   prompt_value SHARED_DLC_PATH "Shared DLC path" "${SHARED_DLC_PATH_DEFAULT}"
   prompt_value SHARED_INSTALLER_PATH "Shared installer path" "${SHARED_INSTALLER_PATH_DEFAULT}"
@@ -130,10 +133,12 @@ gather_settings() {
   prompt_value ADMIN_SFTP_USERNAME "Admin SFTP username" "${ADMIN_SFTP_USERNAME_DEFAULT}"
   prompt_secret ADMIN_SFTP_PASSWORD "Admin SFTP password" "$(random_secret)"
 
-  APP_NAME="FSG FS25 Panel"
+  APP_NAME="FSG FS25 Node"
   APP_ENV="${APP_ENV_DEFAULT}"
   APP_KEY="$(random_secret)"
   SESSION_SECRET="$(random_secret)"
+  NODE_SLUG="$(printf '%s' "${NODE_NAME}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')"
+  NODE_SLUG="${NODE_SLUG:-fs25-local-node}"
   DB_HOST="${DB_HOST_DEFAULT}"
   DB_PORT="${DB_PORT_DEFAULT}"
 }
@@ -147,6 +152,9 @@ APP_ENV=${APP_ENV}
 APP_URL=${APP_URL}
 APP_KEY=${APP_KEY}
 SESSION_SECRET=${SESSION_SECRET}
+NODE_NAME=${NODE_NAME}
+NODE_SLUG=${NODE_SLUG}
+NODE_API_TOKEN=${NODE_API_TOKEN}
 
 DB_HOST=${DB_HOST}
 DB_PORT=${DB_PORT}
@@ -233,6 +241,10 @@ print_summary() {
   echo "  ${ENV_FILE}"
   echo "Panel URL:"
   echo "  ${APP_URL}"
+  echo "Node API:"
+  echo "  status: ${APP_URL}/?route=api_node_status"
+  echo "  servers: ${APP_URL}/?route=api_node_servers"
+  echo "  hosts: ${APP_URL}/?route=api_node_hosts"
   echo "Default login:"
   echo "  username: ${ADMIN_DEFAULT_USERNAME}"
   echo "  password: ${ADMIN_DEFAULT_PASSWORD}"

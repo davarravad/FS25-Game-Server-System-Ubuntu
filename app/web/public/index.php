@@ -10,6 +10,14 @@ function redirect_route(string $route): void
     exit;
 }
 
+function json_response(array $payload, int $status = 200): void
+{
+    http_response_code($status);
+    header('Content-Type: application/json');
+    echo json_encode($payload, JSON_PRETTY_PRINT);
+    exit;
+}
+
 $route = $_GET['route'] ?? 'dashboard';
 
 if ($route === 'login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -34,6 +42,88 @@ if ($route === 'logout') {
     session_destroy();
     header('Location: /?route=login');
     exit;
+}
+
+if ($route === 'api_node_status') {
+    if (!node_api_request_authorized()) {
+        json_response(['ok' => false, 'error' => node_api_enabled() ? 'Unauthorized' : 'Node API is disabled'], node_api_enabled() ? 401 : 503);
+    }
+
+    json_response([
+        'ok' => true,
+        'api_version' => '1.0',
+        'summary' => node_summary(),
+    ]);
+}
+
+if ($route === 'api_node_hosts') {
+    if (!node_api_request_authorized()) {
+        json_response(['ok' => false, 'error' => node_api_enabled() ? 'Unauthorized' : 'Node API is disabled'], node_api_enabled() ? 401 : 503);
+    }
+
+    $hosts = array_map(static function (array $host): array {
+        $health = agent_health_for_host($host);
+
+        return [
+            'id' => (int) $host['id'],
+            'name' => (string) $host['name'],
+            'agent_url' => (string) $host['agent_url'],
+            'shared_game_path' => (string) ($host['shared_game_path'] ?? '/opt/fs25/game'),
+            'shared_dlc_path' => (string) ($host['shared_dlc_path'] ?? '/opt/fs25/dlc'),
+            'shared_installer_path' => (string) ($host['shared_installer_path'] ?? '/opt/fs25/installer'),
+            'is_enabled' => (bool) ($host['is_enabled'] ?? false),
+            'health' => $health,
+        ];
+    }, all_hosts());
+
+    json_response([
+        'ok' => true,
+        'node' => local_node_config(),
+        'hosts' => $hosts,
+    ]);
+}
+
+if ($route === 'api_node_servers') {
+    if (!node_api_request_authorized()) {
+        json_response(['ok' => false, 'error' => node_api_enabled() ? 'Unauthorized' : 'Node API is disabled'], node_api_enabled() ? 401 : 503);
+    }
+
+    $servers = db()->query('
+        SELECT
+            si.*,
+            mh.name AS host_name,
+            mh.agent_url
+        FROM server_instances si
+        LEFT JOIN managed_hosts mh ON mh.id = si.host_id
+        ORDER BY si.created_at DESC
+    ')->fetchAll();
+
+    $payload = array_map(static function (array $server): array {
+        return [
+            'instance_id' => (string) $server['instance_id'],
+            'server_name' => (string) $server['server_name'],
+            'status' => (string) $server['status'],
+            'host_id' => isset($server['host_id']) ? (int) $server['host_id'] : null,
+            'host_name' => (string) ($server['host_name'] ?? ''),
+            'server_port' => (int) ($server['server_port'] ?? 0),
+            'web_port' => (int) ($server['web_port'] ?? 0),
+            'vnc_port' => (int) ($server['vnc_port'] ?? 0),
+            'novnc_port' => (int) ($server['novnc_port'] ?? 0),
+            'sftp_port' => (int) ($server['sftp_port'] ?? 0),
+            'sftp_username' => (string) ($server['sftp_username'] ?? ''),
+            'web_url' => instance_access_url($server, 'web'),
+            'novnc_url' => instance_access_url($server, 'novnc'),
+            'sftp_url' => instance_access_url($server, 'sftp'),
+            'created_at' => (string) ($server['created_at'] ?? ''),
+            'updated_at' => (string) ($server['updated_at'] ?? ''),
+        ];
+    }, $servers);
+
+    json_response([
+        'ok' => true,
+        'node' => local_node_config(),
+        'servers' => $payload,
+    ]);
 }
 
 if ($route === 'host_create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -705,7 +795,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>FSG FS25 Panel</title>
+        <title>FSG FS25 Node</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         * { box-sizing: border-box; }
@@ -765,8 +855,8 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
     <?php if ($route === 'login'): ?>
         <div class="wrap" style="display:grid;place-items:center;">
             <div class="card" style="width:min(100%, 440px); margin: 80px auto;">
-                <h1>FSG FS25 Panel</h1>
-                <p class="muted">Sign in to manage hosts, installer files, and FS25 server instances from one control plane.</p>
+                <h1>FSG FS25 Node</h1>
+                <p class="muted">Sign in to manage this node's hosts, installer files, and FS25 server instances from one local control plane.</p>
                 <?php if ($flash): ?><div class="flash"><?= h($flash) ?></div><?php endif; ?>
                 <form method="post" action="/?route=login" class="grid">
                     <div>
@@ -795,12 +885,14 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
             ')->fetchAll();
             $hosts = all_hosts();
             $createHosts = enabled_hosts();
+            $node = local_node_config();
+            $nodeSummary = node_summary();
         ?>
         <header class="topbar">
             <div class="topbar-inner">
                 <div class="brand">
-                    <div class="brand-title">FSG FS25 Control Panel</div>
-                    <div class="brand-copy">Logged in as <?= h(current_user()['username']) ?>. Manage hosts, files, and servers from one place.</div>
+                    <div class="brand-title">FSG FS25 Node</div>
+                    <div class="brand-copy">Logged in as <?= h(current_user()['username']) ?>. Run this node locally now, and connect it to a main site later if needed.</div>
                 </div>
                 <nav class="nav">
                     <a class="nav-link <?= $pageRoute === 'managed_hosts' ? 'active' : '' ?>" href="/?route=managed_hosts">Managed Hosts</a>
@@ -817,8 +909,31 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
         <?php if ($pageRoute === 'managed_hosts'): ?>
             <section class="hero">
                 <h1>Managed Hosts</h1>
-                <p>This page defines which machines the panel can control. Add a host once, set its shared FS paths, prepare storage, and confirm the agent is reachable before creating servers on it.</p>
+                <p>This install acts as its own FS25 node. Use this page to manage the local node identity, review the future upstream API endpoints, and register any additional machines this node should control.</p>
             </section>
+            <div class="card">
+                <div class="page-grid two">
+                    <div>
+                        <h2 style="margin-top:0;">Local Node</h2>
+                        <div class="stack muted">
+                            <div>Name: <?= h($node['name']) ?></div>
+                            <div>Slug: <?= h($node['slug']) ?></div>
+                            <div>Panel URL: <a href="<?= h($node['app_url']) ?>" target="_blank" rel="noreferrer"><?= h($node['app_url']) ?></a></div>
+                            <div>Local host: <?= h((string) ($nodeSummary['local_host']['name'] ?? 'not configured')) ?></div>
+                            <div>Node API: <?= h(node_api_enabled() ? 'enabled' : 'disabled') ?></div>
+                        </div>
+                    </div>
+                    <div>
+                        <h2 style="margin-top:0;">Future Main-Site API</h2>
+                        <div class="stack muted">
+                            <div>Status: <code>GET <?= h($node['api_status_url']) ?></code></div>
+                            <div>Servers: <code>GET <?= h($node['api_servers_url']) ?></code></div>
+                            <div>Hosts: <code>GET <?= h($node['api_hosts_url']) ?></code></div>
+                            <div>Auth: <code>Authorization: Bearer &lt;NODE_API_TOKEN&gt;</code></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         <?php elseif ($pageRoute === 'file_management'): ?>
             <section class="hero">
                 <h1>File Management</h1>
@@ -1149,7 +1264,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
         </main>
         <footer class="footer">
             <div class="footer-inner">
-                <div>FSG FS25 Control Panel</div>
+                <div>FSG FS25 Node</div>
                 <div>Use Managed Hosts to connect machines, File Management to handle installers, Create Server for provisioning, and Game Servers for day-to-day operations.</div>
             </div>
         </footer>

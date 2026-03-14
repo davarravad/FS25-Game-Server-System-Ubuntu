@@ -1,6 +1,6 @@
-# FSG FS25 Panel
+# FSG FS25 Node
 
-Self-hosted Docker panel for provisioning and managing multiple Farming Simulator 25 dedicated servers on Ubuntu.
+Self-hosted Docker node for provisioning and managing Farming Simulator 25 dedicated servers on Ubuntu. Each node includes its own website and a token-protected node API so it can later report into a main website if you decide to centralize multiple nodes.
 
 This repo is designed to be:
 - **modular**
@@ -11,18 +11,21 @@ This repo is designed to be:
 
 ## What this repo includes
 
-- Panel stack with:
+- Node stack with:
   - **nginx**
   - **php-fpm**
   - **mariadb**
   - **internal agent**
+- Node API for:
+  - node status
+  - host inventory
+  - server inventory
 - Simple web UI for:
   - login
-  - list instances
-  - create instance
-  - start / stop / restart
-  - rebuild / update
-  - view logs
+  - managed hosts
+  - file management
+  - game servers
+  - create server
 - Template-driven FS25 instance generation
 - One-folder-per-instance design
 - Ubuntu bootstrap script
@@ -50,8 +53,11 @@ storage/
 
 ## Architecture
 
-### Control plane
-The panel website is the central controller. It stores managed host API endpoints in the database and sends instance requests to the correct host agent.
+### Local node
+This install is a full FS25 node. It hosts the website, database, internal agent, and local management workflows for the servers assigned to it.
+
+### Future upstream control plane
+The node also exposes a token-protected website API so a future main site can poll node status, hosts, and server inventory without needing direct Docker access.
 
 ### Runtime plane
 Each managed host keeps its own FS25 servers under:
@@ -81,7 +87,7 @@ This makes each instance:
 
 ## Install
 
-### Plug-and-play install on the panel host
+### Plug-and-play install on the node host
 
 ### 1. Clone the repo
 ```bash
@@ -97,7 +103,8 @@ sudo bash scripts/install-ubuntu.sh
 
 What it does:
 - installs Docker and the Compose plugin if they are missing
-- asks for the required panel, database, admin, and agent settings
+- asks for the required node, website, database, admin, and agent settings
+- asks for the node API token used by a future main website
 - asks for the shared FS25 host paths for `game`, `dlc`, and `installer`
 - writes the env file at the repo root as:
   - `.env.example`: template
@@ -105,15 +112,26 @@ What it does:
 - creates the instance and backup directories
 - creates the shared FS directories used by all instances on that host
 - builds and starts the panel stack automatically
-- verifies that the panel containers are running and that the website responds before finishing
+- verifies that the node containers are running and that the website responds before finishing
 
 After setup completes, open the panel URL printed by the script and sign in with the admin username and password you entered.
+
+The installer also prints the local node API endpoints:
+- `/?route=api_node_status`
+- `/?route=api_node_hosts`
+- `/?route=api_node_servers`
+
+Authenticate with:
+
+```text
+Authorization: Bearer <NODE_API_TOKEN>
+```
 
 ### 3. Add remote managed game hosts if needed
 
 If the panel host is also the game host, the default local agent is already bootstrapped and you can start creating servers immediately.
 
-If you want one website to manage multiple game hosts:
+If you want one website to manage multiple game hosts from this node:
 1. prepare each remote host with Docker, Docker Compose, `/opt/fsg-panel/instances`, and `/opt/fsg-panel/backups`
 2. run the agent on that host with its own `AGENT_SHARED_TOKEN`
 3. sign in to the panel
@@ -149,6 +167,18 @@ Before exposing this publicly, you should:
 - restrict who can reach the panel
 - optionally place nginx behind Cloudflare / reverse proxy
 - configure backups for `/opt/fsg-panel/instances`
+
+## Local node API
+
+This node exposes a small authenticated API from the same website:
+
+- `GET /?route=api_node_status`
+- `GET /?route=api_node_hosts`
+- `GET /?route=api_node_servers`
+
+Use `Authorization: Bearer <NODE_API_TOKEN>` or `X-Node-Token: <NODE_API_TOKEN>`.
+
+This is intended for future node-to-main-site integration. The current UI remains focused on local server operations.
 
 ## How instance creation works
 
@@ -189,12 +219,12 @@ But this repo adds:
 - install script
 
 ### Managed host support
-- The website can now manage multiple FS25 hosts from one location.
+- The node website can manage multiple FS25 hosts from one location if you decide to use it that way.
 - Each host runs the same lightweight agent API near its local Docker engine.
 - Add hosts in the UI with a name, agent URL, and shared token.
 - Each host also stores shared `game`, `dlc`, and `installer` paths used by every instance on that host.
 - New server instances are assigned to a managed host when created.
-- Existing installs bootstrap a default `Local Agent` host from `AGENT_URL` and `AGENT_SHARED_TOKEN`.
+- Existing installs bootstrap a default local host from `AGENT_URL` and `AGENT_SHARED_TOKEN`.
 
 ### Website access features
 - The panel can upload files directly into an instance on the selected host.
