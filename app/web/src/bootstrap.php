@@ -132,7 +132,7 @@ function local_host_record(): ?array
 
 function node_api_token(): string
 {
-    return (string) (local_node_config()['api_token'] ?? '');
+    return (string) env_value('NODE_API_TOKEN', '');
 }
 
 function node_api_enabled(): bool
@@ -191,6 +191,136 @@ function node_summary(): array
             'server_instances' => $serverCount,
         ],
     ];
+}
+
+function random_string_from_charset(string $charset, int $length): string
+{
+    $maxIndex = strlen($charset) - 1;
+    $result = '';
+
+    for ($i = 0; $i < $length; $i++) {
+        $result .= $charset[random_int(0, $maxIndex)];
+    }
+
+    return $result;
+}
+
+function generate_game_password(int $length = 10): string
+{
+    return random_string_from_charset('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', $length);
+}
+
+function generate_secure_password(int $length = 20): string
+{
+    return random_string_from_charset('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+', $length);
+}
+
+function next_instance_sequence(): int
+{
+    $rows = db()->query('SELECT instance_id FROM server_instances ORDER BY id ASC')->fetchAll();
+    $max = 0;
+
+    foreach ($rows as $row) {
+        $instanceId = (string) ($row['instance_id'] ?? '');
+        if (preg_match('/(\d+)(?!.*\d)/', $instanceId, $matches)) {
+            $max = max($max, (int) $matches[1]);
+        }
+    }
+
+    return $max + 1;
+}
+
+function next_available_port(string $field, int $basePort): int
+{
+    $allowedFields = ['server_port', 'web_port', 'vnc_port', 'novnc_port', 'sftp_port'];
+    if (!in_array($field, $allowedFields, true)) {
+        return $basePort;
+    }
+
+    $maxPort = (int) db()->query("SELECT COALESCE(MAX({$field}), 0) FROM server_instances")->fetchColumn();
+    return max($basePort, $maxPort + 1);
+}
+
+function suggested_create_defaults(): array
+{
+    $sequence = next_instance_sequence();
+
+    return [
+        'instance_id' => sprintf('fs25-%04d', $sequence),
+        'server_name' => sprintf('FSG Server %d', $sequence),
+        'image_name' => 'toetje585/arch-fs25server:latest',
+        'server_players' => 16,
+        'server_port' => next_available_port('server_port', 10823),
+        'web_port' => next_available_port('web_port', 18000),
+        'vnc_port' => next_available_port('vnc_port', 5900),
+        'novnc_port' => next_available_port('novnc_port', 6080),
+        'sftp_port' => next_available_port('sftp_port', 2222),
+        'server_password' => generate_game_password(),
+        'server_admin' => generate_game_password(),
+        'web_username' => 'admin',
+        'web_password' => generate_secure_password(),
+        'sftp_username' => 'fs25',
+        'sftp_password' => generate_secure_password(),
+        'vnc_password' => generate_secure_password(),
+        'server_region' => 'en',
+        'server_map' => 'MapUS',
+        'server_difficulty' => 3,
+        'server_pause' => 2,
+        'server_save_interval' => 180,
+        'server_stats_interval' => 31536000,
+        'puid' => 1000,
+        'pgid' => 1000,
+        'autostart_server' => 'true',
+    ];
+}
+
+function find_port_conflicts(array $ports, ?string $excludeInstanceId = null): array
+{
+    $fields = [
+        'server_port' => 'Game Port',
+        'web_port' => 'Admin Web Port',
+        'vnc_port' => 'VNC Port',
+        'novnc_port' => 'noVNC Port',
+        'sftp_port' => 'SFTP Port',
+    ];
+
+    $conflicts = [];
+    $sql = '
+        SELECT instance_id, server_name, server_port, web_port, vnc_port, novnc_port, sftp_port
+        FROM server_instances
+        WHERE (server_port = ? OR web_port = ? OR vnc_port = ? OR novnc_port = ? OR sftp_port = ?)
+    ';
+    $params = [
+        (int) ($ports['server_port'] ?? 0),
+        (int) ($ports['web_port'] ?? 0),
+        (int) ($ports['vnc_port'] ?? 0),
+        (int) ($ports['novnc_port'] ?? 0),
+        (int) ($ports['sftp_port'] ?? 0),
+    ];
+
+    if ($excludeInstanceId !== null && $excludeInstanceId !== '') {
+        $sql .= ' AND instance_id <> ?';
+        $params[] = $excludeInstanceId;
+    }
+
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+
+    foreach ($stmt->fetchAll() as $server) {
+        foreach ($fields as $field => $label) {
+            if ((int) ($server[$field] ?? 0) === (int) ($ports[$field] ?? -1)) {
+                $conflicts[] = sprintf(
+                    '%s %d is already used by %s (%s)',
+                    $label,
+                    (int) $ports[$field],
+                    (string) ($server['server_name'] ?? 'existing server'),
+                    (string) ($server['instance_id'] ?? 'unknown')
+                );
+            }
+        }
+    }
+
+    return array_values(array_unique($conflicts));
 }
 
 function host_storage_prepare(array $host): array
@@ -338,6 +468,36 @@ function find_instance_with_host(string $instanceId): ?array
     return $server ?: null;
 }
 
+function instance_metrics_for_server(array $server): array
+{
+    $instanceId = (string) ($server['instance_id'] ?? '');
+    if ($instanceId === '') {
+        return ['ok' => false, 'error' => 'Missing instance id'];
+    }
+
+    return agent_post_for_host($server, '/instance/metrics', [
+        'instance_id' => $instanceId,
+    ]);
+}
+
+function format_bytes_human(int $bytes): string
+{
+    if ($bytes <= 0) {
+        return '0 B';
+    }
+
+    $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    $value = (float) $bytes;
+    $unitIndex = 0;
+
+    while ($value >= 1024 && $unitIndex < count($units) - 1) {
+        $value /= 1024;
+        $unitIndex++;
+    }
+
+    return number_format($value, $value >= 100 ? 0 : 1) . ' ' . $units[$unitIndex];
+}
+
 function upload_instance_file_for_host(array $host, string $instanceId, string $target, array $file): array
 {
     if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
@@ -392,17 +552,98 @@ function upload_shared_host_file(array $host, string $target, array $file): arra
     ]);
 }
 
+function instance_upload_targets(): array
+{
+    return [
+        'profile' => ['label' => 'Profile Folder', 'relative_path' => 'data/config'],
+        'mods' => ['label' => 'Mods Folder', 'relative_path' => 'data/mods'],
+        'saves' => ['label' => 'Saves Folder', 'relative_path' => 'data/saves'],
+        'logs' => ['label' => 'Logs Folder', 'relative_path' => 'data/logs'],
+    ];
+}
+
+function host_upload_targets(array $host): array
+{
+    return [
+        'game' => [
+            'label' => 'Shared Game Folder',
+            'path' => (string) ($host['shared_game_path'] ?? '/opt/fs25/game'),
+        ],
+        'dlc' => [
+            'label' => 'Shared DLC Folder',
+            'path' => (string) ($host['shared_dlc_path'] ?? '/opt/fs25/dlc'),
+        ],
+        'installer' => [
+            'label' => 'Shared Installer Folder',
+            'path' => (string) ($host['shared_installer_path'] ?? '/opt/fs25/installer'),
+        ],
+    ];
+}
+
+function upload_context_for_request(?array $host, ?array $server, string $target): ?array
+{
+    if ($server) {
+        $targets = instance_upload_targets();
+        if (!isset($targets[$target])) {
+            return null;
+        }
+
+        $instanceId = (string) ($server['instance_id'] ?? '');
+        if ($instanceId === '' || !safe_instance_id_php($instanceId)) {
+            return null;
+        }
+
+        $relativePath = (string) $targets[$target]['relative_path'];
+        $absolutePath = rtrim((string) env_value('INSTANCE_BASE_PATH', '/opt/fsg-panel/instances'), '/\\') . '/' . $instanceId . '/' . $relativePath;
+
+        return [
+            'scope' => 'panel-upload',
+            'mode' => 'instance',
+            'target' => $target,
+            'label' => (string) $targets[$target]['label'],
+            'path' => str_replace('\\', '/', $absolutePath),
+            'host' => $server,
+            'instance_id' => $instanceId,
+            'back_route' => 'game_servers',
+        ];
+    }
+
+    if ($host) {
+        $targets = host_upload_targets($host);
+        if (!isset($targets[$target])) {
+            return null;
+        }
+
+        return [
+            'scope' => 'panel-upload',
+            'mode' => 'host',
+            'target' => $target,
+            'label' => (string) $targets[$target]['label'],
+            'path' => (string) $targets[$target]['path'],
+            'host' => $host,
+            'back_route' => 'file_management',
+        ];
+    }
+
+    return null;
+}
+
+function safe_instance_id_php(string $instanceId): bool
+{
+    return preg_match('/^[a-zA-Z0-9_-]+$/', $instanceId) === 1;
+}
+
 function base64url_encode(string $value): string
 {
     return rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
 }
 
-function generate_host_upload_token(array $host, string $filename, string $target = 'installer', int $ttlSeconds = 900): string
+function generate_path_upload_token(array $host, string $filename, string $path, string $scope = 'panel-upload', int $ttlSeconds = 900): string
 {
     $payload = json_encode([
         'filename' => $filename,
-        'target' => $target,
-        'path' => (string) ($host['shared_installer_path'] ?? '/opt/fs25/installer'),
+        'scope' => $scope,
+        'path' => $path,
         'exp' => time() + $ttlSeconds,
     ], JSON_THROW_ON_ERROR);
 
@@ -412,7 +653,7 @@ function generate_host_upload_token(array $host, string $filename, string $targe
     return $payloadEncoded . '.' . base64url_encode($signature);
 }
 
-function stream_installer_chunk_for_host(array $host, string $filename, int $offset, int $totalSize, bool $isLastChunk): array
+function stream_upload_chunk_for_host(array $host, string $filename, string $path, int $offset, int $totalSize, bool $isLastChunk): array
 {
     $filename = basename($filename);
     if ($filename === '') {
@@ -429,7 +670,7 @@ function stream_installer_chunk_for_host(array $host, string $filename, int $off
     }
 
     $url = rtrim((string) ($host['agent_url'] ?? ''), '/') . '/host/upload/chunk';
-    $token = generate_host_upload_token($host, $filename);
+    $token = generate_path_upload_token($host, $filename, $path);
     $headers = [
         'Content-Type: application/octet-stream',
         'X-Upload-Token: ' . $token,

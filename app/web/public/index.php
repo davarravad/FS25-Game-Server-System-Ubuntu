@@ -126,9 +126,11 @@ if ($route === 'api_node_servers') {
     ]);
 }
 
-if ($route === 'host_create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($route === 'host_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     require_login();
 
+    $hostId = (int) ($_POST['host_id'] ?? 0);
+    $host = find_host($hostId);
     $name = trim((string) ($_POST['name'] ?? ''));
     $agentUrl = trim((string) ($_POST['agent_url'] ?? ''));
     $agentToken = trim((string) ($_POST['agent_token'] ?? ''));
@@ -136,18 +138,24 @@ if ($route === 'host_create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $sharedDlcPath = trim((string) ($_POST['shared_dlc_path'] ?? '/opt/fs25/dlc'));
     $sharedInstallerPath = trim((string) ($_POST['shared_installer_path'] ?? '/opt/fs25/installer'));
 
+    if (!$host) {
+        flash('Default host record was not found.');
+        redirect_route('managed_hosts');
+    }
+
     if ($name === '' || $agentUrl === '' || $agentToken === '') {
         flash('Host name, API URL, and token are required.');
         redirect_route('managed_hosts');
     }
 
     $stmt = db()->prepare('
-        INSERT INTO managed_hosts (name, agent_url, agent_token, shared_game_path, shared_dlc_path, shared_installer_path, is_enabled)
-        VALUES (?, ?, ?, ?, ?, ?, 1)
+        UPDATE managed_hosts
+        SET name = ?, agent_url = ?, agent_token = ?, shared_game_path = ?, shared_dlc_path = ?, shared_installer_path = ?
+        WHERE id = ?
     ');
-    $stmt->execute([$name, $agentUrl, $agentToken, $sharedGamePath, $sharedDlcPath, $sharedInstallerPath]);
+    $stmt->execute([$name, $agentUrl, $agentToken, $sharedGamePath, $sharedDlcPath, $sharedInstallerPath, $hostId]);
 
-    flash('Managed host added.');
+    flash('Default host updated.');
     redirect_route('managed_hosts');
 }
 
@@ -191,16 +199,20 @@ if ($route === 'installer_unzip' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect_route('file_management');
 }
 
-if ($route === 'installer_upload_token') {
+if ($route === 'upload_token') {
     require_login();
 
     $hostId = (int) ($_GET['host_id'] ?? 0);
+    $instanceId = (string) ($_GET['instance_id'] ?? '');
+    $target = trim((string) ($_GET['target'] ?? 'installer'));
     $filename = basename((string) ($_GET['filename'] ?? ''));
-    $host = find_host($hostId);
+    $server = $instanceId !== '' ? find_instance_with_host($instanceId) : null;
+    $host = $server ?: find_host($hostId);
+    $context = upload_context_for_request($server ? null : $host, $server, $target);
 
-    if (!$host || !(int) $host['is_enabled']) {
+    if (!$host || !(int) ($host['is_enabled'] ?? 0) || !$context) {
         header('Content-Type: application/json', true, 404);
-        echo json_encode(['ok' => false, 'error' => 'Host not found']);
+        echo json_encode(['ok' => false, 'error' => 'Upload target not found']);
         exit;
     }
 
@@ -213,51 +225,65 @@ if ($route === 'installer_upload_token') {
     header('Content-Type: application/json');
     echo json_encode([
         'ok' => true,
-        'upload_url' => '/?route=installer_upload_chunk&host_id=' . rawurlencode((string) $host['id']) . '&filename=' . rawurlencode($filename),
+        'upload_url' => '/?route=upload_chunk'
+            . '&host_id=' . rawurlencode((string) ($host['id'] ?? 0))
+            . '&target=' . rawurlencode($target)
+            . ($server ? '&instance_id=' . rawurlencode($instanceId) : '')
+            . '&filename=' . rawurlencode($filename),
         'filename' => $filename,
+        'target_label' => $context['label'],
+        'path' => $context['path'],
     ]);
     exit;
 }
 
-if ($route === 'installer_upload_chunk' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($route === 'upload_chunk' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     require_login();
     session_write_close();
 
     $hostId = (int) ($_GET['host_id'] ?? 0);
+    $instanceId = (string) ($_GET['instance_id'] ?? '');
+    $target = trim((string) ($_GET['target'] ?? 'installer'));
     $filename = basename((string) ($_GET['filename'] ?? ''));
     $offset = (int) ($_GET['offset'] ?? 0);
     $totalSize = (int) ($_GET['total_size'] ?? 0);
     $isLastChunk = (string) ($_GET['is_last'] ?? '0') === '1';
-    $host = find_host($hostId);
+    $server = $instanceId !== '' ? find_instance_with_host($instanceId) : null;
+    $host = $server ?: find_host($hostId);
+    $context = upload_context_for_request($server ? null : $host, $server, $target);
 
-    if (!$host || !(int) $host['is_enabled']) {
+    if (!$host || !(int) ($host['is_enabled'] ?? 0) || !$context) {
         header('Content-Type: application/json', true, 404);
-        echo json_encode(['ok' => false, 'error' => 'Host not found']);
+        echo json_encode(['ok' => false, 'error' => 'Upload target not found']);
         exit;
     }
 
-    $result = stream_installer_chunk_for_host($host, $filename, $offset, $totalSize, $isLastChunk);
+    $result = stream_upload_chunk_for_host($host, $filename, (string) $context['path'], $offset, $totalSize, $isLastChunk);
     header('Content-Type: application/json', true, ($result['ok'] ?? false) ? 200 : 502);
     echo json_encode($result);
     exit;
 }
 
-if ($route === 'installer_upload') {
+if ($route === 'upload_large' || $route === 'installer_upload') {
     require_login();
 
     $hostId = (int) ($_GET['host_id'] ?? 0);
-    $host = find_host($hostId);
+    $instanceId = (string) ($_GET['instance_id'] ?? '');
+    $target = trim((string) ($_GET['target'] ?? ($route === 'installer_upload' ? 'installer' : '')));
+    $server = $instanceId !== '' ? find_instance_with_host($instanceId) : null;
+    $host = $server ?: find_host($hostId);
+    $context = upload_context_for_request($server ? null : $host, $server, $target);
 
-    if (!$host || !(int) $host['is_enabled']) {
-        flash('Select a valid managed host.');
-        redirect_route('file_management');
+    if (!$host || !(int) ($host['is_enabled'] ?? 0) || !$context) {
+        flash('Select a valid upload target.');
+        redirect_route($server ? 'game_servers' : 'file_management');
     }
 
     ?><!doctype html>
     <html lang="en">
     <head>
         <meta charset="utf-8">
-        <title><?= h($host['name']) ?> Installer Upload</title>
+        <title><?= h(($server['server_name'] ?? $host['name']) . ' ' . $context['label'] . ' Upload') ?></title>
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
             * { box-sizing: border-box; }
@@ -280,13 +306,13 @@ if ($route === 'installer_upload') {
     <body>
     <div class="page">
         <div class="card">
-            <h1>Installer Upload</h1>
-            <p class="muted">Upload large installer files directly to <strong><?= h($host['shared_installer_path'] ?? '/opt/fs25/installer') ?></strong> on <?= h($host['name']) ?>.</p>
-            <p class="muted">This path uploads retryable chunks through the panel to the host agent and supports multi-GB uploads. Installer folder only.</p>
+            <h1><?= h($context['label']) ?> Upload</h1>
+            <p class="muted">Upload large files directly to <strong><?= h((string) $context['path']) ?></strong> on <?= h((string) ($server['server_name'] ?? $host['name'])) ?>.</p>
+            <p class="muted">This path uploads retryable chunks through the panel to the host agent and supports multi-GB uploads for shared `/opt/fs25/*` folders and per-server profile storage.</p>
             <input id="upload-file" type="file" required>
             <div class="actions">
                 <button id="start-upload" type="button">Start Upload</button>
-                <a class="button-link gray" href="/?route=file_management">Back to File Management</a>
+                <a class="button-link gray" href="/?route=<?= h($context['back_route']) ?>">Back</a>
             </div>
             <div class="progress-shell">
                 <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
@@ -308,6 +334,8 @@ if ($route === 'installer_upload') {
     const etaText = document.getElementById('eta-text');
     const statusText = document.getElementById('status-text');
     const hostId = <?= json_encode((string) $host['id']) ?>;
+    const instanceId = <?= json_encode($server['instance_id'] ?? '') ?>;
+    const target = <?= json_encode($target) ?>;
 
     function formatBytes(bytes) {
         if (!Number.isFinite(bytes) || bytes < 0) return 'n/a';
@@ -344,7 +372,7 @@ if ($route === 'installer_upload') {
         statusText.className = 'muted';
 
         try {
-            const tokenResponse = await fetch(`/?route=installer_upload_token&host_id=${encodeURIComponent(hostId)}&filename=${encodeURIComponent(file.name)}`, {
+            const tokenResponse = await fetch(`/?route=upload_token&host_id=${encodeURIComponent(hostId)}&target=${encodeURIComponent(target)}${instanceId ? `&instance_id=${encodeURIComponent(instanceId)}` : ''}&filename=${encodeURIComponent(file.name)}`, {
                 credentials: 'same-origin',
             });
             const tokenData = await tokenResponse.json();
@@ -352,6 +380,9 @@ if ($route === 'installer_upload') {
             if (!tokenData.ok) {
                 throw new Error(tokenData.error || 'Failed to get upload token');
             }
+
+            statusText.textContent = `Status: uploading to ${tokenData.target_label}`;
+            statusText.className = 'muted';
 
             const startedAt = Date.now();
             const chunkSize = 64 * 1024 * 1024;
@@ -435,9 +466,10 @@ if ($route === 'installer_upload') {
 if ($route === 'create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     require_login();
 
+    $defaults = suggested_create_defaults();
     $instanceId = preg_replace('/[^a-zA-Z0-9_-]/', '', (string)($_POST['instance_id'] ?? ''));
     $serverName = trim((string)($_POST['server_name'] ?? ''));
-    $imageName = trim((string)($_POST['image_name'] ?? 'toetje585/arch-fs25server:latest'));
+    $imageName = trim((string)($_POST['image_name'] ?? (string) $defaults['image_name']));
     $hostId = (int) ($_POST['host_id'] ?? 0);
     $host = find_host($hostId);
 
@@ -447,36 +479,42 @@ if ($route === 'create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     $payload = [
-        'instance_id' => $instanceId,
-        'server_name' => $serverName ?: $instanceId,
+        'instance_id' => $instanceId !== '' ? $instanceId : (string) $defaults['instance_id'],
+        'server_name' => $serverName !== '' ? $serverName : (string) $defaults['server_name'],
         'image_name' => $imageName,
         'shared_game_path' => (string) ($host['shared_game_path'] ?? '/opt/fs25/game'),
         'shared_dlc_path' => (string) ($host['shared_dlc_path'] ?? '/opt/fs25/dlc'),
         'shared_installer_path' => (string) ($host['shared_installer_path'] ?? '/opt/fs25/installer'),
-        'server_password' => (string)($_POST['server_password'] ?? ''),
-        'server_admin' => (string)($_POST['server_admin'] ?? ''),
-        'server_players' => (int)($_POST['server_players'] ?? 16),
-        'server_port' => (int)($_POST['server_port'] ?? 10823),
-        'web_port' => (int)($_POST['web_port'] ?? 18000),
-        'vnc_port' => (int)($_POST['vnc_port'] ?? 5900),
-        'novnc_port' => (int)($_POST['novnc_port'] ?? 6080),
-        'sftp_port' => (int)($_POST['sftp_port'] ?? 2222),
-        'sftp_username' => (string)($_POST['sftp_username'] ?? 'fs25'),
-        'sftp_password' => (string)($_POST['sftp_password'] ?? 'changeme'),
-        'server_region' => (string)($_POST['server_region'] ?? 'en'),
-        'server_map' => (string)($_POST['server_map'] ?? 'MapUS'),
-        'server_difficulty' => (int)($_POST['server_difficulty'] ?? 3),
-        'server_pause' => (int)($_POST['server_pause'] ?? 2),
-        'server_save_interval' => (float)($_POST['server_save_interval'] ?? 180),
-        'server_stats_interval' => (int)($_POST['server_stats_interval'] ?? 31536000),
+        'server_password' => trim((string)($_POST['server_password'] ?? '')) ?: (string) $defaults['server_password'],
+        'server_admin' => trim((string)($_POST['server_admin'] ?? '')) ?: (string) $defaults['server_admin'],
+        'server_players' => (int)($_POST['server_players'] ?? (int) $defaults['server_players']),
+        'server_port' => (int)($_POST['server_port'] ?? (int) $defaults['server_port']),
+        'web_port' => (int)($_POST['web_port'] ?? (int) $defaults['web_port']),
+        'vnc_port' => (int)($_POST['vnc_port'] ?? (int) $defaults['vnc_port']),
+        'novnc_port' => (int)($_POST['novnc_port'] ?? (int) $defaults['novnc_port']),
+        'sftp_port' => (int)($_POST['sftp_port'] ?? (int) $defaults['sftp_port']),
+        'sftp_username' => trim((string)($_POST['sftp_username'] ?? '')) ?: (string) $defaults['sftp_username'],
+        'sftp_password' => trim((string)($_POST['sftp_password'] ?? '')) ?: (string) $defaults['sftp_password'],
+        'server_region' => trim((string)($_POST['server_region'] ?? '')) ?: (string) $defaults['server_region'],
+        'server_map' => trim((string)($_POST['server_map'] ?? '')) ?: (string) $defaults['server_map'],
+        'server_difficulty' => (int)($_POST['server_difficulty'] ?? (int) $defaults['server_difficulty']),
+        'server_pause' => (int)($_POST['server_pause'] ?? (int) $defaults['server_pause']),
+        'server_save_interval' => (float)($_POST['server_save_interval'] ?? (float) $defaults['server_save_interval']),
+        'server_stats_interval' => (int)($_POST['server_stats_interval'] ?? (int) $defaults['server_stats_interval']),
         'server_crossplay' => isset($_POST['server_crossplay']),
-        'autostart_server' => (string)($_POST['autostart_server'] ?? 'true'),
-        'puid' => (int)($_POST['puid'] ?? 1000),
-        'pgid' => (int)($_POST['pgid'] ?? 1000),
-        'vnc_password' => (string)($_POST['vnc_password'] ?? 'changeme'),
-        'web_username' => (string)($_POST['web_username'] ?? 'admin'),
-        'web_password' => (string)($_POST['web_password'] ?? 'changeme'),
+        'autostart_server' => (string)($_POST['autostart_server'] ?? (string) $defaults['autostart_server']),
+        'puid' => (int)($_POST['puid'] ?? (int) $defaults['puid']),
+        'pgid' => (int)($_POST['pgid'] ?? (int) $defaults['pgid']),
+        'vnc_password' => trim((string)($_POST['vnc_password'] ?? '')) ?: (string) $defaults['vnc_password'],
+        'web_username' => trim((string)($_POST['web_username'] ?? '')) ?: (string) $defaults['web_username'],
+        'web_password' => trim((string)($_POST['web_password'] ?? '')) ?: (string) $defaults['web_password'],
     ];
+
+    $portConflicts = find_port_conflicts($payload);
+    if ($portConflicts) {
+        flash('Create failed: ' . implode('; ', $portConflicts));
+        redirect_route('create_server');
+    }
 
     $agent = agent_post_for_host($host, '/instance/create', $payload);
 
@@ -629,6 +667,71 @@ if ($route === 'delete' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect_route('game_servers');
 }
 
+if ($route === 'server_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    require_login();
+
+    $instanceId = (string) ($_POST['instance_id'] ?? '');
+    $server = find_instance_with_host($instanceId);
+
+    if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
+        flash('Managed host for this server is missing or disabled.');
+        redirect_route('game_servers');
+    }
+
+    $payload = [
+        'server_name' => trim((string) ($_POST['server_name'] ?? '')),
+        'image_name' => trim((string) ($_POST['image_name'] ?? '')),
+        'server_port' => (int) ($_POST['server_port'] ?? 0),
+        'web_port' => (int) ($_POST['web_port'] ?? 0),
+        'vnc_port' => (int) ($_POST['vnc_port'] ?? 0),
+        'novnc_port' => (int) ($_POST['novnc_port'] ?? 0),
+        'sftp_port' => (int) ($_POST['sftp_port'] ?? 0),
+        'sftp_username' => trim((string) ($_POST['sftp_username'] ?? '')),
+        'sftp_password' => trim((string) ($_POST['sftp_password'] ?? '')),
+        'server_players' => (int) ($_POST['server_players'] ?? 16),
+        'server_region' => trim((string) ($_POST['server_region'] ?? 'en')),
+        'server_map' => trim((string) ($_POST['server_map'] ?? 'MapUS')),
+    ];
+
+    if ($payload['server_name'] === '' || $payload['image_name'] === '' || $payload['sftp_username'] === '' || $payload['sftp_password'] === '') {
+        flash('Server name, image, SFTP username, and SFTP password are required.');
+        header('Location: /?route=server&instance_id=' . rawurlencode($instanceId));
+        exit;
+    }
+
+    $portConflicts = find_port_conflicts($payload, $instanceId);
+    if ($portConflicts) {
+        flash('Update failed: ' . implode('; ', $portConflicts));
+        header('Location: /?route=server&instance_id=' . rawurlencode($instanceId));
+        exit;
+    }
+
+    $stmt = db()->prepare('
+        UPDATE server_instances
+        SET server_name = ?, image_name = ?, server_port = ?, web_port = ?, vnc_port = ?, novnc_port = ?, sftp_port = ?, sftp_username = ?, sftp_password = ?, server_players = ?, server_region = ?, server_map = ?
+        WHERE instance_id = ?
+    ');
+    $stmt->execute([
+        $payload['server_name'],
+        $payload['image_name'],
+        $payload['server_port'],
+        $payload['web_port'],
+        $payload['vnc_port'],
+        $payload['novnc_port'],
+        $payload['sftp_port'],
+        $payload['sftp_username'],
+        $payload['sftp_password'],
+        $payload['server_players'],
+        $payload['server_region'],
+        $payload['server_map'],
+        $instanceId,
+    ]);
+
+    flash('Server details updated in the panel. Recreate or update the runtime config separately if those values also need to change inside the container.');
+    header('Location: /?route=server&instance_id=' . rawurlencode($instanceId));
+    exit;
+}
+
 if ($route === 'upload' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     require_login();
 
@@ -648,6 +751,118 @@ if ($route === 'upload' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         : 'Upload failed: ' . ($result['error'] ?? 'Unknown error'));
 
     redirect_route('game_servers');
+}
+
+if ($route === 'server') {
+    require_login();
+
+    $instanceId = (string) ($_GET['instance_id'] ?? '');
+    $server = find_instance_with_host($instanceId);
+
+    if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
+        flash('Managed host for this server is missing or disabled.');
+        redirect_route('game_servers');
+    }
+
+    $metricsResult = instance_metrics_for_server($server);
+    $metrics = ($metricsResult['metrics'] ?? []);
+    $webUrl = instance_access_url($server, 'web');
+    $novncUrl = instance_access_url($server, 'novnc');
+    $flash = flash();
+    ?><!doctype html>
+    <html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <title><?= h($server['server_name']) ?> Details</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            * { box-sizing: border-box; }
+            body { margin: 0; font-family: Arial, sans-serif; background: #0b1020; color: #f2f4f8; }
+            .page { max-width: 1180px; margin: 0 auto; padding: 24px; }
+            .card { background: #171c25; border: 1px solid #2a3240; border-radius: 16px; padding: 20px; margin-bottom: 20px; }
+            .grid { display: grid; gap: 16px; }
+            .grid.two { grid-template-columns: 1.2fr 0.8fr; }
+            .grid.form { grid-template-columns: repeat(3, 1fr); }
+            .muted { color: #a8b3c7; }
+            .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+            .button-link, button { display: inline-block; padding: 10px 14px; border-radius: 8px; border: 0; background: #2563eb; color: #fff; text-decoration: none; cursor: pointer; }
+            .button-link.gray, button.gray { background: #475569; }
+            button.danger { background: #b91c1c; }
+            input { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #fff; }
+            label { display: block; margin-bottom: 8px; color: #dbe4f0; }
+            .flash { padding: 12px; background: #1d4ed8; border-radius: 10px; margin-bottom: 16px; }
+            .meter { display: grid; gap: 6px; }
+            .meter-bar { height: 12px; border-radius: 999px; background: #0f172a; overflow: hidden; border: 1px solid #243041; }
+            .meter-fill { height: 100%; background: linear-gradient(90deg, #0ea5e9, #22c55e); }
+            @media (max-width: 900px) { .grid.two, .grid.form { grid-template-columns: 1fr; } }
+        </style>
+    </head>
+    <body>
+    <div class="page">
+        <?php if ($flash): ?><div class="flash"><?= h($flash) ?></div><?php endif; ?>
+        <div class="actions" style="margin-bottom:16px;">
+            <a class="button-link gray" href="/?route=game_servers">Back to Game Servers</a>
+            <?php if ($novncUrl): ?><a class="button-link" href="/?route=console&amp;instance_id=<?= h($server['instance_id']) ?>">VNC Viewer</a><?php endif; ?>
+            <?php if ($webUrl): ?><a class="button-link" href="<?= h($webUrl) ?>" target="_blank" rel="noreferrer">Game Webpage</a><?php endif; ?>
+            <a class="button-link" href="/?route=logs&amp;instance_id=<?= h($server['instance_id']) ?>">Logs</a>
+            <?php foreach (['start', 'stop', 'restart', 'pull', 'rebuild'] as $act): ?>
+                <form method="post" action="/?route=action" style="display:inline;">
+                    <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
+                    <input type="hidden" name="action" value="<?= h($act) ?>">
+                    <button class="<?= in_array($act, ['pull', 'rebuild'], true) ? 'gray' : '' ?>" type="submit"><?= h($act) ?></button>
+                </form>
+            <?php endforeach; ?>
+        </div>
+
+        <div class="grid two">
+            <div class="card">
+                <h1 style="margin-top:0;"><?= h($server['server_name']) ?></h1>
+                <div class="muted"><?= h($server['instance_id']) ?> on <?= h($server['host_name'] ?? 'managed host') ?></div>
+                <form method="post" action="/?route=server_update" class="grid form" style="margin-top:18px;">
+                    <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
+                    <div><label>Server Name</label><input name="server_name" value="<?= h($server['server_name']) ?>"></div>
+                    <div><label>Image</label><input name="image_name" value="<?= h($server['image_name']) ?>"></div>
+                    <div><label>Players</label><input name="server_players" type="number" value="<?= h((string) $server['server_players']) ?>"></div>
+                    <div><label>Game Port</label><input name="server_port" type="number" value="<?= h((string) $server['server_port']) ?>"></div>
+                    <div><label>Admin Web Port</label><input name="web_port" type="number" value="<?= h((string) $server['web_port']) ?>"></div>
+                    <div><label>VNC Port</label><input name="vnc_port" type="number" value="<?= h((string) $server['vnc_port']) ?>"></div>
+                    <div><label>noVNC Port</label><input name="novnc_port" type="number" value="<?= h((string) $server['novnc_port']) ?>"></div>
+                    <div><label>SFTP Port</label><input name="sftp_port" type="number" value="<?= h((string) $server['sftp_port']) ?>"></div>
+                    <div><label>SFTP Username</label><input name="sftp_username" value="<?= h($server['sftp_username'] ?? 'fs25') ?>"></div>
+                    <div><label>SFTP Password</label><input name="sftp_password" value="<?= h($server['sftp_password'] ?? 'changeme') ?>"></div>
+                    <div><label>Region</label><input name="server_region" value="<?= h($server['server_region'] ?? 'en') ?>"></div>
+                    <div><label>Map</label><input name="server_map" value="<?= h($server['server_map'] ?? 'MapUS') ?>"></div>
+                    <div style="display:flex;align-items:end;"><button type="submit">Save Panel Details</button></div>
+                </form>
+            </div>
+            <div class="card">
+                <h2 style="margin-top:0;">Runtime Health</h2>
+                <?php
+                    $cpuPercent = (float) ($metrics['cpu_percent'] ?? 0);
+                    $memoryPercent = (float) ($metrics['memory_percent'] ?? 0);
+                    $diskPercent = (float) ($metrics['disk_percent'] ?? 0);
+                ?>
+                <div class="meter">
+                    <div>CPU: <?= h(number_format($cpuPercent, 1)) ?>%</div>
+                    <div class="meter-bar"><div class="meter-fill" style="width: <?= h((string) min(max($cpuPercent, 0), 100)) ?>%"></div></div>
+                </div>
+                <div class="meter" style="margin-top:16px;">
+                    <div>RAM: <?= h(format_bytes_human((int) ($metrics['memory_used_bytes'] ?? 0))) ?> / <?= h(format_bytes_human((int) ($metrics['memory_limit_bytes'] ?? 0))) ?> (<?= h(number_format($memoryPercent, 1)) ?>%)</div>
+                    <div class="meter-bar"><div class="meter-fill" style="width: <?= h((string) min(max($memoryPercent, 0), 100)) ?>%"></div></div>
+                </div>
+                <div class="meter" style="margin-top:16px;">
+                    <div>Disk: <?= h(format_bytes_human((int) ($metrics['disk_used_bytes'] ?? 0))) ?> (<?= h(number_format($diskPercent, 1)) ?>%)</div>
+                    <div class="meter-bar"><div class="meter-fill" style="width: <?= h((string) min(max($diskPercent, 0), 100)) ?>%"></div></div>
+                </div>
+                <div class="muted" style="margin-top:16px;">Status: <?= h(($metrics['running'] ?? false) ? 'running' : 'stopped') ?></div>
+                <div class="muted" style="margin-top:8px;">Panel detail edits update stored panel metadata. If ports or image settings must also change in the runtime container config, recreate or sync the instance afterward.</div>
+            </div>
+        </div>
+    </div>
+    </body>
+    </html>
+    <?php
+    exit;
 }
 
 if ($route === 'console') {
@@ -842,6 +1057,18 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
         .dir-list { display: grid; gap: 8px; margin-top: 12px; }
         .dir-item { display: grid; gap: 6px; padding: 10px; border: 1px solid #243041; border-radius: 10px; background: #0f172a; }
         .notice { padding: 14px 16px; border-radius: 12px; background: #101827; border: 1px solid #243041; color: #bdc8d8; }
+        .server-grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+        .server-card { display: grid; gap: 14px; }
+        .server-card-head { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
+        .server-card-title { margin: 0; font-size: 22px; }
+        .server-card-link { color: inherit; text-decoration: none; display: block; }
+        .health-grid { display: grid; gap: 12px; }
+        .health-meter { display: grid; gap: 6px; }
+        .health-label { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; color: #dbe4f0; }
+        .health-bar { height: 10px; border-radius: 999px; background: #0f172a; overflow: hidden; border: 1px solid #243041; }
+        .health-fill { height: 100%; background: linear-gradient(90deg, #0ea5e9, #22c55e); }
+        .health-fill.warn { background: linear-gradient(90deg, #f59e0b, #ef4444); }
+        .stat-chip { display: inline-flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 999px; background: #0f172a; border: 1px solid #243041; font-size: 13px; color: #c7d2e3; }
         .footer { border-top: 1px solid #243041; background: rgba(10, 14, 22, 0.9); }
         .footer-inner { max-width: 1240px; margin: 0 auto; padding: 18px 24px 24px; display: flex; justify-content: space-between; gap: 18px; flex-wrap: wrap; color: #8ea0bc; font-size: 13px; }
         @media (max-width: 900px) {
@@ -878,15 +1105,34 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
             $servers = db()->query('
                 SELECT
                     si.*,
-                    mh.name AS host_name
+                    mh.name AS host_name,
+                    mh.agent_url,
+                    mh.agent_token,
+                    mh.is_enabled
                 FROM server_instances si
                 LEFT JOIN managed_hosts mh ON mh.id = si.host_id
                 ORDER BY si.created_at DESC
             ')->fetchAll();
+            foreach ($servers as &$serverRow) {
+                $metricsResult = instance_metrics_for_server($serverRow);
+                $serverRow['metrics'] = $metricsResult['metrics'] ?? [
+                    'cpu_percent' => 0,
+                    'memory_used_bytes' => 0,
+                    'memory_limit_bytes' => 0,
+                    'memory_percent' => 0,
+                    'disk_used_bytes' => 0,
+                    'disk_percent' => 0,
+                    'running' => false,
+                ];
+                $serverRow['metrics_ok'] = (bool) ($metricsResult['ok'] ?? false);
+            }
+            unset($serverRow);
             $hosts = all_hosts();
             $createHosts = enabled_hosts();
+            $localHost = local_host_record();
             $node = local_node_config();
             $nodeSummary = node_summary();
+            $createDefaults = suggested_create_defaults();
         ?>
         <header class="topbar">
             <div class="topbar-inner">
@@ -909,7 +1155,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
         <?php if ($pageRoute === 'managed_hosts'): ?>
             <section class="hero">
                 <h1>Managed Hosts</h1>
-                <p>This install acts as its own FS25 node. Use this page to manage the local node identity, review the future upstream API endpoints, and register any additional machines this node should control.</p>
+                <p>This install acts as its own FS25 node. Use this page to maintain the default local host record, confirm connectivity, and prepare the shared FS paths used by this node.</p>
             </section>
             <div class="card">
                 <div class="page-grid two">
@@ -954,31 +1200,36 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
         <?php if ($pageRoute === 'managed_hosts'): ?>
         <div class="page-grid two">
         <div class="card">
-            <h2>Managed Hosts</h2>
-            <div class="notice" style="margin-bottom:16px;">Register a machine running the internal agent. The shared paths tell the panel where host-wide game files, DLC, and installers live.</div>
-            <form method="post" action="/?route=host_create" class="grid">
-                <div><label>Host Name</label><input name="name" placeholder="Node A" required></div>
-                <div><label>Agent API URL</label><input name="agent_url" placeholder="http://host-or-agent:8081" required></div>
-                <div><label>Agent Token</label><input name="agent_token" type="password" required></div>
-                <div><label>Shared Game Path</label><input name="shared_game_path" value="/opt/fs25/game" required></div>
-                <div><label>Shared DLC Path</label><input name="shared_dlc_path" value="/opt/fs25/dlc" required></div>
-                <div><label>Shared Installer Path</label><input name="shared_installer_path" value="/opt/fs25/installer" required></div>
-                <div><button type="submit">Add Managed Host</button></div>
-            </form>
+            <h2>Default Host Settings</h2>
+            <div class="notice" style="margin-bottom:16px;">This node manages its default local host here. Update the agent endpoint, token, and shared FS paths as needed instead of creating additional host entries from this screen.</div>
+            <?php if ($localHost): ?>
+                <form method="post" action="/?route=host_update" class="grid">
+                    <input type="hidden" name="host_id" value="<?= h((string) $localHost['id']) ?>">
+                    <div><label>Host Name</label><input name="name" value="<?= h((string) $localHost['name']) ?>" required></div>
+                    <div><label>Agent API URL</label><input name="agent_url" value="<?= h((string) $localHost['agent_url']) ?>" required></div>
+                    <div><label>Agent Token</label><input name="agent_token" type="password" value="<?= h((string) $localHost['agent_token']) ?>" required></div>
+                    <div><label>Shared Game Path</label><input name="shared_game_path" value="<?= h((string) ($localHost['shared_game_path'] ?? '/opt/fs25/game')) ?>" required></div>
+                    <div><label>Shared DLC Path</label><input name="shared_dlc_path" value="<?= h((string) ($localHost['shared_dlc_path'] ?? '/opt/fs25/dlc')) ?>" required></div>
+                    <div><label>Shared Installer Path</label><input name="shared_installer_path" value="<?= h((string) ($localHost['shared_installer_path'] ?? '/opt/fs25/installer')) ?>" required></div>
+                    <div><button type="submit">Update Default Host</button></div>
+                </form>
+            <?php else: ?>
+                <div class="notice">No default host record exists yet. Re-run the installer to bootstrap the local host entry.</div>
+            <?php endif; ?>
         </div>
         <div class="card">
             <h2>How To Use This Page</h2>
             <div class="stack muted">
-                <div>1. Add the host with its agent URL and token.</div>
+                <div>1. Review the default local host details and update them if the agent URL, token, or storage paths change.</div>
                 <div>2. Verify the host shows as online.</div>
                 <div>3. Prepare storage once so shared folders exist.</div>
                 <div>4. Use File Management to upload installer archives or DLC.</div>
-                <div>5. Create servers on this host after the shared files are ready.</div>
+                <div>5. Create servers after the shared files are ready.</div>
             </div>
         </div>
         </div>
         <div class="card">
-            <h2>Registered Hosts</h2>
+            <h2>Current Host Status</h2>
             <table>
                         <thead>
                             <tr>
@@ -990,30 +1241,29 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                             </tr>
                         </thead>
                         <tbody>
-                        <?php foreach ($hosts as $host): ?>
-                            <?php $health = agent_health_for_host($host); ?>
+                        <?php if ($localHost): ?>
+                            <?php $health = agent_health_for_host($localHost); ?>
                             <tr>
-                                <td><?= h($host['name']) ?></td>
-                                <td><?= h($host['agent_url']) ?></td>
+                                <td><?= h($localHost['name']) ?></td>
+                                <td><?= h($localHost['agent_url']) ?></td>
                                 <td>
                                     <div class="stack muted">
-                                        <div>game: <?= h($host['shared_game_path'] ?? '/opt/fs25/game') ?></div>
-                                        <div>dlc: <?= h($host['shared_dlc_path'] ?? '/opt/fs25/dlc') ?></div>
-                                        <div>installer: <?= h($host['shared_installer_path'] ?? '/opt/fs25/installer') ?></div>
+                                        <div>game: <?= h($localHost['shared_game_path'] ?? '/opt/fs25/game') ?></div>
+                                        <div>dlc: <?= h($localHost['shared_dlc_path'] ?? '/opt/fs25/dlc') ?></div>
+                                        <div>installer: <?= h($localHost['shared_installer_path'] ?? '/opt/fs25/installer') ?></div>
                                     </div>
                                 </td>
                                 <td><?= h(($health['ok'] ?? false) ? 'online' : 'offline') ?></td>
                                 <td>
                                     <form method="post" action="/?route=host_prepare" style="margin-bottom:10px;">
-                                        <input type="hidden" name="host_id" value="<?= h((string) $host['id']) ?>">
+                                        <input type="hidden" name="host_id" value="<?= h((string) $localHost['id']) ?>">
                                         <button class="gray" type="submit">prepare storage</button>
                                     </form>
                                     <a class="button-link" href="/?route=file_management">open file management</a>
                                 </td>
                             </tr>
-                        <?php endforeach; ?>
-                        <?php if (!$hosts): ?>
-                            <tr><td colspan="5" class="muted">No managed hosts configured yet.</td></tr>
+                        <?php else: ?>
+                            <tr><td colspan="5" class="muted">No default host is available.</td></tr>
                         <?php endif; ?>
                         </tbody>
                     </table>
@@ -1025,20 +1275,20 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
             <div class="card">
                 <h2>How To Use This Page</h2>
                 <div class="stack muted">
-                    <div>1. Open installer upload for the host you want to prepare.</div>
-                    <div>2. Verify uploaded files appear in the installer listing.</div>
+                    <div>1. Use the shared folder buttons to upload directly into the node's `/opt/fs25/game`, `/opt/fs25/dlc`, or `/opt/fs25/installer` paths.</div>
+                    <div>2. Verify uploaded installer files appear in the installer listing.</div>
                     <div>3. Use the unzip button on any zip archive found in that folder.</div>
-                    <div>4. Use the Game Servers page for per-server uploads like mods and saves.</div>
+                    <div>4. Use the Game Servers page for per-server profile, mods, saves, and logs uploads.</div>
                 </div>
             </div>
             <div class="card">
                 <h2>What This Page Does</h2>
-                <div class="notice">This page is focused on host-wide file operations. It shows the shared installer folder for each host and gives you upload and unzip actions in one place.</div>
+                <div class="notice">This page is focused on host-wide file operations under `/opt/fs25/*`. It gives you large-file upload entry points for shared game, DLC, and installer storage.</div>
             </div>
         </div>
         <?php if (!$hosts): ?>
             <div class="card">
-                <div class="notice">No managed hosts are configured yet. Add a host on the Managed Hosts page before using file operations.</div>
+                <div class="notice">No default host is configured yet. Update or recreate the local host record on the Managed Hosts page before using file operations.</div>
             </div>
         <?php endif; ?>
         <?php foreach ($hosts as $host): ?>
@@ -1050,10 +1300,18 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                 <div class="flex" style="justify-content:space-between;align-items:center;">
                     <div>
                         <h2 style="margin-bottom:6px;"><?= h($host['name']) ?></h2>
-                        <div class="muted">Installer path: <?= h($host['shared_installer_path'] ?? '/opt/fs25/installer') ?> | Status: <?= h(($health['ok'] ?? false) ? 'online' : 'offline') ?></div>
+                        <div class="muted">Status: <?= h(($health['ok'] ?? false) ? 'online' : 'offline') ?></div>
+                        <div class="muted small">game: <?= h($host['shared_game_path'] ?? '/opt/fs25/game') ?></div>
+                        <div class="muted small">dlc: <?= h($host['shared_dlc_path'] ?? '/opt/fs25/dlc') ?></div>
+                        <div class="muted small">installer: <?= h($host['shared_installer_path'] ?? '/opt/fs25/installer') ?></div>
                     </div>
-                    <a class="button-link" href="/?route=installer_upload&amp;host_id=<?= h((string) $host['id']) ?>">installer upload</a>
+                    <div class="flex">
+                        <a class="button-link" href="/?route=upload_large&amp;host_id=<?= h((string) $host['id']) ?>&amp;target=game">game upload</a>
+                        <a class="button-link" href="/?route=upload_large&amp;host_id=<?= h((string) $host['id']) ?>&amp;target=dlc">dlc upload</a>
+                        <a class="button-link" href="/?route=upload_large&amp;host_id=<?= h((string) $host['id']) ?>&amp;target=installer">installer upload</a>
+                    </div>
                 </div>
+                <h3 style="margin-bottom:8px;">Installer Listing</h3>
                 <div class="dir-list">
                     <?php foreach (($installerListing['files'] ?? []) as $entry): ?>
                         <div class="dir-item">
@@ -1090,42 +1348,42 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                         <?php endforeach; ?>
                     </select>
                 </div>
-                <div><label>Instance ID</label><input name="instance_id" placeholder="fs25-0001" required></div>
-                <div><label>Server Name</label><input name="server_name" placeholder="FSG Server 1" required></div>
-                <div><label>Image</label><input name="image_name" value="toetje585/arch-fs25server:latest" required></div>
-                <div><label>Players</label><input name="server_players" type="number" value="16"></div>
+                <div><label>Instance ID</label><input name="instance_id" value="<?= h((string) $createDefaults['instance_id']) ?>" required></div>
+                <div><label>Server Name</label><input name="server_name" value="<?= h((string) $createDefaults['server_name']) ?>" required></div>
+                <div><label>Image</label><input name="image_name" value="<?= h((string) $createDefaults['image_name']) ?>" required></div>
+                <div><label>Players</label><input name="server_players" type="number" value="<?= h((string) $createDefaults['server_players']) ?>"></div>
 
-                <div><label>Game Port</label><input name="server_port" type="number" value="10823"></div>
-                <div><label>Admin Web Port</label><input name="web_port" type="number" value="18000"></div>
-                <div><label>VNC Port</label><input name="vnc_port" type="number" value="5900"></div>
-                <div><label>noVNC Port</label><input name="novnc_port" type="number" value="6080"></div>
+                <div><label>Game Port</label><input name="server_port" type="number" value="<?= h((string) $createDefaults['server_port']) ?>"></div>
+                <div><label>Admin Web Port</label><input name="web_port" type="number" value="<?= h((string) $createDefaults['web_port']) ?>"></div>
+                <div><label>VNC Port</label><input name="vnc_port" type="number" value="<?= h((string) $createDefaults['vnc_port']) ?>"></div>
+                <div><label>noVNC Port</label><input name="novnc_port" type="number" value="<?= h((string) $createDefaults['novnc_port']) ?>"></div>
 
-                <div><label>Join Password</label><input name="server_password"></div>
-                <div><label>Admin Password</label><input name="server_admin"></div>
-                <div><label>Web Username</label><input name="web_username" value="admin"></div>
-                <div><label>Web Password</label><input name="web_password" value="changeme"></div>
+                <div><label>Join Password</label><input name="server_password" value="<?= h((string) $createDefaults['server_password']) ?>"></div>
+                <div><label>Admin Password</label><input name="server_admin" value="<?= h((string) $createDefaults['server_admin']) ?>"></div>
+                <div><label>Web Username</label><input name="web_username" value="<?= h((string) $createDefaults['web_username']) ?>"></div>
+                <div><label>Web Password</label><input name="web_password" value="<?= h((string) $createDefaults['web_password']) ?>"></div>
 
-                <div><label>SFTP Port</label><input name="sftp_port" type="number" value="2222"></div>
-                <div><label>SFTP Username</label><input name="sftp_username" value="fs25"></div>
-                <div><label>SFTP Password</label><input name="sftp_password" value="changeme"></div>
-                <div><label>VNC Password</label><input name="vnc_password" value="changeme"></div>
-                <div><label>Region</label><input name="server_region" value="en"></div>
-                <div><label>Map</label><input name="server_map" value="MapUS"></div>
-                <div><label>Difficulty</label><input name="server_difficulty" type="number" value="3"></div>
+                <div><label>SFTP Port</label><input name="sftp_port" type="number" value="<?= h((string) $createDefaults['sftp_port']) ?>"></div>
+                <div><label>SFTP Username</label><input name="sftp_username" value="<?= h((string) $createDefaults['sftp_username']) ?>"></div>
+                <div><label>SFTP Password</label><input name="sftp_password" value="<?= h((string) $createDefaults['sftp_password']) ?>"></div>
+                <div><label>VNC Password</label><input name="vnc_password" value="<?= h((string) $createDefaults['vnc_password']) ?>"></div>
+                <div><label>Region</label><input name="server_region" value="<?= h((string) $createDefaults['server_region']) ?>"></div>
+                <div><label>Map</label><input name="server_map" value="<?= h((string) $createDefaults['server_map']) ?>"></div>
+                <div><label>Difficulty</label><input name="server_difficulty" type="number" value="<?= h((string) $createDefaults['server_difficulty']) ?>"></div>
 
-                <div><label>Pause Mode</label><input name="server_pause" type="number" value="2"></div>
-                <div><label>Save Interval</label><input name="server_save_interval" type="number" step="0.1" value="180"></div>
-                <div><label>Stats Interval</label><input name="server_stats_interval" type="number" value="31536000"></div>
-                <div><label>PUID</label><input name="puid" type="number" value="1000"></div>
+                <div><label>Pause Mode</label><input name="server_pause" type="number" value="<?= h((string) $createDefaults['server_pause']) ?>"></div>
+                <div><label>Save Interval</label><input name="server_save_interval" type="number" step="0.1" value="<?= h((string) $createDefaults['server_save_interval']) ?>"></div>
+                <div><label>Stats Interval</label><input name="server_stats_interval" type="number" value="<?= h((string) $createDefaults['server_stats_interval']) ?>"></div>
+                <div><label>PUID</label><input name="puid" type="number" value="<?= h((string) $createDefaults['puid']) ?>"></div>
 
-                <div><label>PGID</label><input name="pgid" type="number" value="1000"></div>
+                <div><label>PGID</label><input name="pgid" type="number" value="<?= h((string) $createDefaults['pgid']) ?>"></div>
                 <div style="display:flex;align-items:end;"><label><input type="checkbox" name="server_crossplay" checked style="width:auto;"> Crossplay</label></div>
                 <div>
                     <label>Startup Mode</label>
                     <select name="autostart_server">
-                        <option value="true" selected>Auto start server</option>
+                        <option value="true" <?= $createDefaults['autostart_server'] === 'true' ? 'selected' : '' ?>>Auto start server</option>
                         <option value="web_only">Web panel only</option>
-                        <option value="false">Manual start</option>
+                        <option value="false" <?= $createDefaults['autostart_server'] === 'false' ? 'selected' : '' ?>>Manual start</option>
                     </select>
                 </div>
                 <div style="display:flex;align-items:end;"><button type="submit">Create Server</button></div>
@@ -1135,9 +1393,10 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
             <h2>How To Use This Page</h2>
             <div class="stack muted">
                 <div>1. Pick a managed host that already has shared files ready.</div>
-                <div>2. Set unique ports for game, web admin, VNC, noVNC, and SFTP.</div>
-                <div>3. Choose startup behavior based on whether the server should boot automatically.</div>
-                <div>4. Create the server, then switch to Game Servers to start it and open the viewer pages.</div>
+                <div>2. Default ports are auto-incremented from the highest existing ports to avoid collisions.</div>
+                <div>3. Game join and admin passwords are generated as 10-character random letters and numbers.</div>
+                <div>4. Web, SFTP, and VNC passwords are generated with stronger defaults that you can change later.</div>
+                <div>5. Create the server, then switch to Game Servers to start it and open the viewer pages.</div>
             </div>
         </div>
         </div>
@@ -1148,10 +1407,10 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
             <div class="card">
                 <h2>How To Use This Page</h2>
                 <div class="stack muted">
-                    <div>1. Use the access section to open VNC Viewer or the game webpage.</div>
-                    <div>2. Use the action row for lifecycle tasks like start, stop, restart, pull, and rebuild.</div>
-                    <div>3. Use the logs button to inspect runtime output for one server.</div>
-                    <div>4. Upload mods, saves, or config files in the per-server upload form.</div>
+                    <div>1. Each server is shown as a health card with live CPU, RAM, and disk usage bars.</div>
+                    <div>2. Click a server card to open its detail page and edit panel-managed settings.</div>
+                    <div>3. Use VNC, web, and logs shortcuts directly from the card for quick access.</div>
+                    <div>4. Use the detail page for lifecycle actions and deeper per-server management.</div>
                 </div>
             </div>
             <div class="card">
@@ -1165,93 +1424,58 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
         </div>
         <div class="card">
             <h2>Server Instances</h2>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Host</th>
-                        <th>Instance</th>
-                        <th>Name</th>
-                        <th>Status</th>
-                        <th>Game</th>
-                        <th>Admin</th>
-                        <th>VNC</th>
-                        <th>noVNC</th>
-                        <th>SFTP</th>
-                        <th>Access</th>
-                    </tr>
-                </thead>
-                <tbody>
+            <div class="server-grid">
                 <?php foreach ($servers as $server): ?>
                     <?php
                         $webUrl = instance_access_url($server, 'web');
                         $novncUrl = instance_access_url($server, 'novnc');
-                        $vncPanelUrl = '/?route=console&instance_id=' . rawurlencode((string) $server['instance_id']);
+                        $detailUrl = '/?route=server&instance_id=' . rawurlencode((string) $server['instance_id']);
+                        $metrics = $server['metrics'] ?? [];
+                        $cpuPercent = (float) ($metrics['cpu_percent'] ?? 0);
+                        $memoryPercent = (float) ($metrics['memory_percent'] ?? 0);
+                        $diskPercent = (float) ($metrics['disk_percent'] ?? 0);
                     ?>
-                    <tr>
-                        <td><?= h($server['host_name'] ?? 'unassigned') ?></td>
-                        <td><?= h($server['instance_id']) ?></td>
-                        <td><?= h($server['server_name']) ?></td>
-                        <td><?= h($server['status']) ?></td>
-                        <td><?= h((string)$server['server_port']) ?></td>
-                        <td><?= h((string)$server['web_port']) ?></td>
-                        <td><?= h((string)$server['vnc_port']) ?></td>
-                        <td><?= h((string)$server['novnc_port']) ?></td>
-                        <td>
-                            <div class="stack muted">
-                                <div><?= h((string)$server['sftp_port']) ?></div>
-                                <div><?= h($server['sftp_username'] ?? 'fs25') ?></div>
-                            </div>
-                        </td>
-                        <td class="server-cell">
-                            <div class="server-meta">
-                                <div class="flex">
-                                <?php if ($novncUrl): ?>
-                                    <a class="button-link" href="<?= h($vncPanelUrl) ?>">VNC Viewer</a>
-                                <?php endif; ?>
-                                <?php if ($webUrl): ?>
-                                    <a class="button-link" href="<?= h($webUrl) ?>" target="_blank" rel="noreferrer">game webpage</a>
-                                <?php endif; ?>
+                    <div class="card server-card">
+                        <a class="server-card-link" href="<?= h($detailUrl) ?>">
+                            <div class="server-card-head">
+                                <div>
+                                    <h3 class="server-card-title"><?= h($server['server_name']) ?></h3>
+                                    <div class="muted"><?= h($server['instance_id']) ?> on <?= h($server['host_name'] ?? 'unassigned') ?></div>
                                 </div>
-                                <div class="stack muted small">
-                                    <div>VNC page: <a href="<?= h($vncPanelUrl) ?>"><?= h($vncPanelUrl) ?></a></div>
-                                <div>SFTP host: <?= h(parse_url((string)($server['agent_url'] ?? ''), PHP_URL_HOST) ?: 'host') ?></div>
-                                <div>SFTP user: <?= h($server['sftp_username'] ?? 'fs25') ?></div>
-                                <div>SFTP pass: <?= h($server['sftp_password'] ?? 'changeme') ?></div>
-                                <div>Profile path: FarmingSimulator2025</div>
+                                <div class="stat-chip"><?= h(($metrics['running'] ?? false) ? 'running' : 'stopped') ?></div>
                             </div>
+                        </a>
+                        <div class="flex">
+                            <div class="stat-chip">Game <?= h((string) $server['server_port']) ?></div>
+                            <div class="stat-chip">Web <?= h((string) $server['web_port']) ?></div>
+                            <div class="stat-chip">SFTP <?= h((string) $server['sftp_port']) ?></div>
+                        </div>
+                        <div class="health-grid">
+                            <div class="health-meter">
+                                <div class="health-label"><span>CPU</span><span><?= h(number_format($cpuPercent, 1)) ?>%</span></div>
+                                <div class="health-bar"><div class="health-fill <?= $cpuPercent >= 85 ? 'warn' : '' ?>" style="width: <?= h((string) min(max($cpuPercent, 0), 100)) ?>%"></div></div>
                             </div>
-                            <div class="flex server-actions">
-                                <?php foreach (['start','stop','restart','pull','rebuild'] as $act): ?>
-                                    <form method="post" action="/?route=action">
-                                        <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
-                                        <input type="hidden" name="action" value="<?= h($act) ?>">
-                                        <button class="<?= $act === 'logs' ? 'gray' : '' ?>" type="submit"><?= h($act) ?></button>
-                                    </form>
-                                <?php endforeach; ?>
-                                <a class="button-link" href="/?route=logs&amp;instance_id=<?= h($server['instance_id']) ?>">logs</a>
-                                <form method="post" action="/?route=delete" onsubmit="return confirm('Delete this server? This removes the instance folder.');">
-                                    <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
-                                    <button class="danger" type="submit">delete</button>
-                                </form>
+                            <div class="health-meter">
+                                <div class="health-label"><span>RAM</span><span><?= h(number_format($memoryPercent, 1)) ?>% | <?= h(format_bytes_human((int) ($metrics['memory_used_bytes'] ?? 0))) ?></span></div>
+                                <div class="health-bar"><div class="health-fill <?= $memoryPercent >= 85 ? 'warn' : '' ?>" style="width: <?= h((string) min(max($memoryPercent, 0), 100)) ?>%"></div></div>
                             </div>
-                            <form method="post" action="/?route=upload" enctype="multipart/form-data" class="flex" style="margin-top:10px;">
-                                <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
-                                <select name="target" style="width:auto;">
-                                    <option value="mods">mods</option>
-                                    <option value="saves">saves</option>
-                                    <option value="config">config</option>
-                                </select>
-                                <input name="upload_file" type="file" required style="max-width:260px;">
-                                <button class="gray" type="submit">upload</button>
-                            </form>
-                        </td>
-                    </tr>
+                            <div class="health-meter">
+                                <div class="health-label"><span>Disk</span><span><?= h(number_format($diskPercent, 1)) ?>% | <?= h(format_bytes_human((int) ($metrics['disk_used_bytes'] ?? 0))) ?></span></div>
+                                <div class="health-bar"><div class="health-fill <?= $diskPercent >= 85 ? 'warn' : '' ?>" style="width: <?= h((string) min(max($diskPercent, 0), 100)) ?>%"></div></div>
+                            </div>
+                        </div>
+                        <div class="actions">
+                            <a class="button-link gray" href="<?= h($detailUrl) ?>">view details</a>
+                            <?php if ($novncUrl): ?><a class="button-link" href="/?route=console&amp;instance_id=<?= h($server['instance_id']) ?>">vnc</a><?php endif; ?>
+                            <?php if ($webUrl): ?><a class="button-link" href="<?= h($webUrl) ?>" target="_blank" rel="noreferrer">web</a><?php endif; ?>
+                            <a class="button-link" href="/?route=logs&amp;instance_id=<?= h($server['instance_id']) ?>">logs</a>
+                        </div>
+                    </div>
                 <?php endforeach; ?>
                 <?php if (!$servers): ?>
-                    <tr><td colspan="10" class="muted">No servers created yet.</td></tr>
+                    <div class="notice">No servers created yet.</div>
                 <?php endif; ?>
-                </tbody>
-            </table>
+            </div>
         </div>
         <?php endif; ?>
 
@@ -1265,7 +1489,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
         <footer class="footer">
             <div class="footer-inner">
                 <div>FSG FS25 Node</div>
-                <div>Use Managed Hosts to connect machines, File Management to handle installers, Create Server for provisioning, and Game Servers for day-to-day operations.</div>
+                <div>Use Managed Hosts to maintain the default local host, File Management to handle installers, Create Server for provisioning, and Game Servers for day-to-day operations.</div>
             </div>
         </footer>
     <?php endif; ?>

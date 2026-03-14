@@ -140,7 +140,7 @@ def decode_base64url(value: str) -> bytes:
     return base64.urlsafe_b64decode(value + padding)
 
 
-def verify_upload_token(token: str, filename: str, target: str):
+def verify_upload_token(token: str, filename: str, scope: str):
     if "." not in token:
         return False, "invalid token"
 
@@ -163,8 +163,8 @@ def verify_upload_token(token: str, filename: str, target: str):
     if payload.get("filename") != filename:
         return False, "filename mismatch"
 
-    if payload.get("target") != target:
-        return False, "invalid target"
+    if payload.get("scope") != scope:
+        return False, "invalid upload scope"
 
     if int(payload.get("exp", 0)) < int(time.time()):
         return False, "token expired"
@@ -174,6 +174,93 @@ def verify_upload_token(token: str, filename: str, target: str):
 
 def part_path_for(destination: Path) -> Path:
     return destination.with_name(destination.name + ".part")
+
+
+def parse_size_to_bytes(value: str) -> int:
+    raw = (value or "").strip()
+    if raw == "":
+        return 0
+
+    match = re.fullmatch(r"([0-9]*\.?[0-9]+)\s*([KMGTP]?i?B)", raw, re.IGNORECASE)
+    if not match:
+        with suppress(ValueError):
+            return int(float(raw))
+        return 0
+
+    amount = float(match.group(1))
+    unit = match.group(2).upper()
+    factors = {
+        "B": 1,
+        "KB": 1000,
+        "MB": 1000 ** 2,
+        "GB": 1000 ** 3,
+        "TB": 1000 ** 4,
+        "KIB": 1024,
+        "MIB": 1024 ** 2,
+        "GIB": 1024 ** 3,
+        "TIB": 1024 ** 4,
+    }
+    return int(amount * factors.get(unit, 1))
+
+
+def instance_metrics(instance_id: str) -> dict:
+    instance_dir = INSTANCE_BASE_PATH / instance_id
+    compose_file = instance_dir / "compose.yml"
+    if not compose_file.exists():
+        return {"ok": False, "error": "instance compose file not found"}
+
+    main_container = instance_id
+    stats_result = run_command([
+        "docker", "stats", main_container, "--no-stream",
+        "--format", "{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}",
+    ])
+
+    metrics = {
+        "cpu_percent": 0.0,
+        "memory_used_bytes": 0,
+        "memory_limit_bytes": 0,
+        "memory_percent": 0.0,
+        "disk_used_bytes": 0,
+        "disk_percent": 0.0,
+        "running": False,
+    }
+
+    ps_result = run_command([
+        "docker", "compose", "-f", str(compose_file), "ps", "--status", "running", "--services",
+    ], cwd=str(instance_dir))
+    if ps_result["code"] == 0:
+        metrics["running"] = "fs25" in [line.strip() for line in ps_result["stdout"].splitlines()]
+
+    if stats_result["code"] == 0 and stats_result["stdout"].strip():
+        raw_cpu, raw_mem, raw_mem_pct = (stats_result["stdout"].strip().split("|") + ["", "", ""])[:3]
+        with suppress(ValueError):
+            metrics["cpu_percent"] = float(raw_cpu.strip().rstrip("%") or 0)
+        with suppress(ValueError):
+            metrics["memory_percent"] = float(raw_mem_pct.strip().rstrip("%") or 0)
+
+        parts = [part.strip() for part in raw_mem.split("/") if part.strip()]
+        if len(parts) == 2:
+            metrics["memory_used_bytes"] = parse_size_to_bytes(parts[0])
+            metrics["memory_limit_bytes"] = parse_size_to_bytes(parts[1])
+
+    disk_result = run_command(["du", "-sb", str(instance_dir)])
+    if disk_result["code"] == 0 and disk_result["stdout"].strip():
+        first = disk_result["stdout"].split()[0]
+        with suppress(ValueError):
+            metrics["disk_used_bytes"] = int(first)
+
+    fs_result = run_command(["df", "-B1", str(instance_dir)])
+    if fs_result["code"] == 0:
+        lines = [line for line in fs_result["stdout"].splitlines() if line.strip()]
+        if len(lines) >= 2:
+            columns = lines[-1].split()
+            if len(columns) >= 2:
+                with suppress(ValueError):
+                    total_bytes = int(columns[1])
+                    if total_bytes > 0:
+                        metrics["disk_percent"] = round((metrics["disk_used_bytes"] / total_bytes) * 100, 2)
+
+    return {"ok": True, "metrics": metrics}
 
 
 @app.before_request
@@ -322,6 +409,19 @@ def delete_instance():
     return jsonify({"ok": True})
 
 
+@app.post("/instance/metrics")
+def get_instance_metrics():
+    payload = request.get_json(force=True)
+    instance_id = payload.get("instance_id", "").strip()
+
+    if not safe_instance_id(instance_id):
+        return jsonify({"ok": False, "error": "invalid instance id"}), 400
+
+    result = instance_metrics(instance_id)
+    status = 200 if result.get("ok") else 404
+    return jsonify(result), status
+
+
 @app.post("/instance/upload")
 def upload_instance_file():
     payload = request.get_json(force=True)
@@ -337,9 +437,11 @@ def upload_instance_file():
         return jsonify({"ok": False, "error": "invalid filename"}), 400
 
     target_map = {
+        "profile": "data/config",
         "mods": "data/mods",
         "saves": "data/saves",
         "config": "data/config",
+        "logs": "data/logs",
     }
 
     if target not in target_map:
@@ -464,13 +566,13 @@ def list_installer_files():
 def upload_host_file_stream():
     token = request.headers.get("X-Upload-Token", "").strip()
     filename = request.headers.get("X-Upload-Filename", "").strip()
-    target = "installer"
+    scope = "panel-upload"
 
     if not safe_upload_name(filename):
         response = jsonify({"ok": False, "error": "invalid filename"})
         return add_cors_headers(response), 400
 
-    is_valid, token_data = verify_upload_token(token, filename, target)
+    is_valid, token_data = verify_upload_token(token, filename, scope)
     if not is_valid:
         response = jsonify({"ok": False, "error": token_data})
         return add_cors_headers(response), 401
@@ -512,7 +614,7 @@ def upload_host_file_stream():
 def upload_host_file_chunk():
     token = request.headers.get("X-Upload-Token", "").strip()
     filename = request.headers.get("X-Upload-Filename", "").strip()
-    target = "installer"
+    scope = "panel-upload"
 
     try:
         offset = int(request.headers.get("X-Upload-Offset", "0").strip())
@@ -524,7 +626,7 @@ def upload_host_file_chunk():
     if not safe_upload_name(filename):
         return jsonify({"ok": False, "error": "invalid filename"}), 400
 
-    is_valid, token_data = verify_upload_token(token, filename, target)
+    is_valid, token_data = verify_upload_token(token, filename, scope)
     if not is_valid:
         return jsonify({"ok": False, "error": token_data}), 401
 
