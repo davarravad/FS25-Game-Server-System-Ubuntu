@@ -85,8 +85,8 @@ This makes each instance:
 
 ### 1. Clone the repo
 ```bash
-git clone https://your-repo-url/fsg-fs25-panel.git
-cd fsg-fs25-panel
+git clone https://github.com/davarravad/FS25-Game-Server-System-Ubuntu.git
+cd FS25-Game-Server-System-Ubuntu
 ```
 
 ### 2. Run the interactive setup script
