@@ -61,6 +61,23 @@ def safe_upload_name(filename: str) -> bool:
     return re.fullmatch(r"[a-zA-Z0-9._ -]+", filename or "") is not None
 
 
+def ensure_shared_storage(payload):
+    shared_paths = [
+        Path(payload.get("shared_game_path", "/opt/fs25/game")),
+        Path(payload.get("shared_dlc_path", "/opt/fs25/dlc")),
+        Path(payload.get("shared_installer_path", "/opt/fs25/installer")),
+    ]
+
+    for path in shared_paths:
+        path.mkdir(parents=True, exist_ok=True)
+
+    return {
+        "game": str(shared_paths[0]),
+        "dlc": str(shared_paths[1]),
+        "installer": str(shared_paths[2]),
+    }
+
+
 @app.before_request
 def block_unauthorized():
     if request.path == "/health":
@@ -112,9 +129,14 @@ def create_instance():
         "WEB_PASSWORD": payload.get("web_password", "changeme"),
         "IMAGE_NAME": payload.get("image_name", "toetje585/arch-fs25server:latest"),
         "INSTANCE_BASE_PATH": str(INSTANCE_BASE_PATH),
+        "SHARED_GAME_PATH": payload.get("shared_game_path", "/opt/fs25/game"),
+        "SHARED_DLC_PATH": payload.get("shared_dlc_path", "/opt/fs25/dlc"),
+        "SHARED_INSTALLER_PATH": payload.get("shared_installer_path", "/opt/fs25/installer"),
     }
 
-    for sub in ["data/config", "data/game", "data/dlc", "data/installer", "data/mods", "data/logs", "data/saves"]:
+    ensure_shared_storage(payload)
+
+    for sub in ["data/config", "data/mods", "data/logs", "data/saves"]:
         (instance_dir / sub).mkdir(parents=True, exist_ok=True)
 
     compose_tpl = (TEMPLATE_DIR / "compose.instance.yml.tpl").read_text(encoding="utf-8")
@@ -201,7 +223,6 @@ def upload_instance_file():
         "mods": "data/mods",
         "saves": "data/saves",
         "config": "data/config",
-        "game": "data/game",
     }
 
     if target not in target_map:
@@ -217,6 +238,49 @@ def upload_instance_file():
         return jsonify({"ok": False, "error": "invalid file payload"}), 400
 
     destination = instance_dir / target_map[target] / filename
+    write_binary_file(destination, decoded)
+
+    return jsonify({
+        "ok": True,
+        "path": str(destination),
+        "size": len(decoded),
+    })
+
+
+@app.post("/host/storage/prepare")
+def prepare_host_storage():
+    payload = request.get_json(force=True)
+    paths = ensure_shared_storage(payload)
+    return jsonify({"ok": True, "paths": paths})
+
+
+@app.post("/host/upload")
+def upload_host_file():
+    payload = request.get_json(force=True)
+    target = payload.get("target", "").strip().lower()
+    filename = payload.get("filename", "").strip()
+    file_content = payload.get("content_base64", "").strip()
+
+    if not safe_upload_name(filename):
+        return jsonify({"ok": False, "error": "invalid filename"}), 400
+
+    target_map = {
+        "game": Path(payload.get("shared_game_path", "/opt/fs25/game")),
+        "dlc": Path(payload.get("shared_dlc_path", "/opt/fs25/dlc")),
+        "installer": Path(payload.get("shared_installer_path", "/opt/fs25/installer")),
+    }
+
+    if target not in target_map:
+        return jsonify({"ok": False, "error": "unsupported upload target"}), 400
+
+    try:
+        decoded = base64.b64decode(file_content, validate=True)
+    except Exception:
+        return jsonify({"ok": False, "error": "invalid file payload"}), 400
+
+    destination_root = target_map[target]
+    destination_root.mkdir(parents=True, exist_ok=True)
+    destination = destination_root / filename
     write_binary_file(destination, decoded)
 
     return jsonify({

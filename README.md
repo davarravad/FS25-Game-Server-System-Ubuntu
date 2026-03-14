@@ -98,10 +98,12 @@ sudo bash scripts/install-ubuntu.sh
 What it does:
 - installs Docker and the Compose plugin if they are missing
 - asks for the required panel, database, admin, and agent settings
+- asks for the shared FS25 host paths for `game`, `dlc`, and `installer`
 - writes the env file at the repo root as:
   - `.env.example`: template
   - `.env`: real runtime config used by Docker Compose
 - creates the instance and backup directories
+- creates the shared FS directories used by all instances on that host
 - builds and starts the panel stack automatically
 - verifies that the panel containers are running and that the website responds before finishing
 
@@ -190,12 +192,14 @@ But this repo adds:
 - The website can now manage multiple FS25 hosts from one location.
 - Each host runs the same lightweight agent API near its local Docker engine.
 - Add hosts in the UI with a name, agent URL, and shared token.
+- Each host also stores shared `game`, `dlc`, and `installer` paths used by every instance on that host.
 - New server instances are assigned to a managed host when created.
 - Existing installs bootstrap a default `Local Agent` host from `AGENT_URL` and `AGENT_SHARED_TOKEN`.
 
 ### Website access features
 - The panel can upload files directly into an instance on the selected host.
-- Upload targets currently include `mods`, `saves`, `config`, and `game`.
+- Per-instance upload targets currently include `mods`, `saves`, and `config`.
+- Managed hosts support shared-file uploads for the host-wide `game`, `dlc`, and `installer` folders.
 - Each server row includes direct launch links for the game host's web admin and noVNC endpoints.
 
 ### Recommended next upgrades

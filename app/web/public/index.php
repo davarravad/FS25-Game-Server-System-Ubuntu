@@ -37,6 +37,9 @@ if ($route === 'host_create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $name = trim((string) ($_POST['name'] ?? ''));
     $agentUrl = trim((string) ($_POST['agent_url'] ?? ''));
     $agentToken = trim((string) ($_POST['agent_token'] ?? ''));
+    $sharedGamePath = trim((string) ($_POST['shared_game_path'] ?? '/opt/fs25/game'));
+    $sharedDlcPath = trim((string) ($_POST['shared_dlc_path'] ?? '/opt/fs25/dlc'));
+    $sharedInstallerPath = trim((string) ($_POST['shared_installer_path'] ?? '/opt/fs25/installer'));
 
     if ($name === '' || $agentUrl === '' || $agentToken === '') {
         flash('Host name, API URL, and token are required.');
@@ -45,12 +48,51 @@ if ($route === 'host_create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     $stmt = db()->prepare('
-        INSERT INTO managed_hosts (name, agent_url, agent_token, is_enabled)
-        VALUES (?, ?, ?, 1)
+        INSERT INTO managed_hosts (name, agent_url, agent_token, shared_game_path, shared_dlc_path, shared_installer_path, is_enabled)
+        VALUES (?, ?, ?, ?, ?, ?, 1)
     ');
-    $stmt->execute([$name, $agentUrl, $agentToken]);
+    $stmt->execute([$name, $agentUrl, $agentToken, $sharedGamePath, $sharedDlcPath, $sharedInstallerPath]);
 
     flash('Managed host added.');
+    header('Location: /');
+    exit;
+}
+
+if ($route === 'host_prepare' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    require_login();
+
+    $hostId = (int) ($_POST['host_id'] ?? 0);
+    $host = find_host($hostId);
+
+    if (!$host || !(int) $host['is_enabled']) {
+        flash('Select a valid managed host.');
+        header('Location: /');
+        exit;
+    }
+
+    $result = host_storage_prepare($host);
+    flash(($result['ok'] ?? false) ? 'Shared FS storage prepared on host.' : 'Host prepare failed: ' . ($result['error'] ?? 'Unknown error'));
+    header('Location: /');
+    exit;
+}
+
+if ($route === 'host_upload' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    require_login();
+
+    $hostId = (int) ($_POST['host_id'] ?? 0);
+    $target = (string) ($_POST['target'] ?? 'game');
+    $host = find_host($hostId);
+
+    if (!$host || !(int) $host['is_enabled']) {
+        flash('Select a valid managed host.');
+        header('Location: /');
+        exit;
+    }
+
+    $result = upload_shared_host_file($host, $target, $_FILES['upload_file'] ?? []);
+    flash(($result['ok'] ?? false)
+        ? 'Shared FS file uploaded.'
+        : 'Host upload failed: ' . ($result['error'] ?? 'Unknown error'));
     header('Location: /');
     exit;
 }
@@ -74,6 +116,9 @@ if ($route === 'create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         'instance_id' => $instanceId,
         'server_name' => $serverName ?: $instanceId,
         'image_name' => $imageName,
+        'shared_game_path' => (string) ($host['shared_game_path'] ?? '/opt/fs25/game'),
+        'shared_dlc_path' => (string) ($host['shared_dlc_path'] ?? '/opt/fs25/dlc'),
+        'shared_installer_path' => (string) ($host['shared_installer_path'] ?? '/opt/fs25/installer'),
         'server_password' => (string)($_POST['server_password'] ?? ''),
         'server_admin' => (string)($_POST['server_admin'] ?? ''),
         'server_players' => (int)($_POST['server_players'] ?? 16),
@@ -239,6 +284,7 @@ unset($_SESSION['logs']);
         button.danger { background: #b91c1c; }
         button.gray { background: #475569; }
         .button-link { display: inline-block; padding: 10px 14px; border-radius: 8px; background: #475569; color: #fff; }
+        .stack { display: grid; gap: 10px; }
         .grid { display: grid; gap: 14px; }
         .grid-2 { grid-template-columns: repeat(2, 1fr); }
         .grid-4 { grid-template-columns: repeat(4, 1fr); }
@@ -309,6 +355,9 @@ unset($_SESSION['logs']);
                         <div><label>Host Name</label><input name="name" placeholder="Node A" required></div>
                         <div><label>Agent API URL</label><input name="agent_url" placeholder="http://host-or-agent:8081" required></div>
                         <div><label>Agent Token</label><input name="agent_token" type="password" required></div>
+                        <div><label>Shared Game Path</label><input name="shared_game_path" value="/opt/fs25/game" required></div>
+                        <div><label>Shared DLC Path</label><input name="shared_dlc_path" value="/opt/fs25/dlc" required></div>
+                        <div><label>Shared Installer Path</label><input name="shared_installer_path" value="/opt/fs25/installer" required></div>
                         <div><button type="submit">Add Managed Host</button></div>
                     </form>
                 </div>
@@ -318,7 +367,9 @@ unset($_SESSION['logs']);
                             <tr>
                                 <th>Name</th>
                                 <th>API URL</th>
+                                <th>Shared FS</th>
                                 <th>Status</th>
+                                <th>Setup</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -327,11 +378,34 @@ unset($_SESSION['logs']);
                             <tr>
                                 <td><?= h($host['name']) ?></td>
                                 <td><?= h($host['agent_url']) ?></td>
+                                <td>
+                                    <div class="stack muted">
+                                        <div>game: <?= h($host['shared_game_path'] ?? '/opt/fs25/game') ?></div>
+                                        <div>dlc: <?= h($host['shared_dlc_path'] ?? '/opt/fs25/dlc') ?></div>
+                                        <div>installer: <?= h($host['shared_installer_path'] ?? '/opt/fs25/installer') ?></div>
+                                    </div>
+                                </td>
                                 <td><?= h(($health['ok'] ?? false) ? 'online' : 'offline') ?></td>
+                                <td>
+                                    <form method="post" action="/?route=host_prepare" style="margin-bottom:10px;">
+                                        <input type="hidden" name="host_id" value="<?= h((string) $host['id']) ?>">
+                                        <button class="gray" type="submit">prepare storage</button>
+                                    </form>
+                                    <form method="post" action="/?route=host_upload" enctype="multipart/form-data" class="stack">
+                                        <input type="hidden" name="host_id" value="<?= h((string) $host['id']) ?>">
+                                        <select name="target">
+                                            <option value="game">shared game</option>
+                                            <option value="dlc">shared dlc</option>
+                                            <option value="installer">shared installer</option>
+                                        </select>
+                                        <input name="upload_file" type="file" required>
+                                        <button class="gray" type="submit">upload shared file</button>
+                                    </form>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                         <?php if (!$hosts): ?>
-                            <tr><td colspan="3" class="muted">No managed hosts configured yet.</td></tr>
+                            <tr><td colspan="5" class="muted">No managed hosts configured yet.</td></tr>
                         <?php endif; ?>
                         </tbody>
                     </table>
@@ -445,7 +519,6 @@ unset($_SESSION['logs']);
                                     <option value="mods">mods</option>
                                     <option value="saves">saves</option>
                                     <option value="config">config</option>
-                                    <option value="game">game</option>
                                 </select>
                                 <input name="upload_file" type="file" required style="max-width:260px;">
                                 <button class="gray" type="submit">upload</button>

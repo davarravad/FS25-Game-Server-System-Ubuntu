@@ -16,6 +16,9 @@ DB_USER_DEFAULT="fsg_panel"
 DB_HOST_DEFAULT="db"
 DB_PORT_DEFAULT="3306"
 DEFAULT_HOST_NAME_DEFAULT="Local Agent"
+SHARED_GAME_PATH_DEFAULT="/opt/fs25/game"
+SHARED_DLC_PATH_DEFAULT="/opt/fs25/dlc"
+SHARED_INSTALLER_PATH_DEFAULT="/opt/fs25/installer"
 APP_ENV_DEFAULT="production"
 TZ_DEFAULT="America/Chicago"
 
@@ -115,6 +118,9 @@ gather_settings() {
   prompt_value DEFAULT_HOST_NAME "Default managed host name" "${DEFAULT_HOST_NAME_DEFAULT}"
   prompt_value AGENT_URL "Default managed host agent URL" "http://agent:8081"
   prompt_secret AGENT_SHARED_TOKEN "Agent shared token" "$(random_secret)"
+  prompt_value SHARED_GAME_PATH "Shared game path" "${SHARED_GAME_PATH_DEFAULT}"
+  prompt_value SHARED_DLC_PATH "Shared DLC path" "${SHARED_DLC_PATH_DEFAULT}"
+  prompt_value SHARED_INSTALLER_PATH "Shared installer path" "${SHARED_INSTALLER_PATH_DEFAULT}"
 
   APP_NAME="FSG FS25 Panel"
   APP_ENV="${APP_ENV_DEFAULT}"
@@ -147,6 +153,9 @@ ADMIN_DEFAULT_PASSWORD=${ADMIN_DEFAULT_PASSWORD}
 DEFAULT_HOST_NAME=${DEFAULT_HOST_NAME}
 AGENT_URL=${AGENT_URL}
 AGENT_SHARED_TOKEN=${AGENT_SHARED_TOKEN}
+SHARED_GAME_PATH=${SHARED_GAME_PATH}
+SHARED_DLC_PATH=${SHARED_DLC_PATH}
+SHARED_INSTALLER_PATH=${SHARED_INSTALLER_PATH}
 
 PANEL_PORT=${PANEL_PORT}
 INSTANCE_BASE_PATH=${INSTANCE_BASE_PATH}
@@ -160,8 +169,14 @@ prepare_directories() {
   echo "[5/7] Creating folders..."
   mkdir -p "${INSTANCE_BASE_PATH}"
   mkdir -p "${BACKUP_BASE_PATH}"
+  mkdir -p "${SHARED_GAME_PATH}"
+  mkdir -p "${SHARED_DLC_PATH}"
+  mkdir -p "${SHARED_INSTALLER_PATH}"
   chmod 755 "${INSTANCE_BASE_PATH}"
   chmod 755 "${BACKUP_BASE_PATH}"
+  chmod 755 "${SHARED_GAME_PATH}"
+  chmod 755 "${SHARED_DLC_PATH}"
+  chmod 755 "${SHARED_INSTALLER_PATH}"
 }
 
 start_stack() {

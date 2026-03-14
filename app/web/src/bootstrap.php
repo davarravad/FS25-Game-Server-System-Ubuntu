@@ -45,12 +45,18 @@ function ensure_schema(PDO $pdo): void
             name VARCHAR(150) NOT NULL,
             agent_url VARCHAR(255) NOT NULL,
             agent_token VARCHAR(255) NOT NULL,
+            shared_game_path VARCHAR(255) NOT NULL DEFAULT '/opt/fs25/game',
+            shared_dlc_path VARCHAR(255) NOT NULL DEFAULT '/opt/fs25/dlc',
+            shared_installer_path VARCHAR(255) NOT NULL DEFAULT '/opt/fs25/installer',
             is_enabled TINYINT(1) NOT NULL DEFAULT 1,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         )
     ');
 
+    $pdo->exec("ALTER TABLE managed_hosts ADD COLUMN IF NOT EXISTS shared_game_path VARCHAR(255) NOT NULL DEFAULT '/opt/fs25/game' AFTER agent_token");
+    $pdo->exec("ALTER TABLE managed_hosts ADD COLUMN IF NOT EXISTS shared_dlc_path VARCHAR(255) NOT NULL DEFAULT '/opt/fs25/dlc' AFTER shared_game_path");
+    $pdo->exec("ALTER TABLE managed_hosts ADD COLUMN IF NOT EXISTS shared_installer_path VARCHAR(255) NOT NULL DEFAULT '/opt/fs25/installer' AFTER shared_dlc_path");
     $pdo->exec('ALTER TABLE server_instances ADD COLUMN IF NOT EXISTS host_id INT NULL AFTER id');
     $pdo->exec('ALTER TABLE server_instances ADD INDEX IF NOT EXISTS idx_server_instances_host_id (host_id)');
 }
@@ -74,20 +80,32 @@ function bootstrap_default_host(PDO $pdo): void
     $agentUrl = trim((string) env_value('AGENT_URL', 'http://agent:8081'));
     $agentToken = (string) env_value('AGENT_SHARED_TOKEN', '');
     $defaultName = trim((string) env_value('DEFAULT_HOST_NAME', 'Local Agent'));
+    $sharedGamePath = trim((string) env_value('SHARED_GAME_PATH', '/opt/fs25/game'));
+    $sharedDlcPath = trim((string) env_value('SHARED_DLC_PATH', '/opt/fs25/dlc'));
+    $sharedInstallerPath = trim((string) env_value('SHARED_INSTALLER_PATH', '/opt/fs25/installer'));
 
     $stmt = $pdo->query('SELECT id FROM managed_hosts ORDER BY id ASC LIMIT 1');
     $firstHostId = $stmt->fetchColumn();
 
     if (!$firstHostId) {
         $insert = $pdo->prepare('
-            INSERT INTO managed_hosts (name, agent_url, agent_token, is_enabled)
-            VALUES (?, ?, ?, 1)
+            INSERT INTO managed_hosts (name, agent_url, agent_token, shared_game_path, shared_dlc_path, shared_installer_path, is_enabled)
+            VALUES (?, ?, ?, ?, ?, ?, 1)
         ');
-        $insert->execute([$defaultName, $agentUrl, $agentToken]);
+        $insert->execute([$defaultName, $agentUrl, $agentToken, $sharedGamePath, $sharedDlcPath, $sharedInstallerPath]);
         $firstHostId = (int) $pdo->lastInsertId();
     }
 
     $pdo->prepare('UPDATE server_instances SET host_id = ? WHERE host_id IS NULL')->execute([(int) $firstHostId]);
+}
+
+function host_storage_prepare(array $host): array
+{
+    return agent_post_for_host($host, '/host/storage/prepare', [
+        'shared_game_path' => $host['shared_game_path'] ?? '/opt/fs25/game',
+        'shared_dlc_path' => $host['shared_dlc_path'] ?? '/opt/fs25/dlc',
+        'shared_installer_path' => $host['shared_installer_path'] ?? '/opt/fs25/installer',
+    ]);
 }
 
 function current_user(): ?array
@@ -234,6 +252,34 @@ function upload_instance_file_for_host(array $host, string $instanceId, string $
         'target' => $target,
         'filename' => $filename,
         'content_base64' => base64_encode($content),
+    ]);
+}
+
+function upload_shared_host_file(array $host, string $target, array $file): array
+{
+    if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+        return ['ok' => false, 'error' => 'Upload failed before transfer to host'];
+    }
+
+    $tmpPath = (string) ($file['tmp_name'] ?? '');
+    if ($tmpPath === '' || !is_uploaded_file($tmpPath)) {
+        return ['ok' => false, 'error' => 'Invalid upload payload'];
+    }
+
+    $filename = basename((string) ($file['name'] ?? ''));
+    $content = file_get_contents($tmpPath);
+
+    if ($content === false) {
+        return ['ok' => false, 'error' => 'Unable to read uploaded file'];
+    }
+
+    return agent_post_for_host($host, '/host/upload', [
+        'target' => $target,
+        'filename' => $filename,
+        'content_base64' => base64_encode($content),
+        'shared_game_path' => $host['shared_game_path'] ?? '/opt/fs25/game',
+        'shared_dlc_path' => $host['shared_dlc_path'] ?? '/opt/fs25/dlc',
+        'shared_installer_path' => $host['shared_installer_path'] ?? '/opt/fs25/installer',
     ]);
 }
 

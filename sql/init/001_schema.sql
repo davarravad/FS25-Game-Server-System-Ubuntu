@@ -10,6 +10,9 @@ CREATE TABLE IF NOT EXISTS managed_hosts (
     name VARCHAR(150) NOT NULL,
     agent_url VARCHAR(255) NOT NULL,
     agent_token VARCHAR(255) NOT NULL,
+    shared_game_path VARCHAR(255) NOT NULL DEFAULT '/opt/fs25/game',
+    shared_dlc_path VARCHAR(255) NOT NULL DEFAULT '/opt/fs25/dlc',
+    shared_installer_path VARCHAR(255) NOT NULL DEFAULT '/opt/fs25/installer',
     is_enabled TINYINT(1) NOT NULL DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
