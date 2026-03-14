@@ -19,6 +19,8 @@ DEFAULT_HOST_NAME_DEFAULT="Local Agent"
 SHARED_GAME_PATH_DEFAULT="/opt/fs25/game"
 SHARED_DLC_PATH_DEFAULT="/opt/fs25/dlc"
 SHARED_INSTALLER_PATH_DEFAULT="/opt/fs25/installer"
+ADMIN_SFTP_PORT_DEFAULT="22220"
+ADMIN_SFTP_USERNAME_DEFAULT="paneladmin"
 APP_ENV_DEFAULT="production"
 TZ_DEFAULT="America/Chicago"
 
@@ -121,6 +123,9 @@ gather_settings() {
   prompt_value SHARED_GAME_PATH "Shared game path" "${SHARED_GAME_PATH_DEFAULT}"
   prompt_value SHARED_DLC_PATH "Shared DLC path" "${SHARED_DLC_PATH_DEFAULT}"
   prompt_value SHARED_INSTALLER_PATH "Shared installer path" "${SHARED_INSTALLER_PATH_DEFAULT}"
+  prompt_value ADMIN_SFTP_PORT "Admin SFTP port" "${ADMIN_SFTP_PORT_DEFAULT}"
+  prompt_value ADMIN_SFTP_USERNAME "Admin SFTP username" "${ADMIN_SFTP_USERNAME_DEFAULT}"
+  prompt_secret ADMIN_SFTP_PASSWORD "Admin SFTP password" "$(random_secret)"
 
   APP_NAME="FSG FS25 Panel"
   APP_ENV="${APP_ENV_DEFAULT}"
@@ -156,6 +161,9 @@ AGENT_SHARED_TOKEN=${AGENT_SHARED_TOKEN}
 SHARED_GAME_PATH=${SHARED_GAME_PATH}
 SHARED_DLC_PATH=${SHARED_DLC_PATH}
 SHARED_INSTALLER_PATH=${SHARED_INSTALLER_PATH}
+ADMIN_SFTP_PORT=${ADMIN_SFTP_PORT}
+ADMIN_SFTP_USERNAME=${ADMIN_SFTP_USERNAME}
+ADMIN_SFTP_PASSWORD=${ADMIN_SFTP_PASSWORD}
 
 PANEL_PORT=${PANEL_PORT}
 INSTANCE_BASE_PATH=${INSTANCE_BASE_PATH}
@@ -225,6 +233,11 @@ print_summary() {
   echo "Default login:"
   echo "  username: ${ADMIN_DEFAULT_USERNAME}"
   echo "  password: ${ADMIN_DEFAULT_PASSWORD}"
+  echo "Admin SFTP:"
+  echo "  host: $(hostname -I | awk '{print $1}')"
+  echo "  port: ${ADMIN_SFTP_PORT}"
+  echo "  username: ${ADMIN_SFTP_USERNAME}"
+  echo "  password: ${ADMIN_SFTP_PASSWORD}"
   echo
   echo "Next:"
   echo "  1. Open the panel and sign in."

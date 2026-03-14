@@ -347,6 +347,9 @@ if ($route === 'create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         'web_port' => (int)($_POST['web_port'] ?? 18000),
         'vnc_port' => (int)($_POST['vnc_port'] ?? 5900),
         'novnc_port' => (int)($_POST['novnc_port'] ?? 6080),
+        'sftp_port' => (int)($_POST['sftp_port'] ?? 2222),
+        'sftp_username' => (string)($_POST['sftp_username'] ?? 'fs25'),
+        'sftp_password' => (string)($_POST['sftp_password'] ?? 'changeme'),
         'server_region' => (string)($_POST['server_region'] ?? 'en'),
         'server_map' => (string)($_POST['server_map'] ?? 'MapUS'),
         'server_difficulty' => (int)($_POST['server_difficulty'] ?? 3),
@@ -372,8 +375,8 @@ if ($route === 'create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $stmt = db()->prepare('
         INSERT INTO server_instances
-        (host_id, instance_id, server_name, image_name, server_port, web_port, vnc_port, novnc_port, server_players, server_region, server_map, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (host_id, instance_id, server_name, image_name, server_port, web_port, vnc_port, novnc_port, sftp_port, sftp_username, sftp_password, server_players, server_region, server_map, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ');
 
     $stmt->execute([
@@ -385,6 +388,9 @@ if ($route === 'create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $payload['web_port'],
         $payload['vnc_port'],
         $payload['novnc_port'],
+        $payload['sftp_port'],
+        $payload['sftp_username'],
+        $payload['sftp_password'],
         $payload['server_players'],
         $payload['server_region'],
         $payload['server_map'],
@@ -845,6 +851,9 @@ unset($_SESSION['logs']);
                 <div><label>Web Username</label><input name="web_username" value="admin"></div>
                 <div><label>Web Password</label><input name="web_password" value="changeme"></div>
 
+                <div><label>SFTP Port</label><input name="sftp_port" type="number" value="2222"></div>
+                <div><label>SFTP Username</label><input name="sftp_username" value="fs25"></div>
+                <div><label>SFTP Password</label><input name="sftp_password" value="changeme"></div>
                 <div><label>VNC Password</label><input name="vnc_password" value="changeme"></div>
                 <div><label>Region</label><input name="server_region" value="en"></div>
                 <div><label>Map</label><input name="server_map" value="MapUS"></div>
@@ -882,6 +891,7 @@ unset($_SESSION['logs']);
                         <th>Admin</th>
                         <th>VNC</th>
                         <th>noVNC</th>
+                        <th>SFTP</th>
                         <th>Access</th>
                         <th>Actions</th>
                     </tr>
@@ -902,6 +912,12 @@ unset($_SESSION['logs']);
                         <td><?= h((string)$server['vnc_port']) ?></td>
                         <td><?= h((string)$server['novnc_port']) ?></td>
                         <td>
+                            <div class="stack muted">
+                                <div><?= h((string)$server['sftp_port']) ?></div>
+                                <div><?= h($server['sftp_username'] ?? 'fs25') ?></div>
+                            </div>
+                        </td>
+                        <td>
                             <div class="flex">
                                 <?php if ($novncUrl): ?>
                                     <a class="button-link" href="/?route=console&amp;instance_id=<?= h($server['instance_id']) ?>">VNC Viewer</a>
@@ -909,6 +925,12 @@ unset($_SESSION['logs']);
                                 <?php if ($webUrl): ?>
                                     <a class="button-link" href="<?= h($webUrl) ?>" target="_blank" rel="noreferrer">game webpage</a>
                                 <?php endif; ?>
+                            </div>
+                            <div class="stack muted" style="margin-top:10px;">
+                                <div>SFTP host: <?= h(parse_url((string)($server['agent_url'] ?? ''), PHP_URL_HOST) ?: 'host') ?></div>
+                                <div>SFTP user: <?= h($server['sftp_username'] ?? 'fs25') ?></div>
+                                <div>SFTP pass: <?= h($server['sftp_password'] ?? 'changeme') ?></div>
+                                <div>Profile path: FarmingSimulator2025</div>
                             </div>
                         </td>
                         <td>
@@ -940,7 +962,7 @@ unset($_SESSION['logs']);
                     </tr>
                 <?php endforeach; ?>
                 <?php if (!$servers): ?>
-                    <tr><td colspan="10" class="muted">No servers created yet.</td></tr>
+                    <tr><td colspan="11" class="muted">No servers created yet.</td></tr>
                 <?php endif; ?>
                 </tbody>
             </table>

@@ -87,6 +87,22 @@ services:
     networks:
       - panel
 
+  admin-sftp:
+    image: atmoz/sftp:alpine
+    container_name: fsg-panel-admin-sftp
+    restart: unless-stopped
+    command: "${ADMIN_SFTP_USERNAME}:${ADMIN_SFTP_PASSWORD}:1000:1000:panel"
+    ports:
+      - "${ADMIN_SFTP_PORT}:22"
+    volumes:
+      - ${INSTANCE_BASE_PATH}:/home/${ADMIN_SFTP_USERNAME}/panel/instances
+      - ${BACKUP_BASE_PATH}:/home/${ADMIN_SFTP_USERNAME}/panel/backups
+      - ${SHARED_GAME_PATH}:/home/${ADMIN_SFTP_USERNAME}/panel/shared/game
+      - ${SHARED_DLC_PATH}:/home/${ADMIN_SFTP_USERNAME}/panel/shared/dlc
+      - ${SHARED_INSTALLER_PATH}:/home/${ADMIN_SFTP_USERNAME}/panel/shared/installer
+    networks:
+      - panel
+
 volumes:
   db_data:
 

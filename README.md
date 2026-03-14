@@ -202,6 +202,15 @@ But this repo adds:
 - Managed hosts support large streamed uploads to the host-wide `installer` folder.
 - Installer uploads use retryable chunked transfer with browser-side progress, current upload speed, and ETA.
 - Each server row includes direct launch links for the game host's web admin and noVNC endpoints.
+- Each server can also expose its own SFTP endpoint, limited to that server's `FarmingSimulator2025` profile/config folder for mod and log access.
+
+### Admin SFTP
+- The main stack now includes a host-level admin SFTP service for full file access.
+- This login can reach:
+  - all managed instance folders under `instances/`
+  - shared FS files under `shared/game`, `shared/dlc`, and `shared/installer`
+  - backups under `backups/`
+- Use this when you want to upload very large installer or DLC files over SFTP instead of the website.
 - Server actions in the panel include `start`, `stop`, and `restart`.
 - Instances are generated with Docker `restart: unless-stopped`, and the panel now exposes the image's `AUTOSTART_SERVER` mode as `Auto start server`, `Web panel only`, or `Manual start`.
 

@@ -58,6 +58,9 @@ function ensure_schema(PDO $pdo): void
     $pdo->exec("ALTER TABLE managed_hosts ADD COLUMN IF NOT EXISTS shared_dlc_path VARCHAR(255) NOT NULL DEFAULT '/opt/fs25/dlc' AFTER shared_game_path");
     $pdo->exec("ALTER TABLE managed_hosts ADD COLUMN IF NOT EXISTS shared_installer_path VARCHAR(255) NOT NULL DEFAULT '/opt/fs25/installer' AFTER shared_dlc_path");
     $pdo->exec('ALTER TABLE server_instances ADD COLUMN IF NOT EXISTS host_id INT NULL AFTER id');
+    $pdo->exec('ALTER TABLE server_instances ADD COLUMN IF NOT EXISTS sftp_port INT NOT NULL DEFAULT 2222 AFTER novnc_port');
+    $pdo->exec("ALTER TABLE server_instances ADD COLUMN IF NOT EXISTS sftp_username VARCHAR(100) NOT NULL DEFAULT 'fs25' AFTER sftp_port");
+    $pdo->exec("ALTER TABLE server_instances ADD COLUMN IF NOT EXISTS sftp_password VARCHAR(255) NOT NULL DEFAULT 'changeme' AFTER sftp_username");
     $pdo->exec('ALTER TABLE server_instances ADD INDEX IF NOT EXISTS idx_server_instances_host_id (host_id)');
 }
 
@@ -388,6 +391,7 @@ function instance_access_url(array $server, string $kind): ?string
     $port = match ($kind) {
         'web' => (int) ($server['web_port'] ?? 0),
         'novnc' => (int) ($server['novnc_port'] ?? 0),
+        'sftp' => (int) ($server['sftp_port'] ?? 0),
         default => 0,
     };
 
