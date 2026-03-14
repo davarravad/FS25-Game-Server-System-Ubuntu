@@ -718,6 +718,10 @@ unset($_SESSION['logs']);
         form.grid > div, .grid-4 > div, .grid-2 > div { padding: 6px 0; }
         label { display: block; margin-bottom: 8px; font-size: 14px; color: #d9e1ee; }
         .card form { width: 100%; }
+        .server-cell { min-width: 260px; }
+        .server-actions { margin-top: 12px; padding-top: 12px; border-top: 1px solid #243041; }
+        .server-meta { display: grid; gap: 6px; }
+        .small { font-size: 13px; }
         @media (max-width: 900px) {
             .grid-2, .grid-4 { grid-template-columns: 1fr; }
         }
@@ -893,7 +897,6 @@ unset($_SESSION['logs']);
                         <th>noVNC</th>
                         <th>SFTP</th>
                         <th>Access</th>
-                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -901,6 +904,7 @@ unset($_SESSION['logs']);
                     <?php
                         $webUrl = instance_access_url($server, 'web');
                         $novncUrl = instance_access_url($server, 'novnc');
+                        $vncPanelUrl = '/?route=console&instance_id=' . rawurlencode((string) $server['instance_id']);
                     ?>
                     <tr>
                         <td><?= h($server['host_name'] ?? 'unassigned') ?></td>
@@ -917,24 +921,25 @@ unset($_SESSION['logs']);
                                 <div><?= h($server['sftp_username'] ?? 'fs25') ?></div>
                             </div>
                         </td>
-                        <td>
-                            <div class="flex">
+                        <td class="server-cell">
+                            <div class="server-meta">
+                                <div class="flex">
                                 <?php if ($novncUrl): ?>
-                                    <a class="button-link" href="/?route=console&amp;instance_id=<?= h($server['instance_id']) ?>">VNC Viewer</a>
+                                    <a class="button-link" href="<?= h($vncPanelUrl) ?>">VNC Viewer</a>
                                 <?php endif; ?>
                                 <?php if ($webUrl): ?>
                                     <a class="button-link" href="<?= h($webUrl) ?>" target="_blank" rel="noreferrer">game webpage</a>
                                 <?php endif; ?>
-                            </div>
-                            <div class="stack muted" style="margin-top:10px;">
+                                </div>
+                                <div class="stack muted small">
+                                    <div>VNC page: <a href="<?= h($vncPanelUrl) ?>"><?= h($vncPanelUrl) ?></a></div>
                                 <div>SFTP host: <?= h(parse_url((string)($server['agent_url'] ?? ''), PHP_URL_HOST) ?: 'host') ?></div>
                                 <div>SFTP user: <?= h($server['sftp_username'] ?? 'fs25') ?></div>
                                 <div>SFTP pass: <?= h($server['sftp_password'] ?? 'changeme') ?></div>
                                 <div>Profile path: FarmingSimulator2025</div>
                             </div>
-                        </td>
-                        <td>
-                            <div class="flex">
+                            </div>
+                            <div class="flex server-actions">
                                 <?php foreach (['start','stop','restart','pull','rebuild'] as $act): ?>
                                     <form method="post" action="/?route=action">
                                         <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
@@ -962,7 +967,7 @@ unset($_SESSION['logs']);
                     </tr>
                 <?php endforeach; ?>
                 <?php if (!$servers): ?>
-                    <tr><td colspan="11" class="muted">No servers created yet.</td></tr>
+                    <tr><td colspan="10" class="muted">No servers created yet.</td></tr>
                 <?php endif; ?>
                 </tbody>
             </table>
