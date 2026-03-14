@@ -176,6 +176,43 @@ def part_path_for(destination: Path) -> Path:
     return destination.with_name(destination.name + ".part")
 
 
+def resolve_subpath(root: Path, subpath: str) -> Path | None:
+    clean = (subpath or "").strip().replace("\\", "/")
+    candidate = (root / clean).resolve() if clean not in {"", "."} else root.resolve()
+    root_resolved = root.resolve()
+
+    try:
+        candidate.relative_to(root_resolved)
+    except ValueError:
+        return None
+
+    return candidate
+
+
+def check_directory_access(root: Path) -> dict:
+    root.mkdir(parents=True, exist_ok=True)
+    readable = os.access(root, os.R_OK)
+    writable = False
+    error = None
+    temp_path = root / f".panel-write-test-{int(time.time() * 1000)}"
+
+    try:
+        temp_path.write_text("ok", encoding="utf-8")
+        writable = True
+    except Exception as exc:
+        error = str(exc)
+    finally:
+        with suppress(OSError):
+            temp_path.unlink()
+
+    return {
+        "exists": root.exists(),
+        "readable": readable,
+        "writable": writable,
+        "error": error,
+    }
+
+
 def parse_size_to_bytes(value: str) -> int:
     raw = (value or "").strip()
     if raw == "":
@@ -515,10 +552,10 @@ def unzip_installer_archive():
     filename = payload.get("filename", "").strip()
     installer_root = Path(payload.get("shared_installer_path", os.getenv("SHARED_INSTALLER_PATH", "/opt/fs25/installer")))
 
-    if not safe_upload_name(filename):
+    archive_path = resolve_subpath(installer_root, filename)
+    if archive_path is None:
         return jsonify({"ok": False, "error": "invalid filename"}), 400
 
-    archive_path = installer_root / filename
     if not archive_path.exists():
         return jsonify({"ok": False, "error": "archive not found"}), 404
 
@@ -558,6 +595,58 @@ def list_installer_files():
     return jsonify({
         "ok": True,
         "path": str(installer_root),
+        "files": files,
+    })
+
+
+@app.post("/fs/check")
+def check_fs_access():
+    payload = request.get_json(force=True)
+    root = Path(str(payload.get("path", "")).strip())
+
+    if str(root).strip() == "":
+        return jsonify({"ok": False, "error": "path is required"}), 400
+
+    status = check_directory_access(root)
+    return jsonify({"ok": True, "path": str(root), "status": status})
+
+
+@app.post("/fs/list")
+def list_fs_path():
+    payload = request.get_json(force=True)
+    root = Path(str(payload.get("path", "")).strip())
+    subpath = str(payload.get("subpath", "")).strip()
+
+    if str(root).strip() == "":
+        return jsonify({"ok": False, "error": "path is required"}), 400
+
+    root.mkdir(parents=True, exist_ok=True)
+    directory = resolve_subpath(root, subpath)
+    if directory is None:
+        return jsonify({"ok": False, "error": "invalid subpath"}), 400
+
+    directory.mkdir(parents=True, exist_ok=True)
+    access = check_directory_access(directory)
+
+    files = []
+    for entry in sorted(directory.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())):
+        stat = entry.stat()
+        relative_path = str(entry.relative_to(root.resolve())).replace("\\", "/")
+        files.append({
+            "name": entry.name,
+            "relative_path": relative_path,
+            "is_file": entry.is_file(),
+            "is_dir": entry.is_dir(),
+            "size": stat.st_size,
+            "modified_at": int(stat.st_mtime),
+        })
+
+    return jsonify({
+        "ok": True,
+        "root_path": str(root.resolve()),
+        "path": str(directory),
+        "subpath": "" if directory == root.resolve() else str(directory.relative_to(root.resolve())).replace("\\", "/"),
+        "access": access,
         "files": files,
     })
 

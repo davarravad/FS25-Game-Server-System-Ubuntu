@@ -628,6 +628,26 @@ function upload_context_for_request(?array $host, ?array $server, string $target
     return null;
 }
 
+function file_context_for_request(?array $host, ?array $server, string $target): ?array
+{
+    return upload_context_for_request($host, $server, $target);
+}
+
+function file_access_status_for_context(array $context): array
+{
+    return agent_post_for_host($context['host'], '/fs/check', [
+        'path' => $context['path'],
+    ]);
+}
+
+function directory_listing_for_context(array $context, string $subpath = ''): array
+{
+    return agent_post_for_host($context['host'], '/fs/list', [
+        'path' => $context['path'],
+        'subpath' => $subpath,
+    ]);
+}
+
 function safe_instance_id_php(string $instanceId): bool
 {
     return preg_match('/^[a-zA-Z0-9_-]+$/', $instanceId) === 1;

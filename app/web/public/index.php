@@ -216,6 +216,17 @@ if ($route === 'upload_token') {
         exit;
     }
 
+    $access = file_access_status_for_context($context);
+    if (!(bool) ($access['ok'] ?? false) || !(bool) (($access['status']['writable'] ?? false))) {
+        header('Content-Type: application/json', true, 409);
+        echo json_encode([
+            'ok' => false,
+            'error' => 'Upload target is not writable from the agent container',
+            'access' => $access,
+        ]);
+        exit;
+    }
+
     if ($filename === '') {
         header('Content-Type: application/json', true, 400);
         echo json_encode(['ok' => false, 'error' => 'Filename is required']);
@@ -279,6 +290,8 @@ if ($route === 'upload_large' || $route === 'installer_upload') {
         redirect_route($server ? 'game_servers' : 'file_management');
     }
 
+    $access = file_access_status_for_context($context);
+
     ?><!doctype html>
     <html lang="en">
     <head>
@@ -309,9 +322,10 @@ if ($route === 'upload_large' || $route === 'installer_upload') {
             <h1><?= h($context['label']) ?> Upload</h1>
             <p class="muted">Upload large files directly to <strong><?= h((string) $context['path']) ?></strong> on <?= h((string) ($server['server_name'] ?? $host['name'])) ?>.</p>
             <p class="muted">This path uploads retryable chunks through the panel to the host agent and supports multi-GB uploads for shared `/opt/fs25/*` folders and per-server profile storage.</p>
+            <p class="muted">Path access: <?= h((bool) (($access['status']['writable'] ?? false)) ? 'writable' : 'not writable') ?><?php if (!empty($access['status']['error'])): ?> | <?= h((string) $access['status']['error']) ?><?php endif; ?></p>
             <input id="upload-file" type="file" required>
             <div class="actions">
-                <button id="start-upload" type="button">Start Upload</button>
+                <button id="start-upload" type="button" <?= (bool) (($access['status']['writable'] ?? false)) ? '' : 'disabled' ?>>Start Upload</button>
                 <a class="button-link gray" href="/?route=<?= h($context['back_route']) ?>">Back</a>
             </div>
             <div class="progress-shell">
@@ -1133,6 +1147,16 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
             $node = local_node_config();
             $nodeSummary = node_summary();
             $createDefaults = suggested_create_defaults();
+            $fileScope = (string) ($_GET['fm_scope'] ?? 'host');
+            $fileTarget = (string) ($_GET['fm_target'] ?? 'installer');
+            $fileHostId = (int) ($_GET['fm_host_id'] ?? ($localHost['id'] ?? 0));
+            $fileInstanceId = (string) ($_GET['fm_instance_id'] ?? '');
+            $fileSubpath = trim((string) ($_GET['fm_subpath'] ?? ''));
+            $fileServer = ($fileScope === 'instance' && $fileInstanceId !== '') ? find_instance_with_host($fileInstanceId) : null;
+            $fileHost = $fileServer ?: ($fileHostId > 0 ? find_host($fileHostId) : $localHost);
+            $fileContext = file_context_for_request($fileServer ? null : $fileHost, $fileServer, $fileTarget);
+            $fileAccess = $fileContext ? file_access_status_for_context($fileContext) : ['ok' => false];
+            $fileListing = $fileContext ? directory_listing_for_context($fileContext, $fileSubpath) : ['ok' => false, 'files' => []];
         ?>
         <header class="topbar">
             <div class="topbar-inner">
@@ -1285,6 +1309,66 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                 <h2>What This Page Does</h2>
                 <div class="notice">This page is focused on host-wide file operations under `/opt/fs25/*`. It gives you large-file upload entry points for shared game, DLC, and installer storage.</div>
             </div>
+        </div>
+        <div class="card">
+            <h2>File Explorer</h2>
+            <div class="stack muted" style="margin-bottom:14px;">
+                <div>Browse the shared `/opt/fs25/*` folders and the per-server profile-side folders that this panel can reach through the agent.</div>
+                <div>Current target: <?= h((string) ($fileContext['label'] ?? 'not selected')) ?><?php if ($fileContext): ?> | root: <?= h((string) $fileContext['path']) ?><?php endif; ?></div>
+                <?php if ($fileContext): ?>
+                    <div>Access: <?= h((bool) (($fileAccess['status']['readable'] ?? false)) ? 'readable' : 'not readable') ?> / <?= h((bool) (($fileAccess['status']['writable'] ?? false)) ? 'writable' : 'not writable') ?><?php if (!empty($fileAccess['status']['error'])): ?> | <?= h((string) $fileAccess['status']['error']) ?><?php endif; ?></div>
+                <?php endif; ?>
+            </div>
+            <div class="flex" style="margin-bottom:14px;">
+                <?php foreach ($hosts as $host): ?>
+                    <a class="button-link" href="/?route=file_management&amp;fm_scope=host&amp;fm_host_id=<?= h((string) $host['id']) ?>&amp;fm_target=game">browse <?= h($host['name']) ?> game</a>
+                    <a class="button-link" href="/?route=file_management&amp;fm_scope=host&amp;fm_host_id=<?= h((string) $host['id']) ?>&amp;fm_target=dlc">browse <?= h($host['name']) ?> dlc</a>
+                    <a class="button-link" href="/?route=file_management&amp;fm_scope=host&amp;fm_host_id=<?= h((string) $host['id']) ?>&amp;fm_target=installer">browse <?= h($host['name']) ?> installer</a>
+                <?php endforeach; ?>
+            </div>
+            <div class="flex" style="margin-bottom:14px;">
+                <?php foreach ($servers as $server): ?>
+                    <a class="button-link gray" href="/?route=file_management&amp;fm_scope=instance&amp;fm_instance_id=<?= h($server['instance_id']) ?>&amp;fm_target=profile">browse <?= h($server['server_name']) ?> profile</a>
+                    <a class="button-link gray" href="/?route=file_management&amp;fm_scope=instance&amp;fm_instance_id=<?= h($server['instance_id']) ?>&amp;fm_target=mods">mods</a>
+                    <a class="button-link gray" href="/?route=file_management&amp;fm_scope=instance&amp;fm_instance_id=<?= h($server['instance_id']) ?>&amp;fm_target=saves">saves</a>
+                    <a class="button-link gray" href="/?route=file_management&amp;fm_scope=instance&amp;fm_instance_id=<?= h($server['instance_id']) ?>&amp;fm_target=logs">logs</a>
+                <?php endforeach; ?>
+            </div>
+            <?php if ($fileContext && ($fileListing['ok'] ?? false)): ?>
+                <div class="flex" style="margin-bottom:12px;">
+                    <?php if (($fileListing['subpath'] ?? '') !== ''): ?>
+                        <?php
+                            $parentSubpath = dirname((string) $fileListing['subpath']);
+                            $parentSubpath = $parentSubpath === '.' ? '' : str_replace('\\', '/', $parentSubpath);
+                        ?>
+                        <a class="button-link gray" href="/?route=file_management&amp;fm_scope=<?= h($fileScope) ?><?= $fileServer ? '&amp;fm_instance_id=' . h($fileInstanceId) : '&amp;fm_host_id=' . h((string) $fileHostId) ?>&amp;fm_target=<?= h($fileTarget) ?>&amp;fm_subpath=<?= h($parentSubpath) ?>">up one level</a>
+                    <?php endif; ?>
+                    <a class="button-link" href="/?route=upload_large<?= $fileServer ? '&amp;instance_id=' . h($fileInstanceId) : '&amp;host_id=' . h((string) ($fileHost['id'] ?? 0)) ?>&amp;target=<?= h($fileTarget) ?>">upload here</a>
+                </div>
+                <div class="dir-list">
+                    <?php foreach (($fileListing['files'] ?? []) as $entry): ?>
+                        <?php if (!($entry['is_dir'] ?? false) && !($entry['is_file'] ?? false)) { continue; } ?>
+                        <div class="dir-item">
+                            <div class="muted"><?= h($entry['name']) ?></div>
+                            <div class="muted small"><?= h(($entry['is_dir'] ?? false) ? 'directory' : 'file') ?><?php if (($entry['is_file'] ?? false)): ?> | <?= h((string) $entry['size']) ?> bytes<?php endif; ?></div>
+                            <?php if (($entry['is_dir'] ?? false)): ?>
+                                <a class="button-link gray" href="/?route=file_management&amp;fm_scope=<?= h($fileScope) ?><?= $fileServer ? '&amp;fm_instance_id=' . h($fileInstanceId) : '&amp;fm_host_id=' . h((string) $fileHostId) ?>&amp;fm_target=<?= h($fileTarget) ?>&amp;fm_subpath=<?= h((string) $entry['relative_path']) ?>">open folder</a>
+                            <?php elseif ($fileTarget === 'installer' && str_ends_with(strtolower((string) $entry['name']), '.zip')): ?>
+                                <form method="post" action="/?route=installer_unzip">
+                                    <input type="hidden" name="host_id" value="<?= h((string) ($fileHost['id'] ?? 0)) ?>">
+                                    <input type="hidden" name="filename" value="<?= h((string) (($fileListing['subpath'] ?? '') !== '' ? ($fileListing['subpath'] . '/' . $entry['name']) : $entry['name'])) ?>">
+                                    <button class="gray" type="submit">unzip zip</button>
+                                </form>
+                            <?php endif; ?>
+                        </div>
+                    <?php endforeach; ?>
+                    <?php if (!(($fileListing['files'] ?? []))): ?>
+                        <div class="muted small">This folder is currently empty.</div>
+                    <?php endif; ?>
+                </div>
+            <?php else: ?>
+                <div class="notice">Select a folder above to browse it.</div>
+            <?php endif; ?>
         </div>
         <?php if (!$hosts): ?>
             <div class="card">
