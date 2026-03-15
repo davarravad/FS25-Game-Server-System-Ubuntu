@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS managed_hosts (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(150) NOT NULL,
     agent_url VARCHAR(255) NOT NULL,
+    access_host VARCHAR(255) NOT NULL DEFAULT '',
     agent_token VARCHAR(255) NOT NULL,
     shared_game_path VARCHAR(255) NOT NULL DEFAULT '/opt/fs25/game',
     shared_dlc_path VARCHAR(255) NOT NULL DEFAULT '/opt/fs25/dlc',
