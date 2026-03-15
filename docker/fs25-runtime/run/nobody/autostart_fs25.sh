@@ -1,6 +1,6 @@
 #!/bin/bash
 
-WEBSERVER_PORT="${SERVER_PORT:-7999}"
+WEBSERVER_PORT="${WEB_PORT:-${SERVER_PORT:-7999}}"
 
 # Autostart
 if [[ $AUTOSTART_SERVER = "true" ]] || [[ $AUTOSTART_SERVER = "web_only" ]]; then

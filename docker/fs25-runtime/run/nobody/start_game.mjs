@@ -132,7 +132,7 @@ function get_regex(text, regex) {
 let main_interval = null;
 
 async function main() {
-  const webPort = process.env.SERVER_PORT || '7999';
+  const webPort = process.env.WEB_PORT || process.env.SERVER_PORT || '7999';
   const host = process.env.WEBSERVER_LISTENING_ON + ':' + webPort;
 
   console.log('Starting game');

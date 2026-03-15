@@ -35,24 +35,24 @@ HOST_GAME_VERSION="${GAME_INSTALL_DIR}/VERSION"
 HOST_WEB_CONFIG="${GAME_INSTALL_DIR}/dedicatedServer.xml"
 HOST_GAME_DIR_MARKER="${GAME_INSTALL_DIR}/x64"
 SERVER_TEMPLATE_DIR="/home/nobody/.build/serverFiles/server0001"
-SERVER_PORT_VALUE="${SERVER_PORT:-}"
+CUSTOM_PORT_VALUE="${WEB_PORT:-${SERVER_PORT:-}}"
 PORT_SERVER_DIR=""
 PORT_X64_DIR=""
 PORT_LAUNCHER_PATH=""
 
-if [[ -z "$SERVER_PORT_VALUE" ]]; then
-    echo -e "${RED}ERROR: SERVER_PORT is not set for this container.${NOCOLOR}"
+if [[ -z "$CUSTOM_PORT_VALUE" ]]; then
+    echo -e "${RED}ERROR: Neither WEB_PORT nor SERVER_PORT is set for this container.${NOCOLOR}"
     exit 1
 fi
 
-if ! [[ "$SERVER_PORT_VALUE" =~ ^[0-9]+$ ]]; then
-    echo -e "${RED}ERROR: SERVER_PORT must be numeric, got '${SERVER_PORT_VALUE}'.${NOCOLOR}"
+if ! [[ "$CUSTOM_PORT_VALUE" =~ ^[0-9]+$ ]]; then
+    echo -e "${RED}ERROR: Custom launcher port must be numeric, got '${CUSTOM_PORT_VALUE}'.${NOCOLOR}"
     exit 1
 fi
 
-PORT_SERVER_DIR="${GAME_INSTALL_DIR}/${SERVER_PORT_VALUE}"
+PORT_SERVER_DIR="${GAME_INSTALL_DIR}/${CUSTOM_PORT_VALUE}"
 PORT_X64_DIR="${PORT_SERVER_DIR}/x64"
-PORT_LAUNCHER_PATH="${GAME_INSTALL_DIR}/start_fs25_${SERVER_PORT_VALUE}.sh"
+PORT_LAUNCHER_PATH="${GAME_INSTALL_DIR}/start_fs25_${CUSTOM_PORT_VALUE}.sh"
 
 ensure_runtime_directories() {
     mkdir -p "$INSTALL_DIR" "$GAME_ROOT_DIR" "$CONFIG_DIR" "$INSTANCE_PROFILE_DIR" "$DLC_DIR"
@@ -109,7 +109,7 @@ prepare_port_server_files() {
     local escaped_web_username=""
     local escaped_web_password=""
 
-    tls_port="$((SERVER_PORT_VALUE + 10000))"
+    tls_port="$((CUSTOM_PORT_VALUE + 10000))"
     dedicated_server_template="${SERVER_TEMPLATE_DIR}/dedicatedServer.xml"
     web_data_template="${SERVER_TEMPLATE_DIR}/web_data"
     run_bat_template="${SERVER_TEMPLATE_DIR}/x64/run.bat"
@@ -146,7 +146,7 @@ prepare_port_server_files() {
         exit 1
     fi
 
-    sed -i "s/port=\"2521\"/port=\"${SERVER_PORT_VALUE}\"/" "${PORT_SERVER_DIR}/dedicatedServer.xml"
+    sed -i "s/port=\"2521\"/port=\"${CUSTOM_PORT_VALUE}\"/" "${PORT_SERVER_DIR}/dedicatedServer.xml"
     sed -i "s/port=\"12521\"/port=\"${tls_port}\"/" "${PORT_SERVER_DIR}/dedicatedServer.xml"
     sed -i "s/<username>admin<\\/username>/<username>${escaped_web_username}<\\/username>/" "${PORT_SERVER_DIR}/dedicatedServer.xml"
     sed -i "s/<passphrase>[^<]*<\\/passphrase>/<passphrase>${escaped_web_password}<\\/passphrase>/" "${PORT_SERVER_DIR}/dedicatedServer.xml"
@@ -205,7 +205,7 @@ done
 EOF
     fi
 
-    sed -i "s/FS_PORT=\"2521\"/FS_PORT=\"${SERVER_PORT_VALUE}\"/" "$PORT_LAUNCHER_PATH"
+    sed -i "s/FS_PORT=\"2521\"/FS_PORT=\"${CUSTOM_PORT_VALUE}\"/" "$PORT_LAUNCHER_PATH"
     chmod +x "$PORT_LAUNCHER_PATH"
 
     echo -e "${GREEN}INFO: Prepared dedicated server files in ${PORT_SERVER_DIR}${NOCOLOR}"
