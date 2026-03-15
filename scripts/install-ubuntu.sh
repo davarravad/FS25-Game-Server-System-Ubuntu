@@ -191,11 +191,8 @@ prepare_directories() {
   mkdir -p "${SHARED_GAME_PATH}"
   mkdir -p "${SHARED_DLC_PATH}"
   mkdir -p "${SHARED_INSTALLER_PATH}"
-  chmod 755 "${INSTANCE_BASE_PATH}"
-  chmod 755 "${BACKUP_BASE_PATH}"
-  chmod 755 "${SHARED_GAME_PATH}"
-  chmod 755 "${SHARED_DLC_PATH}"
-  chmod 755 "${SHARED_INSTALLER_PATH}"
+  chown -R 1000:1000 "${INSTANCE_BASE_PATH}" "${BACKUP_BASE_PATH}" "${SHARED_GAME_PATH}" "${SHARED_DLC_PATH}" "${SHARED_INSTALLER_PATH}" || true
+  chmod -R ug+rwX,o+rX "${INSTANCE_BASE_PATH}" "${BACKUP_BASE_PATH}" "${SHARED_GAME_PATH}" "${SHARED_DLC_PATH}" "${SHARED_INSTALLER_PATH}"
 }
 
 start_stack() {

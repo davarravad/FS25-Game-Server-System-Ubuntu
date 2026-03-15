@@ -19,6 +19,8 @@ BACKUP_BASE_PATH = Path(os.getenv("BACKUP_BASE_PATH", "/opt/fsg-panel/backups"))
 AGENT_SHARED_TOKEN = os.getenv("AGENT_SHARED_TOKEN", "")
 TEMPLATE_DIR = Path("/app/templates/fs25")
 STATE_FILE_NAME = ".panel-state.json"
+SFTP_UID = int(os.getenv("SFTP_UID", "1000"))
+SFTP_GID = int(os.getenv("SFTP_GID", "1000"))
 
 
 def require_auth():
@@ -56,6 +58,28 @@ def write_binary_file(path: Path, content: bytes):
     path.write_bytes(content)
 
 
+def apply_permissions(path: Path, recursive: bool = True):
+    if not path.exists():
+        return
+
+    def set_perms(target: Path):
+        with suppress(PermissionError, OSError):
+            os.chown(target, SFTP_UID, SFTP_GID)
+        with suppress(PermissionError, OSError):
+            os.chmod(target, 0o775 if target.is_dir() else 0o664)
+
+    set_perms(path)
+
+    if recursive and path.is_dir():
+        for root, dirs, files in os.walk(path):
+            root_path = Path(root)
+            set_perms(root_path)
+            for name in dirs:
+                set_perms(root_path / name)
+            for name in files:
+                set_perms(root_path / name)
+
+
 def render_template(content: str, values: dict) -> str:
     out = content
     for key, value in values.items():
@@ -86,6 +110,7 @@ def ensure_shared_storage(payload):
 
     for path in shared_paths:
         path.mkdir(parents=True, exist_ok=True)
+        apply_permissions(path, recursive=True)
 
     return {
         "game": str(shared_paths[0]),
@@ -120,6 +145,14 @@ def read_instance_state(instance_id: str) -> dict:
 
 def restore_desired_instances():
     INSTANCE_BASE_PATH.mkdir(parents=True, exist_ok=True)
+    apply_permissions(INSTANCE_BASE_PATH, recursive=True)
+    BACKUP_BASE_PATH.mkdir(parents=True, exist_ok=True)
+    apply_permissions(BACKUP_BASE_PATH, recursive=True)
+    ensure_shared_storage({
+        "shared_game_path": os.getenv("SHARED_GAME_PATH", "/opt/fs25/game"),
+        "shared_dlc_path": os.getenv("SHARED_DLC_PATH", "/opt/fs25/dlc"),
+        "shared_installer_path": os.getenv("SHARED_INSTALLER_PATH", "/opt/fs25/installer"),
+    })
 
     for instance_dir in INSTANCE_BASE_PATH.iterdir():
         if not instance_dir.is_dir():
@@ -128,6 +161,7 @@ def restore_desired_instances():
         instance_id = instance_dir.name
         compose_file = instance_dir / "compose.yml"
         state = read_instance_state(instance_id)
+        apply_permissions(instance_dir, recursive=True)
 
         if not compose_file.exists() or not bool(state.get("desired_running")):
             continue
@@ -191,6 +225,7 @@ def resolve_subpath(root: Path, subpath: str) -> Path | None:
 
 def check_directory_access(root: Path) -> dict:
     root.mkdir(parents=True, exist_ok=True)
+    apply_permissions(root, recursive=False)
     readable = os.access(root, os.R_OK)
     writable = False
     error = None
@@ -368,12 +403,14 @@ def create_instance():
 
     for sub in ["data/config", "data/mods", "data/logs", "data/saves"]:
         (instance_dir / sub).mkdir(parents=True, exist_ok=True)
+    apply_permissions(instance_dir, recursive=True)
 
     compose_tpl = (TEMPLATE_DIR / "compose.instance.yml.tpl").read_text(encoding="utf-8")
     env_tpl = (TEMPLATE_DIR / "server.env.tpl").read_text(encoding="utf-8")
 
     write_file(instance_dir / "compose.yml", render_template(compose_tpl, values))
     write_file(instance_dir / ".env", render_template(env_tpl, values))
+    apply_permissions(instance_dir, recursive=True)
     write_instance_state(instance_id, False)
 
     return jsonify({"ok": True, "instance_dir": str(instance_dir)})
@@ -507,6 +544,8 @@ def upload_instance_file():
 def prepare_host_storage():
     payload = request.get_json(force=True)
     paths = ensure_shared_storage(payload)
+    apply_permissions(INSTANCE_BASE_PATH, recursive=True)
+    apply_permissions(BACKUP_BASE_PATH, recursive=True)
     return jsonify({"ok": True, "paths": paths})
 
 
@@ -538,6 +577,7 @@ def upload_host_file():
     destination_root.mkdir(parents=True, exist_ok=True)
     destination = destination_root / filename
     write_binary_file(destination, decoded)
+    apply_permissions(destination_root, recursive=True)
 
     return jsonify({
         "ok": True,
@@ -579,6 +619,7 @@ def list_installer_files():
     payload = request.get_json(force=True)
     installer_root = Path(payload.get("shared_installer_path", os.getenv("SHARED_INSTALLER_PATH", "/opt/fs25/installer")))
     installer_root.mkdir(parents=True, exist_ok=True)
+    apply_permissions(installer_root, recursive=True)
 
     files = []
     for entry in sorted(installer_root.iterdir(), key=lambda item: (not item.is_file(), item.name.lower())):
@@ -683,6 +724,7 @@ def upload_host_file_stream():
                 bytes_written += len(chunk)
 
         os.replace(temp_name, destination)
+        apply_permissions(destination_root, recursive=True)
     except Exception as exc:
         try:
             os.unlink(temp_name)
@@ -753,6 +795,7 @@ def upload_host_file_chunk():
             }), 409
 
         os.replace(temp_destination, destination)
+        apply_permissions(destination_root, recursive=True)
 
     return jsonify({
         "ok": True,
