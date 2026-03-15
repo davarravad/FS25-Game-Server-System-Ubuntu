@@ -19,6 +19,10 @@ INSTANCE_BASE_PATH = Path(os.getenv("INSTANCE_BASE_PATH", "/opt/fsg-panel/instan
 BACKUP_BASE_PATH = Path(os.getenv("BACKUP_BASE_PATH", "/opt/fsg-panel/backups"))
 AGENT_SHARED_TOKEN = os.getenv("AGENT_SHARED_TOKEN", "")
 TEMPLATE_DIR = Path("/app/templates/fs25")
+FS25_RUNTIME_SOURCE = Path(os.getenv("FS25_RUNTIME_SOURCE", "/app/fs25-runtime"))
+FS25_RUNTIME_IMAGE = os.getenv("FS25_RUNTIME_IMAGE", "fsg/fs25-runtime:local")
+FS25_RUNTIME_RELEASETAG = os.getenv("FS25_RUNTIME_RELEASETAG", "local")
+FS25_RUNTIME_TARGETARCH = os.getenv("FS25_RUNTIME_TARGETARCH", "amd64")
 STATE_FILE_NAME = ".panel-state.json"
 SFTP_UID = int(os.getenv("SFTP_UID", "1000"))
 SFTP_GID = int(os.getenv("SFTP_GID", "1000"))
@@ -74,6 +78,58 @@ def compose_command():
 
 def compose_cmd(*args):
     return [*compose_command(), *args]
+
+
+def image_exists(image_name: str) -> bool:
+    result = run_command(["docker", "image", "inspect", image_name])
+    return result["code"] == 0
+
+
+def runtime_target_arch() -> str:
+    host_arch = os.uname().machine.lower()
+    arch_map = {
+        "x86_64": "amd64",
+        "amd64": "amd64",
+        "aarch64": "arm64",
+        "arm64": "arm64",
+    }
+    return FS25_RUNTIME_TARGETARCH or arch_map.get(host_arch, host_arch)
+
+
+def ensure_runtime_image(image_name: str, force_rebuild: bool = False) -> dict:
+    if image_name != FS25_RUNTIME_IMAGE:
+        return {"ok": True, "skipped": True}
+
+    if not FS25_RUNTIME_SOURCE.exists():
+        return {"ok": False, "error": f"runtime source not found at {FS25_RUNTIME_SOURCE}"}
+
+    if not force_rebuild and image_exists(image_name):
+        return {"ok": True, "built": False}
+
+    build_cmd = [
+        "docker", "build",
+        "-t", image_name,
+        "--build-arg", f"RELEASETAG={FS25_RUNTIME_RELEASETAG}",
+        "--build-arg", f"TARGETARCH={runtime_target_arch()}",
+        str(FS25_RUNTIME_SOURCE),
+    ]
+    result = run_command(build_cmd)
+    response = {"ok": result["code"] == 0, "result": result}
+    if result["code"] != 0:
+        response["error"] = (result.get("stderr") or result.get("stdout") or "Image build failed").strip()
+    return response
+
+
+def image_name_from_compose(compose_file: Path) -> str:
+    if not compose_file.exists():
+        return FS25_RUNTIME_IMAGE
+
+    for raw_line in compose_file.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if line.startswith("image:"):
+            return line.split(":", 1)[1].strip().strip('"').strip("'")
+
+    return FS25_RUNTIME_IMAGE
 
 
 def write_file(path: Path, content: str):
@@ -161,7 +217,7 @@ def build_instance_values(instance_id: str, payload: dict, existing_env: dict | 
         "SFTP_PORT": current("SFTP_PORT", 2222),
         "SFTP_USERNAME": current("SFTP_USERNAME", "fs25"),
         "SFTP_PASSWORD": current("SFTP_PASSWORD", "changeme"),
-        "IMAGE_NAME": current("IMAGE_NAME", "toetje585/arch-fs25server:latest"),
+        "IMAGE_NAME": current("IMAGE_NAME", FS25_RUNTIME_IMAGE),
         "INSTANCE_BASE_PATH": str(INSTANCE_BASE_PATH),
         "SHARED_GAME_PATH": current("SHARED_GAME_PATH", "/opt/fs25/game"),
         "SHARED_DLC_PATH": current("SHARED_DLC_PATH", "/opt/fs25/dlc"),
@@ -530,6 +586,17 @@ def instance_action():
 
     if not compose_file.exists():
         return jsonify({"ok": False, "error": "instance compose file not found"}), 404
+
+    image_name = image_name_from_compose(compose_file)
+
+    if action in {"start", "restart", "rebuild"}:
+        image_result = ensure_runtime_image(image_name, force_rebuild=(action == "rebuild"))
+        if not image_result.get("ok"):
+            return jsonify(image_result), 500
+
+    if action == "pull" and image_name == FS25_RUNTIME_IMAGE:
+        image_result = ensure_runtime_image(image_name, force_rebuild=True)
+        return jsonify(image_result), (200 if image_result.get("ok") else 500)
 
     action_map = {
         "start": compose_cmd("-f", str(compose_file), "up", "-d"),

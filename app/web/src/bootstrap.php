@@ -234,6 +234,16 @@ function generate_sftp_password(int $length = 20): string
     return random_string_from_charset('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-', $length);
 }
 
+function canonical_fs25_image_name(?string $imageName): string
+{
+    $normalized = trim((string) $imageName);
+    if ($normalized === '' || $normalized === 'toetje585/arch-fs25server:latest') {
+        return 'fsg/fs25-runtime:local';
+    }
+
+    return $normalized;
+}
+
 function is_safe_sftp_credential(string $value): bool
 {
     return (bool) preg_match('/^[a-zA-Z0-9._-]+$/', $value);
@@ -272,7 +282,7 @@ function suggested_create_defaults(): array
     return [
         'instance_id' => sprintf('fs25-%04d', $sequence),
         'server_name' => sprintf('FSG Server %d', $sequence),
-        'image_name' => 'toetje585/arch-fs25server:latest',
+        'image_name' => canonical_fs25_image_name(''),
         'server_players' => 16,
         'server_port' => next_available_port('server_port', 10823),
         'web_port' => next_available_port('web_port', 18000),
@@ -574,7 +584,7 @@ function sync_instance_config_for_server(array $server): array
     return agent_post_for_host($server, '/instance/sync', [
         'instance_id' => $instanceId,
         'server_name' => (string) ($server['server_name'] ?? $instanceId),
-        'image_name' => (string) ($server['image_name'] ?? 'toetje585/arch-fs25server:latest'),
+        'image_name' => canonical_fs25_image_name((string) ($server['image_name'] ?? '')),
         'server_port' => (int) ($server['server_port'] ?? 10823),
         'web_port' => (int) ($server['web_port'] ?? 18000),
         'vnc_port' => (int) ($server['vnc_port'] ?? 5900),

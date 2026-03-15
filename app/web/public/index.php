@@ -557,7 +557,7 @@ if ($route === 'create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $defaults = suggested_create_defaults();
     $instanceId = preg_replace('/[^a-zA-Z0-9_-]/', '', (string)($_POST['instance_id'] ?? ''));
     $serverName = trim((string)($_POST['server_name'] ?? ''));
-    $imageName = trim((string)($_POST['image_name'] ?? (string) $defaults['image_name']));
+    $imageName = canonical_fs25_image_name((string)($_POST['image_name'] ?? (string) $defaults['image_name']));
     $hostId = (int) ($_POST['host_id'] ?? 0);
     $host = find_host($hostId);
 
@@ -946,7 +946,7 @@ if ($route === 'server_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $payload = [
         'server_name' => trim((string) ($_POST['server_name'] ?? '')),
-        'image_name' => trim((string) ($_POST['image_name'] ?? '')),
+        'image_name' => canonical_fs25_image_name((string) ($_POST['image_name'] ?? '')),
         'server_port' => (int) ($_POST['server_port'] ?? 0),
         'web_port' => (int) ($_POST['web_port'] ?? 0),
         'vnc_port' => (int) ($_POST['vnc_port'] ?? 0),
