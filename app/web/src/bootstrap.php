@@ -67,6 +67,7 @@ function ensure_schema(PDO $pdo): void
     $pdo->exec("ALTER TABLE managed_hosts ADD COLUMN IF NOT EXISTS shared_installer_path VARCHAR(255) NOT NULL DEFAULT '/opt/fs25/installer' AFTER shared_dlc_path");
     $pdo->exec('ALTER TABLE server_instances ADD COLUMN IF NOT EXISTS host_id INT NULL AFTER id');
     $pdo->exec('ALTER TABLE server_instances ADD COLUMN IF NOT EXISTS sftp_port INT NOT NULL DEFAULT 2222 AFTER novnc_port');
+    $pdo->exec('ALTER TABLE server_instances ADD COLUMN IF NOT EXISTS tls_port INT NOT NULL DEFAULT 28000 AFTER web_port');
     $pdo->exec("ALTER TABLE server_instances ADD COLUMN IF NOT EXISTS sftp_username VARCHAR(100) NOT NULL DEFAULT 'fs25' AFTER sftp_port");
     $pdo->exec("ALTER TABLE server_instances ADD COLUMN IF NOT EXISTS sftp_password VARCHAR(255) NOT NULL DEFAULT 'changeme' AFTER sftp_username");
     $pdo->exec("ALTER TABLE server_instances ADD COLUMN IF NOT EXISTS web_username VARCHAR(100) NOT NULL DEFAULT 'admin' AFTER sftp_password");
@@ -302,7 +303,7 @@ function next_instance_sequence(): int
 
 function next_available_port(string $field, int $basePort): int
 {
-    $allowedFields = ['server_port', 'web_port', 'vnc_port', 'novnc_port', 'sftp_port'];
+    $allowedFields = ['server_port', 'web_port', 'tls_port', 'vnc_port', 'novnc_port', 'sftp_port'];
     if (!in_array($field, $allowedFields, true)) {
         return $basePort;
     }
@@ -322,6 +323,7 @@ function suggested_create_defaults(): array
         'server_players' => 16,
         'server_port' => next_available_port('server_port', 10823),
         'web_port' => next_available_port('web_port', 18000),
+        'tls_port' => next_available_port('tls_port', 28000),
         'vnc_port' => next_available_port('vnc_port', 5900),
         'novnc_port' => next_available_port('novnc_port', 6080),
         'sftp_port' => next_available_port('sftp_port', 2222),
@@ -349,6 +351,7 @@ function find_port_conflicts(array $ports, ?string $excludeInstanceId = null): a
     $fields = [
         'server_port' => 'Game Port',
         'web_port' => 'Admin Web Port',
+        'tls_port' => 'TLS Port',
         'vnc_port' => 'VNC Port',
         'novnc_port' => 'noVNC Port',
         'sftp_port' => 'SFTP Port',
@@ -356,13 +359,14 @@ function find_port_conflicts(array $ports, ?string $excludeInstanceId = null): a
 
     $conflicts = [];
     $sql = '
-        SELECT instance_id, server_name, server_port, web_port, vnc_port, novnc_port, sftp_port
+        SELECT instance_id, server_name, server_port, web_port, tls_port, vnc_port, novnc_port, sftp_port
         FROM server_instances
-        WHERE (server_port = ? OR web_port = ? OR vnc_port = ? OR novnc_port = ? OR sftp_port = ?)
+        WHERE (server_port = ? OR web_port = ? OR tls_port = ? OR vnc_port = ? OR novnc_port = ? OR sftp_port = ?)
     ';
     $params = [
         (int) ($ports['server_port'] ?? 0),
         (int) ($ports['web_port'] ?? 0),
+        (int) ($ports['tls_port'] ?? 0),
         (int) ($ports['vnc_port'] ?? 0),
         (int) ($ports['novnc_port'] ?? 0),
         (int) ($ports['sftp_port'] ?? 0),
@@ -512,6 +516,21 @@ function agent_firewall_summary(array $agentResponse): ?string
     return $message;
 }
 
+function agent_port_server_summary(array $agentResponse): ?string
+{
+    $sync = $agentResponse['port_server_sync'] ?? null;
+    if (!is_array($sync)) {
+        return null;
+    }
+
+    $message = trim((string) ($sync['message'] ?? ''));
+    if ($message === '') {
+        return null;
+    }
+
+    return $message;
+}
+
 function all_hosts(): array
 {
     return db()->query('SELECT * FROM managed_hosts ORDER BY name ASC, id ASC')->fetchAll();
@@ -638,6 +657,7 @@ function sync_instance_config_for_server(array $server): array
         'image_name' => canonical_fs25_image_name((string) ($server['image_name'] ?? '')),
         'server_port' => (int) ($server['server_port'] ?? 10823),
         'web_port' => (int) ($server['web_port'] ?? 18000),
+        'tls_port' => (int) ($server['tls_port'] ?? ((int) ($server['web_port'] ?? 18000) + 10000)),
         'vnc_port' => (int) ($server['vnc_port'] ?? 5900),
         'novnc_port' => (int) ($server['novnc_port'] ?? 6080),
         'sftp_port' => (int) ($server['sftp_port'] ?? 2222),

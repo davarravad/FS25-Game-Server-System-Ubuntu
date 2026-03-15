@@ -204,6 +204,14 @@ def build_instance_values(instance_id: str, payload: dict, existing_env: dict | 
     def current(key: str, default):
         return payload.get(key.lower(), payload.get(key, existing_env.get(key, default)))
 
+    web_port_default = parse_port_number(current("WEB_PORT", 18000))
+    if web_port_default is None:
+        web_port_default = 18000
+
+    tls_default = parse_port_number(current("TLS_PORT", web_port_default + 10000))
+    if tls_default is None:
+        tls_default = web_port_default + 10000
+
     return {
         "INSTANCE_ID": instance_id,
         "SERVER_NAME": current("SERVER_NAME", instance_id),
@@ -211,7 +219,8 @@ def build_instance_values(instance_id: str, payload: dict, existing_env: dict | 
         "SERVER_ADMIN": current("SERVER_ADMIN", ""),
         "SERVER_PLAYERS": current("SERVER_PLAYERS", 16),
         "SERVER_PORT": current("SERVER_PORT", 10823),
-        "WEB_PORT": current("WEB_PORT", 18000),
+        "WEB_PORT": current("WEB_PORT", web_port_default),
+        "TLS_PORT": current("TLS_PORT", tls_default),
         "VNC_PORT": current("VNC_PORT", 5900),
         "NOVNC_PORT": current("NOVNC_PORT", 6080),
         "SERVER_REGION": current("SERVER_REGION", "en"),
@@ -288,6 +297,14 @@ def parse_port_number(value) -> int | None:
     return None
 
 
+def xml_escape_text(value: str) -> str:
+    escaped = str(value)
+    escaped = escaped.replace("&", "&amp;")
+    escaped = escaped.replace("<", "&lt;")
+    escaped = escaped.replace(">", "&gt;")
+    return escaped
+
+
 def public_port_rules(values: dict | None) -> list[tuple[int, str, str]]:
     if not isinstance(values, dict):
         return []
@@ -312,6 +329,76 @@ def public_port_rules(values: dict | None) -> list[tuple[int, str, str]]:
         rules.append((port, proto, label))
 
     return rules
+
+
+def custom_server_port(values: dict | None) -> int | None:
+    if not isinstance(values, dict):
+        return None
+
+    return parse_port_number(values.get("WEB_PORT")) or parse_port_number(values.get("SERVER_PORT"))
+
+
+def tls_port_value(values: dict | None) -> int | None:
+    if not isinstance(values, dict):
+        return None
+
+    explicit = parse_port_number(values.get("TLS_PORT"))
+    if explicit is not None:
+        return explicit
+
+    web_port = parse_port_number(values.get("WEB_PORT"))
+    if web_port is None:
+        return None
+
+    inferred = web_port + 10000
+    return inferred if inferred <= 65535 else None
+
+
+def sync_port_server_xml(values: dict | None, current_values: dict | None = None) -> dict:
+    new_custom_port = custom_server_port(values)
+    if new_custom_port is None:
+        return {"ok": True, "status": "skipped", "message": "No custom server port was available for XML sync."}
+
+    shared_game_path = Path(str((values or {}).get("SHARED_GAME_PATH", "/opt/fs25/game")))
+    game_install_dir = shared_game_path / "Farming Simulator 2025"
+    new_server_dir = game_install_dir / str(new_custom_port)
+    new_launcher = game_install_dir / f"start_fs25_{new_custom_port}.sh"
+
+    old_custom_port = custom_server_port(current_values)
+    if old_custom_port is not None and old_custom_port != new_custom_port:
+        old_server_dir = game_install_dir / str(old_custom_port)
+        old_launcher = game_install_dir / f"start_fs25_{old_custom_port}.sh"
+
+        if old_server_dir.exists() and not new_server_dir.exists():
+            shutil.move(str(old_server_dir), str(new_server_dir))
+
+        if old_launcher.exists() and not new_launcher.exists():
+            shutil.move(str(old_launcher), str(new_launcher))
+
+    xml_path = new_server_dir / "dedicatedServer.xml"
+    if not xml_path.exists():
+        return {"ok": True, "status": "missing", "message": f"Custom server XML was not found at {xml_path}."}
+
+    xml_text = xml_path.read_text(encoding="utf-8", errors="replace")
+    web_port = new_custom_port
+    tls_port = tls_port_value(values)
+    web_username = xml_escape_text(str((values or {}).get("WEB_USERNAME", "admin")))
+    web_password = xml_escape_text(str((values or {}).get("WEB_PASSWORD", "changeme")))
+
+    xml_text = re.sub(r'(<webserver port=")\d+(">)', rf"\g<1>{web_port}\2", xml_text)
+    if tls_port is not None:
+        xml_text = re.sub(r'(<tls port=")\d+(" active=")', rf"\g<1>{tls_port}\2", xml_text)
+    xml_text = re.sub(r"<username>[^<]*</username>", f"<username>{web_username}</username>", xml_text, count=1)
+    xml_text = re.sub(r"<passphrase>[^<]*</passphrase>", f"<passphrase>{web_password}</passphrase>", xml_text, count=1)
+    xml_text = re.sub(r'exe="[^"]*"', 'exe="run.bat"', xml_text, count=1)
+    xml_path.write_text(xml_text, encoding="utf-8")
+
+    if new_launcher.exists():
+        launcher_text = new_launcher.read_text(encoding="utf-8", errors="replace")
+        launcher_text = re.sub(r'FS_PORT="\d+"', f'FS_PORT="{new_custom_port}"', launcher_text, count=1)
+        new_launcher.write_text(launcher_text, encoding="utf-8")
+
+    return {"ok": True, "status": "updated", "message": f"Updated {xml_path}."}
 
 
 def run_host_namespace_shell(script: str) -> dict:
@@ -644,6 +731,47 @@ def inspect_container(container_name: str) -> dict:
     }
 
 
+def restart_dedicated_server_backend(instance_id: str) -> dict:
+    container = inspect_container(instance_id)
+    if not container.get("exists"):
+        return {"ok": False, "error": "runtime container is missing"}
+    if not container.get("running"):
+        return {"ok": False, "error": "runtime container is not running"}
+
+    kill_script = r"""
+set -eu
+matches="$(pgrep -af 'dedicatedServer\.exe' || true)"
+if [ -z "$matches" ]; then
+  echo "No dedicatedServer.exe process is running."
+  exit 0
+fi
+
+printf '%s\n' "$matches" >&2
+printf '%s\n' "$matches" | awk '{print $1}' | xargs -r kill -TERM
+sleep 2
+remaining="$(pgrep -af 'dedicatedServer\.exe' || true)"
+if [ -n "$remaining" ]; then
+  printf '%s\n' "$remaining" | awk '{print $1}' | xargs -r kill -KILL
+fi
+echo "dedicatedServer.exe process terminated."
+"""
+
+    result = run_command([
+        "docker",
+        "exec",
+        instance_id,
+        "sh",
+        "-lc",
+        kill_script,
+    ])
+
+    return {
+        "ok": result["code"] == 0,
+        "result": result,
+        "error": (result.get("stderr") or result.get("stdout") or "Failed to restart backend").strip() if result["code"] != 0 else None,
+    }
+
+
 def derive_runtime_state(containers: list[dict], desired_running: bool) -> dict:
     statuses = {str(container.get("status", "unknown")).lower() for container in containers}
     running_count = sum(1 for container in containers if container.get("running"))
@@ -796,8 +924,9 @@ def create_instance():
     write_instance_state(instance_id, False)
     append_runtime_log(instance_id, "Console: Server created.")
     firewall = sync_public_port_access(instance_id, next_values=values)
+    port_server_sync = sync_port_server_xml(values)
 
-    return jsonify({"ok": True, "instance_dir": str(instance_dir), "firewall": firewall})
+    return jsonify({"ok": True, "instance_dir": str(instance_dir), "firewall": firewall, "port_server_sync": port_server_sync})
 
 
 @app.post("/instance/sync")
@@ -816,8 +945,9 @@ def sync_instance():
     values = build_instance_values(instance_id, payload, existing_env)
     render_instance_files(instance_dir, values, write_env=True)
     firewall = sync_public_port_access(instance_id, next_values=values, current_values=existing_env)
+    port_server_sync = sync_port_server_xml(values, existing_env)
 
-    return jsonify({"ok": True, "instance_dir": str(instance_dir), "firewall": firewall})
+    return jsonify({"ok": True, "instance_dir": str(instance_dir), "firewall": firewall, "port_server_sync": port_server_sync})
 
 
 @app.post("/instance/secrets")
@@ -865,6 +995,8 @@ def instance_action():
         append_runtime_log(instance_id, "Console: Server marked as stopping...")
     elif action == "pull":
         append_runtime_log(instance_id, "[FSG Daemon]: Pulling Docker container image, this could take a few minutes to complete...")
+    elif action == "backend_reboot":
+        append_runtime_log(instance_id, "Console: Backend reboot requested. Killing dedicatedServer.exe so the watchdog can restart it...")
 
     if action in {"start", "restart", "rebuild"}:
         image_result = ensure_runtime_image(image_name, force_rebuild=(action == "rebuild"))
@@ -878,6 +1010,14 @@ def instance_action():
         if image_result.get("ok"):
             append_runtime_log(instance_id, "[FSG Daemon]: Finished pulling Docker container image")
         return jsonify(image_result), (200 if image_result.get("ok") else 500)
+
+    if action == "backend_reboot":
+        reboot_result = restart_dedicated_server_backend(instance_id)
+        if reboot_result.get("ok"):
+            append_runtime_log(instance_id, "Console: dedicatedServer.exe terminated. Waiting for the launcher to bring it back online...")
+            return jsonify(reboot_result)
+        append_runtime_log(instance_id, f"Console: Backend reboot failed: {reboot_result.get('error', 'Unknown error')}")
+        return jsonify(reboot_result), 500
 
     action_map = {
         "start": compose_cmd("-f", str(compose_file), "up", "-d"),
