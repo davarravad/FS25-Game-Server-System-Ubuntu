@@ -1228,7 +1228,8 @@ if ($route === 'server') {
                 if (button) button.disabled = true;
                 setInlineStatus(`Running ${form.querySelector('input[name="action"]').value}...`);
                 try {
-                    const response = await fetch(form.action, {
+                    const submitUrl = form.getAttribute('action') || '/?route=server_command';
+                    const response = await fetch(submitUrl, {
                         method: 'POST',
                         body: new FormData(form),
                         headers: { 'X-Requested-With': 'XMLHttpRequest' },
