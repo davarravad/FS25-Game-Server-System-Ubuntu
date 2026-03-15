@@ -16,7 +16,8 @@ services:
     ports:
       - "{{VNC_PORT}}:5900/tcp"
       - "{{NOVNC_PORT}}:6080/tcp"
-      - "{{WEB_PORT}}:7999/tcp"
+      - "{{WEB_PORT}}:{{WEB_PORT}}/tcp"
+      - "{{TLS_PORT}}:{{TLS_PORT}}/tcp"
       - "{{SERVER_PORT}}:10823/tcp"
       - "{{SERVER_PORT}}:10823/udp"
     cap_add:
