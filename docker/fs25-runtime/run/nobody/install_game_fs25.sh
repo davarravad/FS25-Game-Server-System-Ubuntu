@@ -2,9 +2,11 @@
 
 set -euo pipefail
 
+. /usr/local/bin/runtime_log.sh
 . /usr/local/bin/fs25_common.sh
 
 ensure_runtime_directories
+runtime_log_write "Install Game: checking shared game installation..."
 scan_dlc_installers
 report_installed_dlcs
 
@@ -32,6 +34,7 @@ else
 
     echo -e "${GREEN}INFO: Using installer at ${INSTALLER_PATH}${NOCOLOR}"
     echo -e "${GREEN}INFO: Running shared game installer...${NOCOLOR}"
+    runtime_log_write "Install Game: running shared game installer..."
     wine "$INSTALLER_PATH" "/SILENT" "/NOCANCEL" "/NOICONS"
 fi
 
@@ -45,6 +48,7 @@ wine ~/.fs25server/drive_c/Program\ Files\ \(x86\)/Farming\ Simulator\ 2025/Farm
 
 refresh_game_version_cache
 touch "$GAME_INSTALL_MARKER"
+runtime_log_write "Install Game: shared game install is ready."
 
 echo -e "${GREEN}INFO: Shared game install is ready at ${GAME_INSTALL_DIR}${NOCOLOR}"
 echo -e "${GREEN}INFO: Next step: click 'Setup Server' to prepare this instance safely.${NOCOLOR}"

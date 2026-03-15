@@ -250,6 +250,29 @@ def render_instance_files(instance_dir: Path, values: dict, write_env: bool = Fa
     apply_permissions(instance_dir, recursive=True)
 
 
+def runtime_log_path(instance_id: str) -> Path:
+    return INSTANCE_BASE_PATH / instance_id / "data" / "logs" / "panel-runtime.log"
+
+
+def append_runtime_log(instance_id: str, message: str):
+    log_path = runtime_log_path(instance_id)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}\n")
+    apply_permissions(log_path.parent, recursive=True)
+
+
+def read_runtime_log(instance_id: str, max_lines: int = 400) -> str:
+    log_path = runtime_log_path(instance_id)
+    if not log_path.exists():
+        return "No runtime log has been written yet."
+
+    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    if max_lines > 0:
+        lines = lines[-max_lines:]
+    return "\n".join(lines)
+
+
 def safe_upload_name(filename: str) -> bool:
     return re.fullmatch(r"[a-zA-Z0-9._ -]+", filename or "") is not None
 
@@ -635,6 +658,7 @@ def create_instance():
 
     render_instance_files(instance_dir, values, write_env=True)
     write_instance_state(instance_id, False)
+    append_runtime_log(instance_id, "Console: Server created.")
 
     return jsonify({"ok": True, "instance_dir": str(instance_dir)})
 
@@ -698,12 +722,23 @@ def instance_action():
     image_name = image_name_from_compose(compose_file)
 
     if action in {"start", "restart", "rebuild"}:
+        append_runtime_log(instance_id, "Console: Server marked as starting...")
+    elif action in {"stop", "down"}:
+        append_runtime_log(instance_id, "Console: Server marked as stopping...")
+    elif action == "pull":
+        append_runtime_log(instance_id, "[Fragify Daemon]: Pulling Docker container image, this could take a few minutes to complete...")
+
+    if action in {"start", "restart", "rebuild"}:
         image_result = ensure_runtime_image(image_name, force_rebuild=(action == "rebuild"))
         if not image_result.get("ok"):
             return jsonify(image_result), 500
+        if action == "rebuild":
+            append_runtime_log(instance_id, "Version mismatch detected. Rebuilding server files.")
 
     if action == "pull" and image_name == FS25_RUNTIME_IMAGE:
         image_result = ensure_runtime_image(image_name, force_rebuild=True)
+        if image_result.get("ok"):
+            append_runtime_log(instance_id, "[Fragify Daemon]: Finished pulling Docker container image")
         return jsonify(image_result), (200 if image_result.get("ok") else 500)
 
     action_map = {
@@ -713,9 +748,11 @@ def instance_action():
         "pull": compose_cmd("-f", str(compose_file), "pull"),
         "rebuild": compose_cmd("-f", str(compose_file), "up", "-d", "--force-recreate"),
         "down": compose_cmd("-f", str(compose_file), "down"),
-        "logs": compose_cmd("-f", str(compose_file), "logs", "--tail", "200"),
         "status": compose_cmd("-f", str(compose_file), "ps", "-a"),
     }
+
+    if action == "logs":
+        return jsonify({"ok": True, "result": {"stdout": read_runtime_log(instance_id)}})
 
     if action not in action_map:
         return jsonify({"ok": False, "error": "unsupported action"}), 400
@@ -727,6 +764,9 @@ def instance_action():
             write_instance_state(instance_id, True)
         elif action in {"stop", "down"}:
             write_instance_state(instance_id, False)
+            append_runtime_log(instance_id, "Console: Server marked as offline...")
+        elif action == "pull":
+            append_runtime_log(instance_id, "[Fragify Daemon]: Finished pulling Docker container image")
 
     response = {
         "ok": result["code"] == 0,

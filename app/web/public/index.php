@@ -790,10 +790,6 @@ if ($route === 'server_live') {
     }
 
     $metricsResult = instance_metrics_for_server($server);
-    $statusAgent = agent_post_for_host($server, '/instance/action', [
-        'instance_id' => $instanceId,
-        'action' => 'status',
-    ]);
     $logsAgent = agent_post_for_host($server, '/instance/action', [
         'instance_id' => $instanceId,
         'action' => 'logs',
@@ -831,8 +827,12 @@ if ($route === 'server_live') {
                 ];
             }, is_array($metrics['containers'] ?? null) ? $metrics['containers'] : []),
         ],
-        'status_output' => (string) ($statusAgent['result']['stdout'] ?? ($statusAgent['result']['stderr'] ?? 'No Docker compose status returned')),
-        'log_output' => (string) ($logsAgent['result']['stdout'] ?? ($logsAgent['result']['stderr'] ?? 'No container logs returned')),
+        'status_output' => implode("\n", [
+            'Panel status: ' . (string) ($server['status'] ?? 'unknown'),
+            'Container runtime: ' . (($metrics['running'] ?? false) ? 'running' : 'stopped'),
+            'Metrics query: ' . (($metricsResult['ok'] ?? false) ? 'ok' : 'failed'),
+        ]),
+        'log_output' => (string) ($logsAgent['result']['stdout'] ?? ($logsAgent['result']['stderr'] ?? 'No runtime logs returned')),
     ]);
 }
 
@@ -851,15 +851,10 @@ if ($route === 'logs') {
         'instance_id' => $instanceId,
         'action' => 'logs',
     ]);
-    $statusAgent = agent_post_for_host($server, '/instance/action', [
-        'instance_id' => $instanceId,
-        'action' => 'status',
-    ]);
     $metricsResult = instance_metrics_for_server($server);
     $metrics = ($metricsResult['metrics'] ?? []);
 
     $logOutput = $agent['result']['stdout'] ?? ($agent['result']['stderr'] ?? 'No logs returned');
-    $statusOutput = $statusAgent['result']['stdout'] ?? ($statusAgent['result']['stderr'] ?? 'No status output returned');
     $runtimeStatus = ($metrics['running'] ?? false) ? 'running' : 'stopped';
     $panelStatus = (string) ($server['status'] ?? 'unknown');
     $statusSummary = [
@@ -867,9 +862,6 @@ if ($route === 'logs') {
         'Container runtime: ' . $runtimeStatus,
         'Metrics query: ' . (($metricsResult['ok'] ?? false) ? 'ok' : 'failed'),
     ];
-    if (!empty($statusAgent['result']['code']) || !($statusAgent['ok'] ?? false)) {
-        $statusSummary[] = 'Compose status command: failed';
-    }
     ?><!doctype html>
     <html lang="en">
     <head>
@@ -937,11 +929,7 @@ if ($route === 'logs') {
             </div>
             <div class="grid">
                 <div class="card">
-                    <div class="muted" style="margin-bottom:10px;">Docker compose status</div>
-                    <pre><?= h($statusOutput) ?></pre>
-                </div>
-                <div class="card">
-                    <div class="muted" style="margin-bottom:10px;">Container logs</div>
+                    <div class="muted" style="margin-bottom:10px;">Runtime lifecycle log</div>
                     <pre><?= h($logOutput) ?></pre>
                 </div>
             </div>
@@ -1087,18 +1075,18 @@ if ($route === 'server') {
     $webUrl = instance_access_url($server, 'web');
     $vncUrl = instance_access_url($server, 'vnc');
     $novncUrl = instance_access_url($server, 'novnc');
-    $statusAgent = agent_post_for_host($server, '/instance/action', [
-        'instance_id' => $instanceId,
-        'action' => 'status',
-    ]);
     $logsAgent = agent_post_for_host($server, '/instance/action', [
         'instance_id' => $instanceId,
         'action' => 'logs',
     ]);
     $secretsResult = instance_secrets_for_server($server);
     $vncPassword = (string) ($secretsResult['secrets']['vnc_password'] ?? '');
-    $statusOutput = $statusAgent['result']['stdout'] ?? ($statusAgent['result']['stderr'] ?? 'No Docker compose status returned');
-    $logOutput = $logsAgent['result']['stdout'] ?? ($logsAgent['result']['stderr'] ?? 'No container logs returned');
+    $statusOutput = implode("\n", [
+        'Panel status: ' . (string) ($server['status'] ?? 'unknown'),
+        'Container runtime: ' . (($metrics['running'] ?? false) ? 'running' : 'stopped'),
+        'Metrics query: ' . (($metricsResult['ok'] ?? false) ? 'ok' : 'failed'),
+    ]);
+    $logOutput = $logsAgent['result']['stdout'] ?? ($logsAgent['result']['stderr'] ?? 'No runtime logs returned');
     $flash = flash();
     ?><!doctype html>
     <html lang="en">
@@ -1239,18 +1227,18 @@ if ($route === 'server') {
         <div class="card">
             <div class="actions" style="justify-content:space-between; align-items:center; margin-bottom:12px;">
                 <div>
-                    <h2 style="margin:0;">Docker Status and Logs</h2>
-                    <div class="muted">Current Docker compose state and container logs for this game server.</div>
+                    <h2 style="margin:0;">Runtime Status and Lifecycle Log</h2>
+                    <div class="muted">Panel status summary plus the structured runtime lifecycle log for this server.</div>
                 </div>
                 <a class="button-link primary" href="/?route=server&amp;instance_id=<?= h($server['instance_id']) ?>">Refresh Server View</a>
             </div>
             <div class="log-grid">
                 <div class="log-block">
-                    <div class="muted">Docker compose status</div>
+                    <div class="muted">Runtime summary</div>
                     <pre class="log-view" id="server-status-view"><?= h($statusOutput) ?></pre>
                 </div>
                 <div class="log-block">
-                    <div class="muted">Docker logs</div>
+                    <div class="muted">Lifecycle log</div>
                     <pre class="log-view" id="server-log-view"><?= h($logOutput) ?></pre>
                 </div>
             </div>
@@ -1408,9 +1396,9 @@ if ($route === 'server') {
             }
             if (runtimeStatus) runtimeStatus.textContent = `Desired: ${payload.metrics.desired_running ? 'start' : 'stop'}`;
             renderContainerStatuses(payload.metrics.containers || []);
-            updateScrollableText(serverStatusView, payload.status_output || 'No Docker compose status returned');
+            updateScrollableText(serverStatusView, payload.status_output || 'No runtime summary returned');
             if (serverLogView) {
-                appendLogText(serverLogView, payload.log_output || 'No container logs returned');
+                appendLogText(serverLogView, payload.log_output || 'No runtime logs returned');
             }
         }
 
