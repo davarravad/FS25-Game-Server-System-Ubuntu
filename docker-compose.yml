@@ -84,6 +84,8 @@ services:
       FS25_RUNTIME_SOURCE: /app/fs25-runtime
       FS25_RUNTIME_RELEASETAG: ${FS25_RUNTIME_RELEASETAG:-local}
       FS25_RUNTIME_TARGETARCH: ${FS25_RUNTIME_TARGETARCH:-amd64}
+      HOST_FIREWALL_MODE: ${HOST_FIREWALL_MODE:-auto}
+      HOST_FIREWALL_HELPER_IMAGE: ${HOST_FIREWALL_HELPER_IMAGE:-ubuntu:24.04}
       TZ: ${TZ}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

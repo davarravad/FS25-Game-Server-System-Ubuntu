@@ -642,7 +642,10 @@ if ($route === 'create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         'created',
     ]);
 
-    flash('Server created.');
+    $firewallMessage = agent_firewall_summary($agent);
+    flash($firewallMessage
+        ? 'Server created. ' . $firewallMessage
+        : 'Server created.');
     redirect_route('game_servers');
 }
 
@@ -961,7 +964,10 @@ if ($route === 'delete' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (($agent['ok'] ?? false)) {
         $stmt = db()->prepare('DELETE FROM server_instances WHERE instance_id = ?');
         $stmt->execute([$instanceId]);
-        flash('Server deleted.');
+        $firewallMessage = agent_firewall_summary($agent);
+        flash($firewallMessage
+            ? 'Server deleted. ' . $firewallMessage
+            : 'Server deleted.');
     } else {
         flash('Delete failed.');
     }
@@ -1049,7 +1055,10 @@ if ($route === 'server_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    flash('Server details updated and runtime config synced.');
+    $firewallMessage = isset($sync) ? agent_firewall_summary($sync) : null;
+    flash($firewallMessage
+        ? 'Server details updated and runtime config synced. ' . $firewallMessage
+        : 'Server details updated and runtime config synced.');
     header('Location: /?route=server&instance_id=' . rawurlencode($instanceId));
     exit;
 }

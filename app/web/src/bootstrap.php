@@ -497,6 +497,21 @@ function agent_health_for_host(array $host): array
     return is_array($decoded) ? $decoded : ['ok' => false, 'error' => 'Invalid host response'];
 }
 
+function agent_firewall_summary(array $agentResponse): ?string
+{
+    $firewall = $agentResponse['firewall'] ?? null;
+    if (!is_array($firewall)) {
+        return null;
+    }
+
+    $message = trim((string) ($firewall['message'] ?? ''));
+    if ($message === '') {
+        return null;
+    }
+
+    return $message;
+}
+
 function all_hosts(): array
 {
     return db()->query('SELECT * FROM managed_hosts ORDER BY name ASC, id ASC')->fetchAll();
