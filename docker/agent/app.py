@@ -428,6 +428,89 @@ def parse_size_to_bytes(value: str) -> int:
     return int(amount * factors.get(unit, 1))
 
 
+def inspect_container(container_name: str) -> dict:
+    result = run_command([
+        "docker", "inspect", container_name,
+        "--format", "{{json .State}}",
+    ])
+
+    if result["code"] != 0 or not result["stdout"].strip():
+        return {
+            "exists": False,
+            "name": container_name,
+            "status": "missing",
+            "running": False,
+            "restarting": False,
+            "exit_code": None,
+            "started_at": "",
+            "finished_at": "",
+            "health": None,
+        }
+
+    try:
+        state = json.loads(result["stdout"].strip())
+    except json.JSONDecodeError:
+        return {
+            "exists": False,
+            "name": container_name,
+            "status": "unknown",
+            "running": False,
+            "restarting": False,
+            "exit_code": None,
+            "started_at": "",
+            "finished_at": "",
+            "health": None,
+        }
+
+    return {
+        "exists": True,
+        "name": container_name,
+        "status": str(state.get("Status") or "unknown"),
+        "running": bool(state.get("Running")),
+        "restarting": bool(state.get("Restarting")),
+        "exit_code": state.get("ExitCode"),
+        "started_at": str(state.get("StartedAt") or ""),
+        "finished_at": str(state.get("FinishedAt") or ""),
+        "health": ((state.get("Health") or {}).get("Status") if isinstance(state.get("Health"), dict) else None),
+    }
+
+
+def derive_runtime_state(containers: list[dict], desired_running: bool) -> dict:
+    statuses = {str(container.get("status", "unknown")).lower() for container in containers}
+    running_count = sum(1 for container in containers if container.get("running"))
+    total = len(containers)
+    all_running = total > 0 and running_count == total
+    any_running = running_count > 0
+    any_booting = any(status in {"created", "restarting", "paused"} for status in statuses)
+
+    if all_running:
+        return {
+            "state": "online",
+            "label": "Online",
+            "detail": "All required containers are running.",
+        }
+
+    if desired_running and (any_booting or any_running):
+        return {
+            "state": "booting",
+            "label": "Booting",
+            "detail": "The server is starting but not all required containers are ready yet.",
+        }
+
+    if any_running:
+        return {
+            "state": "degraded",
+            "label": "Degraded",
+            "detail": "Some required containers are running, but the full stack is not healthy.",
+        }
+
+    return {
+        "state": "offline",
+        "label": "Offline",
+        "detail": "Required containers are not running.",
+    }
+
+
 def instance_metrics(instance_id: str) -> dict:
     instance_dir = INSTANCE_BASE_PATH / instance_id
     compose_file = instance_dir / "compose.yml"
@@ -448,11 +531,26 @@ def instance_metrics(instance_id: str) -> dict:
         "disk_used_bytes": 0,
         "disk_percent": 0.0,
         "running": False,
+        "desired_running": bool(read_instance_state(instance_id).get("desired_running")),
+        "containers": [],
+        "runtime_state": {
+            "state": "offline",
+            "label": "Offline",
+            "detail": "Required containers are not running.",
+        },
     }
 
     ps_result = run_command(compose_cmd("-f", str(compose_file), "ps", "--status", "running", "--services"), cwd=str(instance_dir))
     if ps_result["code"] == 0:
         metrics["running"] = "fs25" in [line.strip() for line in ps_result["stdout"].splitlines()]
+
+    containers = [
+        {"service": "fs25", **inspect_container(instance_id)},
+        {"service": "sftp", **inspect_container(f"{instance_id}-sftp")},
+    ]
+    metrics["containers"] = containers
+    metrics["runtime_state"] = derive_runtime_state(containers, bool(metrics["desired_running"]))
+    metrics["running"] = bool(metrics["runtime_state"]["state"] in {"online", "booting", "degraded"} and any(c.get("service") == "fs25" and c.get("running") for c in containers))
 
     if stats_result["code"] == 0 and stats_result["stdout"].strip():
         raw_cpu, raw_mem, raw_mem_pct = (stats_result["stdout"].strip().split("|") + ["", "", ""])[:3]

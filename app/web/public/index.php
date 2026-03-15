@@ -807,12 +807,29 @@ if ($route === 'server_live') {
         'metrics_ok' => (bool) ($metricsResult['ok'] ?? false),
         'metrics' => [
             'running' => (bool) ($metrics['running'] ?? false),
+            'desired_running' => (bool) ($metrics['desired_running'] ?? false),
             'cpu_percent' => (float) ($metrics['cpu_percent'] ?? 0),
             'memory_percent' => (float) ($metrics['memory_percent'] ?? 0),
             'memory_used_bytes' => (int) ($metrics['memory_used_bytes'] ?? 0),
             'memory_limit_bytes' => (int) ($metrics['memory_limit_bytes'] ?? 0),
             'disk_used_bytes' => (int) ($metrics['disk_used_bytes'] ?? 0),
             'disk_percent' => (float) ($metrics['disk_percent'] ?? 0),
+            'runtime_state' => [
+                'state' => (string) (($metrics['runtime_state']['state'] ?? 'offline')),
+                'label' => (string) (($metrics['runtime_state']['label'] ?? 'Offline')),
+                'detail' => (string) (($metrics['runtime_state']['detail'] ?? 'Required containers are not running.')),
+            ],
+            'containers' => array_map(static function (array $container): array {
+                return [
+                    'service' => (string) ($container['service'] ?? ''),
+                    'name' => (string) ($container['name'] ?? ''),
+                    'status' => (string) ($container['status'] ?? 'unknown'),
+                    'running' => (bool) ($container['running'] ?? false),
+                    'restarting' => (bool) ($container['restarting'] ?? false),
+                    'exit_code' => $container['exit_code'] ?? null,
+                    'health' => isset($container['health']) ? (string) $container['health'] : null,
+                ];
+            }, is_array($metrics['containers'] ?? null) ? $metrics['containers'] : []),
         ],
         'status_output' => (string) ($statusAgent['result']['stdout'] ?? ($statusAgent['result']['stderr'] ?? 'No Docker compose status returned')),
         'log_output' => (string) ($logsAgent['result']['stdout'] ?? ($logsAgent['result']['stderr'] ?? 'No container logs returned')),
@@ -1108,6 +1125,13 @@ if ($route === 'server') {
             .meter { display: grid; gap: 6px; }
             .meter-bar { height: 12px; border-radius: 999px; background: #0f172a; overflow: hidden; border: 1px solid #243041; }
             .meter-fill { height: 100%; background: linear-gradient(90deg, #0ea5e9, #22c55e); }
+            .status-chip { display:inline-flex; align-items:center; padding:6px 10px; border-radius:999px; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; }
+            .status-chip.online { background:#14532d; color:#bbf7d0; }
+            .status-chip.booting { background:#78350f; color:#fde68a; }
+            .status-chip.degraded { background:#7f1d1d; color:#fecaca; }
+            .status-chip.offline { background:#334155; color:#e2e8f0; }
+            .container-status-list { display:grid; gap:10px; margin-top:16px; }
+            .container-status-item { background:#0f172a; border:1px solid #243041; border-radius:10px; padding:12px; }
             .log-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
             .log-block { display: grid; gap: 10px; }
             .log-view { margin: 0; white-space: pre-wrap; word-break: break-word; background: #050814; border: 1px solid #243041; border-radius: 12px; padding: 16px; max-height: 420px; overflow: auto; }
@@ -1180,7 +1204,20 @@ if ($route === 'server') {
                     <div id="disk-label">Disk: <?= h(format_bytes_human((int) ($metrics['disk_used_bytes'] ?? 0))) ?> (<?= h(number_format($diskPercent, 1)) ?>%)</div>
                     <div class="meter-bar"><div class="meter-fill" id="disk-fill" style="width: <?= h((string) min(max($diskPercent, 0), 100)) ?>%"></div></div>
                 </div>
-                <div class="muted" style="margin-top:16px;" id="runtime-status">Status: <?= h(($metrics['running'] ?? false) ? 'running' : 'stopped') ?></div>
+                <?php $runtimeState = $metrics['runtime_state'] ?? ['state' => (($metrics['running'] ?? false) ? 'online' : 'offline'), 'label' => (($metrics['running'] ?? false) ? 'Online' : 'Offline'), 'detail' => '']; ?>
+                <div style="margin-top:16px;">
+                    <span class="status-chip <?= h((string) ($runtimeState['state'] ?? 'offline')) ?>" id="runtime-state-chip"><?= h((string) ($runtimeState['label'] ?? 'Offline')) ?></span>
+                </div>
+                <div class="muted" style="margin-top:10px;" id="runtime-status-detail"><?= h((string) ($runtimeState['detail'] ?? '')) ?></div>
+                <div class="muted" style="margin-top:8px;" id="runtime-status">Desired: <?= h((bool) ($metrics['desired_running'] ?? false) ? 'start' : 'stop') ?></div>
+                <div class="container-status-list" id="container-status-list">
+                    <?php foreach (($metrics['containers'] ?? []) as $container): ?>
+                        <div class="container-status-item">
+                            <div><strong><?= h((string) ($container['service'] ?? 'container')) ?></strong> <span class="muted">(<?= h((string) ($container['name'] ?? '')) ?>)</span></div>
+                            <div class="muted">Status: <?= h((string) ($container['status'] ?? 'unknown')) ?><?php if (isset($container['exit_code']) && $container['exit_code'] !== null): ?> | Exit: <?= h((string) $container['exit_code']) ?><?php endif; ?><?php if (!empty($container['health'])): ?> | Health: <?= h((string) $container['health']) ?><?php endif; ?></div>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
                 <div style="margin-top:16px;">
                     <label>VNC Password</label>
                     <div class="secret-row">
@@ -1223,6 +1260,9 @@ if ($route === 'server') {
         const diskLabel = document.getElementById('disk-label');
         const diskFill = document.getElementById('disk-fill');
         const runtimeStatus = document.getElementById('runtime-status');
+        const runtimeStateChip = document.getElementById('runtime-state-chip');
+        const runtimeStatusDetail = document.getElementById('runtime-status-detail');
+        const containerStatusList = document.getElementById('container-status-list');
         const vncPasswordField = document.getElementById('vnc-password-field');
         const copyVncPassword = document.getElementById('copy-vnc-password');
         const actionForms = document.querySelectorAll('.server-action-form');
@@ -1256,6 +1296,18 @@ if ($route === 'server') {
             inlineStatus.style.borderColor = isError ? '#b91c1c' : '#334155';
         }
 
+        function renderContainerStatuses(containers) {
+            if (!containerStatusList) {
+                return;
+            }
+            const items = Array.isArray(containers) ? containers : [];
+            containerStatusList.innerHTML = items.map((container) => {
+                const exitText = container.exit_code === null || container.exit_code === undefined ? '' : ` | Exit: ${container.exit_code}`;
+                const healthText = container.health ? ` | Health: ${container.health}` : '';
+                return `<div class="container-status-item"><div><strong>${container.service || 'container'}</strong> <span class="muted">(${container.name || ''})</span></div><div class="muted">Status: ${container.status || 'unknown'}${exitText}${healthText}</div></div>`;
+            }).join('');
+        }
+
         function updateLiveView(payload) {
             if (!payload || !payload.metrics) {
                 return;
@@ -1273,7 +1325,16 @@ if ($route === 'server') {
             if (memoryFill) memoryFill.style.width = `${Math.max(0, Math.min(memoryPercent, 100))}%`;
             if (diskLabel) diskLabel.textContent = `Disk: ${formatBytes(diskUsed)} (${diskPercent.toFixed(1)}%)`;
             if (diskFill) diskFill.style.width = `${Math.max(0, Math.min(diskPercent, 100))}%`;
-            if (runtimeStatus) runtimeStatus.textContent = `Status: ${payload.metrics.running ? 'running' : 'stopped'}`;
+            if (runtimeStateChip) {
+                const runtimeState = payload.metrics.runtime_state || { state: 'offline', label: 'Offline' };
+                runtimeStateChip.textContent = runtimeState.label || 'Offline';
+                runtimeStateChip.className = `status-chip ${runtimeState.state || 'offline'}`;
+            }
+            if (runtimeStatusDetail) {
+                runtimeStatusDetail.textContent = (payload.metrics.runtime_state && payload.metrics.runtime_state.detail) || '';
+            }
+            if (runtimeStatus) runtimeStatus.textContent = `Desired: ${payload.metrics.desired_running ? 'start' : 'stop'}`;
+            renderContainerStatuses(payload.metrics.containers || []);
             if (serverStatusView) serverStatusView.textContent = payload.status_output || 'No Docker compose status returned';
             if (serverLogView) {
                 serverLogView.textContent = payload.log_output || 'No container logs returned';
@@ -2039,6 +2100,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                         $cpuPercent = (float) ($metrics['cpu_percent'] ?? 0);
                         $memoryPercent = (float) ($metrics['memory_percent'] ?? 0);
                         $diskPercent = (float) ($metrics['disk_percent'] ?? 0);
+                        $cardRuntime = $metrics['runtime_state'] ?? ['state' => (($metrics['running'] ?? false) ? 'online' : 'offline'), 'label' => (($metrics['running'] ?? false) ? 'Online' : 'Offline')];
                     ?>
                     <div class="card server-card" data-live-instance-id="<?= h((string) $server['instance_id']) ?>">
                         <a class="server-card-link" href="<?= h($detailUrl) ?>">
@@ -2047,7 +2109,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                                     <h3 class="server-card-title"><?= h($server['server_name']) ?></h3>
                                     <div class="muted"><?= h($server['instance_id']) ?> on <?= h($server['host_name'] ?? 'unassigned') ?></div>
                                 </div>
-                                <div class="stat-chip" data-live-running><?= h(($metrics['running'] ?? false) ? 'running' : 'stopped') ?></div>
+                                <div class="stat-chip" data-live-running><?= h((string) ($cardRuntime['label'] ?? 'Offline')) ?></div>
                             </div>
                         </a>
                         <div class="flex">
@@ -2129,6 +2191,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                 const diskPercent = Number(payload.metrics.disk_percent || 0);
                 const memoryUsed = Number(payload.metrics.memory_used_bytes || 0);
                 const diskUsed = Number(payload.metrics.disk_used_bytes || 0);
+                const runtimeState = payload.metrics.runtime_state || { label: (payload.metrics.running ? 'Online' : 'Offline') };
 
                 const runningEl = card.querySelector('[data-live-running]');
                 const cpuLabel = card.querySelector('[data-live-cpu-label]');
@@ -2139,7 +2202,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                 const diskFill = card.querySelector('[data-live-disk-fill]');
 
                 if (runningEl) {
-                    runningEl.textContent = payload.metrics.running ? 'running' : 'stopped';
+                    runningEl.textContent = runtimeState.label || 'Offline';
                 }
                 if (cpuLabel) {
                     cpuLabel.textContent = `${cpuPercent.toFixed(1)}%`;
