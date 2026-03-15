@@ -20,18 +20,7 @@ if [[ -n "${VNC_PASSWORD}" ]]; then
 	password_length="${#VNC_PASSWORD}"
 	if [[ "${password_length}" -gt 5 ]]; then
 		echo "[info] Password length OK, proceeding to set password..."
-		if ! command -v vncpasswd >/dev/null 2>&1; then
-			echo "[crit] vncpasswd command was not found in the runtime image."
-			exit 1
-		fi
-		mkdir -p "/home/nobody/.vnc"
-		chmod 700 "/home/nobody/.vnc"
-		printf '%s\n' "${VNC_PASSWORD}" | vncpasswd -f > "${VNC_PASSWD_PATH}"
-		chmod 600 "${VNC_PASSWD_PATH}"
-		if [[ ! -s "${VNC_PASSWD_PATH}" ]]; then
-			echo "[crit] VNC password file was not created at ${VNC_PASSWD_PATH}."
-			exit 1
-		fi
+		/usr/local/bin/refresh_vnc_password.sh
 		vnc_start="${vnc_start} -PasswordFile=${VNC_PASSWD_PATH}"
 	else
 		echo "[warn] Password specified is less than 6 characters and thus will be ignored."
