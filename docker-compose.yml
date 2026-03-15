@@ -80,6 +80,10 @@ services:
       SHARED_GAME_PATH: ${SHARED_GAME_PATH}
       SHARED_DLC_PATH: ${SHARED_DLC_PATH}
       SHARED_INSTALLER_PATH: ${SHARED_INSTALLER_PATH}
+      FS25_RUNTIME_IMAGE: ${FS25_RUNTIME_IMAGE:-fsg/fs25-runtime:local}
+      FS25_RUNTIME_SOURCE: /app/fs25-runtime
+      FS25_RUNTIME_RELEASETAG: ${FS25_RUNTIME_RELEASETAG:-local}
+      FS25_RUNTIME_TARGETARCH: ${FS25_RUNTIME_TARGETARCH:-amd64}
       TZ: ${TZ}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -89,6 +93,7 @@ services:
       - ${SHARED_GAME_PATH}:${SHARED_GAME_PATH}
       - ${SHARED_DLC_PATH}:${SHARED_DLC_PATH}
       - ${SHARED_INSTALLER_PATH}:${SHARED_INSTALLER_PATH}
+      - ./docker/fs25-runtime:/app/fs25-runtime:ro
       - ./templates:/app/templates:ro
       - ./scripts:/app/scripts:ro
     networks:
