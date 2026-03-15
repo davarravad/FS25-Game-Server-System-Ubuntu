@@ -750,6 +750,35 @@ if ($route === 'server_command' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     ], ($agent['ok'] ?? false) ? 200 : 500);
 }
 
+if ($route === 'server_delete' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    require_login();
+
+    $instanceId = (string) ($_POST['instance_id'] ?? '');
+    $server = find_instance_with_host($instanceId);
+
+    if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
+        json_response(['ok' => false, 'error' => 'Managed host for this server is missing or disabled.'], 404);
+    }
+
+    $agent = agent_post_for_host($server, '/instance/delete', [
+        'instance_id' => $instanceId,
+    ]);
+
+    if (($agent['ok'] ?? false)) {
+        $stmt = db()->prepare('DELETE FROM server_instances WHERE instance_id = ?');
+        $stmt->execute([$instanceId]);
+    }
+
+    json_response([
+        'ok' => (bool) ($agent['ok'] ?? false),
+        'instance_id' => $instanceId,
+        'message' => ($agent['ok'] ?? false) ? 'Server deleted.' : 'Delete failed.',
+        'result' => $agent['result'] ?? null,
+        'error' => $agent['error'] ?? null,
+        'redirect' => '/?route=game_servers',
+    ], ($agent['ok'] ?? false) ? 200 : 500);
+}
+
 if ($route === 'server_live') {
     require_login();
 
@@ -1105,6 +1134,10 @@ if ($route === 'server') {
                     <button class="<?= in_array($act, ['pull', 'rebuild'], true) ? 'gray' : '' ?>" type="submit"><?= h($act) ?></button>
                 </form>
             <?php endforeach; ?>
+            <form method="post" action="/?route=server_delete" style="display:inline;" class="server-delete-form">
+                <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
+                <button class="danger" type="submit">Delete Server</button>
+            </form>
         </div>
 
         <div class="grid two">
@@ -1193,6 +1226,7 @@ if ($route === 'server') {
         const vncPasswordField = document.getElementById('vnc-password-field');
         const copyVncPassword = document.getElementById('copy-vnc-password');
         const actionForms = document.querySelectorAll('.server-action-form');
+        const deleteForm = document.querySelector('.server-delete-form');
 
         function scrollToBottom(element) {
             if (element) {
@@ -1290,6 +1324,36 @@ if ($route === 'server') {
                 }
             });
         });
+
+        if (deleteForm) {
+            deleteForm.addEventListener('submit', async (event) => {
+                event.preventDefault();
+                if (!window.confirm(`Delete server ${instanceId}? This removes the panel record and the instance files on the managed host.`)) {
+                    return;
+                }
+
+                const button = deleteForm.querySelector('button[type="submit"]');
+                if (button) button.disabled = true;
+                setInlineStatus('Deleting server...');
+
+                try {
+                    const response = await fetch(deleteForm.getAttribute('action') || '/?route=server_delete', {
+                        method: 'POST',
+                        body: new FormData(deleteForm),
+                        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                        credentials: 'same-origin',
+                    });
+                    const payload = await response.json();
+                    if (!response.ok || !payload.ok) {
+                        throw new Error(payload.error || payload.message || `Delete failed (${response.status})`);
+                    }
+                    window.location.href = payload.redirect || '/?route=game_servers';
+                } catch (error) {
+                    setInlineStatus(error.message, true);
+                    if (button) button.disabled = false;
+                }
+            });
+        }
 
         scrollToBottom(serverLogView);
         refreshLiveView();
