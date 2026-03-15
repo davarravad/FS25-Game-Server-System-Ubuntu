@@ -253,6 +253,31 @@ function canonical_fs25_image_name(?string $imageName): string
     return $normalized;
 }
 
+function fs25_image_options(?string $selectedImage = null): array
+{
+    $options = [
+        'fsg/fs25-runtime:local' => 'Local FS25 Runtime',
+    ];
+
+    $configured = trim((string) env_value('FS25_IMAGE_OPTIONS', ''));
+    if ($configured !== '') {
+        foreach (preg_split('/[\r\n,]+/', $configured) ?: [] as $candidate) {
+            $image = canonical_fs25_image_name($candidate);
+            if ($image === '') {
+                continue;
+            }
+            $options[$image] = $options[$image] ?? $image;
+        }
+    }
+
+    $selected = canonical_fs25_image_name($selectedImage);
+    if ($selected !== '' && !isset($options[$selected])) {
+        $options[$selected] = $selected;
+    }
+
+    return $options;
+}
+
 function is_safe_sftp_credential(string $value): bool
 {
     return (bool) preg_match('/^[a-zA-Z0-9._-]+$/', $value);

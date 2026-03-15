@@ -1168,10 +1168,18 @@ if ($route === 'server') {
             <div class="card">
                 <h1 style="margin-top:0;"><?= h($server['server_name']) ?></h1>
                 <div class="muted"><?= h($server['instance_id']) ?> on <?= h($server['host_name'] ?? 'managed host') ?></div>
+                <?php $serverImageOptions = fs25_image_options((string) ($server['image_name'] ?? '')); ?>
                 <form method="post" action="/?route=server_update" class="grid form" style="margin-top:18px;">
                     <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
                     <div><label>Server Name</label><input name="server_name" value="<?= h($server['server_name']) ?>"></div>
-                    <div><label>Image</label><input name="image_name" value="<?= h($server['image_name']) ?>"></div>
+                    <div>
+                        <label>Image</label>
+                        <select name="image_name">
+                            <?php foreach ($serverImageOptions as $imageValue => $imageLabel): ?>
+                                <option value="<?= h((string) $imageValue) ?>" <?= (string) $server['image_name'] === (string) $imageValue ? 'selected' : '' ?>><?= h((string) $imageLabel) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
                     <div><label>Players</label><input name="server_players" type="number" value="<?= h((string) $server['server_players']) ?>"></div>
                     <div><label>Game Port</label><input name="server_port" type="number" value="<?= h((string) $server['server_port']) ?>"></div>
                     <div><label>Admin Web Port</label><input name="web_port" type="number" value="<?= h((string) $server['web_port']) ?>"></div>
@@ -1782,6 +1790,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
             $node = local_node_config();
             $nodeSummary = node_summary();
             $createDefaults = suggested_create_defaults();
+            $createImageOptions = fs25_image_options((string) $createDefaults['image_name']);
             $fileScope = (string) ($_GET['fm_scope'] ?? 'host');
             $fileTarget = (string) ($_GET['fm_target'] ?? 'installer');
             $fileHostId = (int) ($_GET['fm_host_id'] ?? ($localHost['id'] ?? 0));
@@ -2088,7 +2097,14 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                 </div>
                 <div><label>Instance ID</label><input name="instance_id" value="<?= h((string) $createDefaults['instance_id']) ?>" required></div>
                 <div><label>Server Name</label><input name="server_name" value="<?= h((string) $createDefaults['server_name']) ?>" required></div>
-                <div><label>Image</label><input name="image_name" value="<?= h((string) $createDefaults['image_name']) ?>" required></div>
+                <div>
+                    <label>Image</label>
+                    <select name="image_name" required>
+                        <?php foreach ($createImageOptions as $imageValue => $imageLabel): ?>
+                            <option value="<?= h((string) $imageValue) ?>" <?= (string) $createDefaults['image_name'] === (string) $imageValue ? 'selected' : '' ?>><?= h((string) $imageLabel) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
                 <div><label>Players</label><input name="server_players" type="number" value="<?= h((string) $createDefaults['server_players']) ?>"></div>
 
                 <div><label>Game Port</label><input name="server_port" type="number" value="<?= h((string) $createDefaults['server_port']) ?>"></div>
