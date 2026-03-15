@@ -115,6 +115,71 @@ def render_template(content: str, values: dict) -> str:
     return out
 
 
+def read_env_file(path: Path) -> dict:
+    values = {}
+    if not path.exists():
+        return values
+
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip()
+    return values
+
+
+def build_instance_values(instance_id: str, payload: dict, existing_env: dict | None = None) -> dict:
+    existing_env = existing_env or {}
+
+    def current(key: str, default):
+        return payload.get(key.lower(), payload.get(key, existing_env.get(key, default)))
+
+    return {
+        "INSTANCE_ID": instance_id,
+        "SERVER_NAME": current("SERVER_NAME", instance_id),
+        "SERVER_PASSWORD": current("SERVER_PASSWORD", ""),
+        "SERVER_ADMIN": current("SERVER_ADMIN", ""),
+        "SERVER_PLAYERS": current("SERVER_PLAYERS", 16),
+        "SERVER_PORT": current("SERVER_PORT", 10823),
+        "WEB_PORT": current("WEB_PORT", 18000),
+        "VNC_PORT": current("VNC_PORT", 5900),
+        "NOVNC_PORT": current("NOVNC_PORT", 6080),
+        "SERVER_REGION": current("SERVER_REGION", "en"),
+        "SERVER_MAP": current("SERVER_MAP", "MapUS"),
+        "SERVER_DIFFICULTY": current("SERVER_DIFFICULTY", 3),
+        "SERVER_PAUSE": current("SERVER_PAUSE", 2),
+        "SERVER_SAVE_INTERVAL": current("SERVER_SAVE_INTERVAL", 180.000000),
+        "SERVER_STATS_INTERVAL": current("SERVER_STATS_INTERVAL", 31536000),
+        "SERVER_CROSSPLAY": str(current("SERVER_CROSSPLAY", True)).lower(),
+        "AUTOSTART_SERVER": str(current("AUTOSTART_SERVER", False)).lower(),
+        "PUID": current("PUID", 1000),
+        "PGID": current("PGID", 1000),
+        "VNC_PASSWORD": current("VNC_PASSWORD", "changeme"),
+        "WEB_USERNAME": current("WEB_USERNAME", "admin"),
+        "WEB_PASSWORD": current("WEB_PASSWORD", "changeme"),
+        "SFTP_PORT": current("SFTP_PORT", 2222),
+        "SFTP_USERNAME": current("SFTP_USERNAME", "fs25"),
+        "SFTP_PASSWORD": current("SFTP_PASSWORD", "changeme"),
+        "IMAGE_NAME": current("IMAGE_NAME", "toetje585/arch-fs25server:latest"),
+        "INSTANCE_BASE_PATH": str(INSTANCE_BASE_PATH),
+        "SHARED_GAME_PATH": current("SHARED_GAME_PATH", "/opt/fs25/game"),
+        "SHARED_DLC_PATH": current("SHARED_DLC_PATH", "/opt/fs25/dlc"),
+        "SHARED_INSTALLER_PATH": current("SHARED_INSTALLER_PATH", "/opt/fs25/installer"),
+    }
+
+
+def render_instance_files(instance_dir: Path, values: dict, write_env: bool = False):
+    compose_tpl = (TEMPLATE_DIR / "compose.instance.yml.tpl").read_text(encoding="utf-8")
+    write_file(instance_dir / "compose.yml", render_template(compose_tpl, values))
+
+    if write_env:
+        env_tpl = (TEMPLATE_DIR / "server.env.tpl").read_text(encoding="utf-8")
+        write_file(instance_dir / ".env", render_template(env_tpl, values))
+
+    apply_permissions(instance_dir, recursive=True)
+
+
 def safe_upload_name(filename: str) -> bool:
     return re.fullmatch(r"[a-zA-Z0-9._ -]+", filename or "") is not None
 
@@ -392,38 +457,7 @@ def create_instance():
     if instance_dir.exists():
         return jsonify({"ok": False, "error": "instance already exists"}), 409
 
-    values = {
-        "INSTANCE_ID": instance_id,
-        "SERVER_NAME": payload.get("server_name", instance_id),
-        "SERVER_PASSWORD": payload.get("server_password", ""),
-        "SERVER_ADMIN": payload.get("server_admin", ""),
-        "SERVER_PLAYERS": payload.get("server_players", 16),
-        "SERVER_PORT": payload.get("server_port", 10823),
-        "WEB_PORT": payload.get("web_port", 18000),
-        "VNC_PORT": payload.get("vnc_port", 5900),
-        "NOVNC_PORT": payload.get("novnc_port", 6080),
-        "SERVER_REGION": payload.get("server_region", "en"),
-        "SERVER_MAP": payload.get("server_map", "MapUS"),
-        "SERVER_DIFFICULTY": payload.get("server_difficulty", 3),
-        "SERVER_PAUSE": payload.get("server_pause", 2),
-        "SERVER_SAVE_INTERVAL": payload.get("server_save_interval", 180.000000),
-        "SERVER_STATS_INTERVAL": payload.get("server_stats_interval", 31536000),
-        "SERVER_CROSSPLAY": str(payload.get("server_crossplay", True)).lower(),
-        "AUTOSTART_SERVER": str(payload.get("autostart_server", False)).lower(),
-        "PUID": payload.get("puid", 1000),
-        "PGID": payload.get("pgid", 1000),
-        "VNC_PASSWORD": payload.get("vnc_password", "changeme"),
-        "WEB_USERNAME": payload.get("web_username", "admin"),
-        "WEB_PASSWORD": payload.get("web_password", "changeme"),
-        "SFTP_PORT": payload.get("sftp_port", 2222),
-        "SFTP_USERNAME": payload.get("sftp_username", "fs25"),
-        "SFTP_PASSWORD": payload.get("sftp_password", "changeme"),
-        "IMAGE_NAME": payload.get("image_name", "toetje585/arch-fs25server:latest"),
-        "INSTANCE_BASE_PATH": str(INSTANCE_BASE_PATH),
-        "SHARED_GAME_PATH": payload.get("shared_game_path", "/opt/fs25/game"),
-        "SHARED_DLC_PATH": payload.get("shared_dlc_path", "/opt/fs25/dlc"),
-        "SHARED_INSTALLER_PATH": payload.get("shared_installer_path", "/opt/fs25/installer"),
-    }
+    values = build_instance_values(instance_id, payload)
 
     ensure_shared_storage(payload)
 
@@ -431,13 +465,27 @@ def create_instance():
         (instance_dir / sub).mkdir(parents=True, exist_ok=True)
     apply_permissions(instance_dir, recursive=True)
 
-    compose_tpl = (TEMPLATE_DIR / "compose.instance.yml.tpl").read_text(encoding="utf-8")
-    env_tpl = (TEMPLATE_DIR / "server.env.tpl").read_text(encoding="utf-8")
-
-    write_file(instance_dir / "compose.yml", render_template(compose_tpl, values))
-    write_file(instance_dir / ".env", render_template(env_tpl, values))
-    apply_permissions(instance_dir, recursive=True)
+    render_instance_files(instance_dir, values, write_env=True)
     write_instance_state(instance_id, False)
+
+    return jsonify({"ok": True, "instance_dir": str(instance_dir)})
+
+
+@app.post("/instance/sync")
+def sync_instance():
+    payload = request.get_json(force=True)
+    instance_id = payload.get("instance_id", "").strip()
+
+    if not safe_instance_id(instance_id):
+        return jsonify({"ok": False, "error": "invalid instance id"}), 400
+
+    instance_dir = INSTANCE_BASE_PATH / instance_id
+    if not instance_dir.exists():
+        return jsonify({"ok": False, "error": "instance not found"}), 404
+
+    existing_env = read_env_file(instance_dir / ".env")
+    values = build_instance_values(instance_id, payload, existing_env)
+    render_instance_files(instance_dir, values, write_env=False)
 
     return jsonify({"ok": True, "instance_dir": str(instance_dir)})
 
