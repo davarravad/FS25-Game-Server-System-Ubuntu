@@ -2,6 +2,7 @@
 
 # Path to the game installer directory (where the game installation files are stored)
 INSTALL_DIR="/opt/fs25/installer"
+GAME_INSTALL_DIR="/opt/fs25/game/Farming Simulator 2025"
 
 # Path to the config  directory (where the game config files are stored)
 CONFIG_DIR="/opt/fs25/config"
@@ -19,7 +20,86 @@ DLC_PREFIX="FarmingSimulator25_"
 FS25_EXEC="$HOME/.fs25server/drive_c/Program Files (x86)/Farming Simulator 2025/FarmingSimulator2025.exe"
 WEB_CONFIG="$HOME/.fs25server/drive_c/Program Files (x86)/Farming Simulator 2025/dedicatedServer.xml"
 SERVER_CONFIG="$HOME/.fs25server/drive_c/users/$USER/Documents/My Games/FarmingSimulator2025/dedicated_server/dedicatedServerConfig.xml"
+HOST_GAME_EXEC="${GAME_INSTALL_DIR}/FarmingSimulator2025.exe"
+HOST_GAME_VERSION="${GAME_INSTALL_DIR}/VERSION"
+HOST_SERVER_CONFIG="${CONFIG_DIR}/FarmingSimulator2025/dedicated_server/dedicatedServerConfig.xml"
+HOST_WEB_CONFIG="${GAME_INSTALL_DIR}/dedicatedServer.xml"
+HOST_GAME_DIR_MARKER="${GAME_INSTALL_DIR}/x64"
+HOST_CONFIG_DIR_MARKER="${CONFIG_DIR}/FarmingSimulator2025"
 
+has_existing_install() {
+    [ -f "$HOST_GAME_EXEC" ] ||
+    [ -f "$HOST_GAME_VERSION" ] ||
+    [ -f "$HOST_SERVER_CONFIG" ] ||
+    [ -f "$HOST_WEB_CONFIG" ] ||
+    [ -d "$HOST_GAME_DIR_MARKER" ] ||
+    [ -d "$HOST_CONFIG_DIR_MARKER" ]
+}
+
+scan_dlc_installers() {
+    echo -e "${GREEN}INFO: Scanning ${DLC_DIR} for DLC installers...${NOCOLOR}"
+
+    shopt -s nullglob
+
+    supported_names=()
+    unsupported=()
+    unset seen
+    declare -gA seen=()
+
+    for path in "$DLC_DIR"/${DLC_PREFIX}*; do
+      [ -e "$path" ] || break
+      base="$(basename "$path")"
+      ext="${base##*.}"
+
+      case "$ext" in
+        exe|EXE)
+          raw="${base#${DLC_PREFIX}}"
+          name="${raw%%_*}"
+          if [[ -n "$name" && -z "${seen[$name]:-}" ]]; then
+            supported_names+=("$name")
+            seen["$name"]=1
+          fi
+          ;;
+        zip|ZIP|bin|BIN)
+          unsupported+=("$base")
+          ;;
+        *)
+          :
+          ;;
+      esac
+    done
+
+    if ((${#supported_names[@]})); then
+      echo -e "${GREEN}INFO: DLCs found:${NOCOLOR} ${supported_names[*]}"
+    else
+      echo -e "${YELLOW}INFO: No DLC installers (.exe) found in ${DLC_DIR}.${NOCOLOR}"
+    fi
+
+    if ((${#unsupported[@]})); then
+      echo -e "${YELLOW}WARNING: The following files were found but are NOT supported (bin/zip), please use .exe:${NOCOLOR}"
+      for u in "${unsupported[@]}"; do
+        echo " - $u"
+      done
+    fi
+}
+
+report_installed_dlcs() {
+    if ((${#supported_names[@]})); then
+      echo -e "${GREEN}INFO: Checking installed DLC status...${NOCOLOR}"
+      for name in "${supported_names[@]}"; do
+        if [ -f "${PDLC_DIR}/${name}.dlc" ]; then
+          echo -e "${GREEN}INFO: ${name} is already installed.${NOCOLOR}"
+        else
+          echo -e "${YELLOW}INFO: ${name} is not installed yet.${NOCOLOR}"
+        fi
+      done
+    fi
+}
+
+if [ ! -d "$INSTALL_DIR" ]; then
+    echo -e "${RED}ERROR: Installer directory not found at ${INSTALL_DIR}${NOCOLOR}"
+    exit 1
+fi
 
 # Check which installer file exists
 if [ -f "$INSTALL_DIR/FarmingSimulator2025.exe" ]; then
@@ -31,142 +111,24 @@ else
     exit 1
 fi
 
+echo -e "${GREEN}INFO: Using installer at ${INSTALLER_PATH}${NOCOLOR}"
 
-# Check DLCs (list what we found and what is installed)
-
-echo -e "${GREEN}INFO: Scanning ${DLC_DIR} for DLC installers...${NOCOLOR}"
-
-# Enable nullglob to handle no matches gracefully
-shopt -s nullglob
-
-declare -a supported_names=()
-declare -A seen=()
-declare -a unsupported=()
-
-# Collect installers
-for path in "$DLC_DIR"/${DLC_PREFIX}*; do
-  [ -e "$path" ] || break
-  base="$(basename "$path")"
-  ext="${base##*.}"
-
-  case "$ext" in
-    exe|EXE)
-      # Example: FarmingSimulator25_highlandsFishingPack_1_1_0_0_ESD.exe
-      raw="${base#${DLC_PREFIX}}"   # highlandsFishingPack_1_1_0_0_ESD.exe
-      name="${raw%%_*}"             # highlandsFishingPack
-      if [[ -z "${seen[$name]:-}" ]]; then
-        supported_names+=("$name")
-        seen["$name"]=1
-      fi
-      ;;
-      # zip/bin installers not supported, check and warn user
-    zip|ZIP|bin|BIN)
-      unsupported+=("$base")
-      ;;
-    *)
-      # ignore other file types silently
-      :
-      ;;
-  esac
-done
-
-if ((${#supported_names[@]})); then
-  echo -e "${GREEN}INFO: DLCs found:${NOCOLOR} ${supported_names[*]}"
-else
-  echo -e "${YELLOW}Info: DLCs installers (.exe) found in ${DLC_DIR}.${NOCOLOR}"
+if has_existing_install; then
+    echo -e "${YELLOW}INFO: Existing FS25 game files or server config detected in the mounted host paths. setup_fs25.sh will not overwrite this server.${NOCOLOR}"
+    exit 0
 fi
 
-if ((${#unsupported[@]})); then
-  echo -e "${YELLOW}WARNING: The following files were found but are NOT supported (bin/zip), please use .exe:${NOCOLOR}"
-  for u in "${unsupported[@]}"; do
-    echo " - $u"
-  done
-fi
-
-# Show installed status for each supported DLC
-if ((${#supported_names[@]})); then
-  echo -e "${GREEN}INFO: Checking installed DLC status...${NOCOLOR}"
-  for name in "${supported_names[@]}"; do
-    if [ -f "${PDLC_DIR}/${name}.dlc" ]; then
-      echo -e "${GREEN}INFO: ${name} is already installed.${NOCOLOR}"
-    else
-      echo -e "${YELLOW}INFO: ${name} is not installed yet.${NOCOLOR}"
-    fi
-  done
-fi
+scan_dlc_installers
+report_installed_dlcs
 
 # Required free space in GB
 REQUIRED_SPACE=50
 
 . /usr/local/bin/wine_init.sh
 
-
-# Check DLCs (list what we found and what is installed)
-
-echo -e "${GREEN}INFO: Scanning ${DLC_DIR} for DLC installers...${NOCOLOR}"
-
-# Enable nullglob to handle no matches gracefully
-shopt -s nullglob
-
-declare -a supported_names=()
-declare -A seen=()
-declare -a unsupported=()
-
-# Collect installers
-for path in "$DLC_DIR"/${DLC_PREFIX}*; do
-  [ -e "$path" ] || break
-  base="$(basename "$path")"
-  ext="${base##*.}"
-
-  case "$ext" in
-    exe|EXE)
-      # Example: FarmingSimulator25_highlandsFishingPack_1_1_0_0_ESD.exe
-      raw="${base#${DLC_PREFIX}}"   # highlandsFishingPack_1_1_0_0_ESD.exe
-      name="${raw%%_*}"             # highlandsFishingPack
-      if [[ -z "${seen[$name]:-}" ]]; then
-        supported_names+=("$name")
-        seen["$name"]=1
-      fi
-      ;;
-      # zip/bin installers not supported, check and warn user
-    zip|ZIP|bin|BIN)
-      unsupported+=("$base")
-      ;;
-    *)
-      # ignore other file types silently
-      :
-      ;;
-  esac
-done
-
-if ((${#supported_names[@]})); then
-  echo -e "${GREEN}INFO: DLCs found:${NOCOLOR} ${supported_names[*]}"
-else
-  echo -e "${YELLOW}Info: DLCs installers (.exe) found in ${DLC_DIR}.${NOCOLOR}"
-fi
-
-if ((${#unsupported[@]})); then
-  echo -e "${YELLOW}WARNING: The following files were found but are NOT supported (bin/zip), please use .exe:${NOCOLOR}"
-  for u in "${unsupported[@]}"; do
-    echo " - $u"
-  done
-fi
-
-# Show installed status for each supported DLC
-if ((${#supported_names[@]})); then
-  echo -e "${GREEN}INFO: Checking installed DLC status...${NOCOLOR}"
-  for name in "${supported_names[@]}"; do
-    if [ -f "${PDLC_DIR}/${name}.dlc" ]; then
-      echo -e "${GREEN}INFO: ${name} is already installed.${NOCOLOR}"
-    else
-      echo -e "${YELLOW}INFO: ${name} is not installed yet.${NOCOLOR}"
-    fi
-  done
-fi
-
 . /usr/local/bin/wine_symlinks.sh
 
-if [ -f "$FS25_EXEC" ] && [ -f "$WEB_CONFIG" ] && [ -f "$SERVER_CONFIG" ]; then
+if has_existing_install || { [ -f "$FS25_EXEC" ] && [ -f "$WEB_CONFIG" ] && [ -f "$SERVER_CONFIG" ]; }; then
         echo -e "${YELLOW}INFO: Existing FS25 install and server config detected. setup_fs25.sh will not overwrite this server.${NOCOLOR}"
         exit 0
 fi
