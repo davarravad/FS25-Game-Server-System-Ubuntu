@@ -915,6 +915,16 @@ if ($route === 'server') {
     $webUrl = instance_access_url($server, 'web');
     $vncUrl = instance_access_url($server, 'vnc');
     $novncUrl = instance_access_url($server, 'novnc');
+    $statusAgent = agent_post_for_host($server, '/instance/action', [
+        'instance_id' => $instanceId,
+        'action' => 'status',
+    ]);
+    $logsAgent = agent_post_for_host($server, '/instance/action', [
+        'instance_id' => $instanceId,
+        'action' => 'logs',
+    ]);
+    $statusOutput = $statusAgent['result']['stdout'] ?? ($statusAgent['result']['stderr'] ?? 'No Docker compose status returned');
+    $logOutput = $logsAgent['result']['stdout'] ?? ($logsAgent['result']['stderr'] ?? 'No container logs returned');
     $flash = flash();
     ?><!doctype html>
     <html lang="en">
@@ -941,6 +951,9 @@ if ($route === 'server') {
             .meter { display: grid; gap: 6px; }
             .meter-bar { height: 12px; border-radius: 999px; background: #0f172a; overflow: hidden; border: 1px solid #243041; }
             .meter-fill { height: 100%; background: linear-gradient(90deg, #0ea5e9, #22c55e); }
+            .log-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+            .log-block { display: grid; gap: 10px; }
+            .log-view { margin: 0; white-space: pre-wrap; word-break: break-word; background: #050814; border: 1px solid #243041; border-radius: 12px; padding: 16px; max-height: 420px; overflow: auto; }
             @media (max-width: 900px) { .grid.two, .grid.form { grid-template-columns: 1fr; } }
         </style>
     </head>
@@ -1006,7 +1019,32 @@ if ($route === 'server') {
                 <div class="muted" style="margin-top:8px;">Panel detail edits update stored panel metadata. If ports or image settings must also change in the runtime container config, recreate or sync the instance afterward.</div>
             </div>
         </div>
+        <div class="card">
+            <div class="actions" style="justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <div>
+                    <h2 style="margin:0;">Docker Status and Logs</h2>
+                    <div class="muted">Current Docker compose state and container logs for this game server.</div>
+                </div>
+                <a class="button-link primary" href="/?route=server&amp;instance_id=<?= h($server['instance_id']) ?>">Refresh Server View</a>
+            </div>
+            <div class="log-grid">
+                <div class="log-block">
+                    <div class="muted">Docker compose status</div>
+                    <pre class="log-view"><?= h($statusOutput) ?></pre>
+                </div>
+                <div class="log-block">
+                    <div class="muted">Docker logs</div>
+                    <pre class="log-view" id="server-log-view"><?= h($logOutput) ?></pre>
+                </div>
+            </div>
+        </div>
     </div>
+    <script>
+        const serverLogView = document.getElementById('server-log-view');
+        if (serverLogView) {
+            serverLogView.scrollTop = serverLogView.scrollHeight;
+        }
+    </script>
     </body>
     </html>
     <?php
