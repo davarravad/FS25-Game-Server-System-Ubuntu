@@ -726,7 +726,7 @@ def instance_action():
     elif action in {"stop", "down"}:
         append_runtime_log(instance_id, "Console: Server marked as stopping...")
     elif action == "pull":
-        append_runtime_log(instance_id, "[Fragify Daemon]: Pulling Docker container image, this could take a few minutes to complete...")
+        append_runtime_log(instance_id, "[FSG Daemon]: Pulling Docker container image, this could take a few minutes to complete...")
 
     if action in {"start", "restart", "rebuild"}:
         image_result = ensure_runtime_image(image_name, force_rebuild=(action == "rebuild"))
@@ -738,7 +738,7 @@ def instance_action():
     if action == "pull" and image_name == FS25_RUNTIME_IMAGE:
         image_result = ensure_runtime_image(image_name, force_rebuild=True)
         if image_result.get("ok"):
-            append_runtime_log(instance_id, "[Fragify Daemon]: Finished pulling Docker container image")
+            append_runtime_log(instance_id, "[FSG Daemon]: Finished pulling Docker container image")
         return jsonify(image_result), (200 if image_result.get("ok") else 500)
 
     action_map = {
@@ -766,7 +766,7 @@ def instance_action():
             write_instance_state(instance_id, False)
             append_runtime_log(instance_id, "Console: Server marked as offline...")
         elif action == "pull":
-            append_runtime_log(instance_id, "[Fragify Daemon]: Finished pulling Docker container image")
+            append_runtime_log(instance_id, "[FSG Daemon]: Finished pulling Docker container image")
 
     response = {
         "ok": result["code"] == 0,
