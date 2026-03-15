@@ -16,7 +16,7 @@ vnc_start="rm -rf /tmp/.X*; Xvnc :0 -depth 24"
 
 # if a password is specified then generate password file in /home/nobody/.vnc/passwd
 # else append insecure flag to command line
-if [[ -n "${VNC_PASSWORD}" ]]; then
+if [[ -n "${VNC_PASSWORD:-}" ]]; then
 	password_length="${#VNC_PASSWORD}"
 	if [[ "${password_length}" -gt 5 ]]; then
 		echo "[info] Password length OK, proceeding to set password..."

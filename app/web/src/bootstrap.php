@@ -310,7 +310,7 @@ function suggested_create_defaults(): array
         'server_difficulty' => 3,
         'server_pause' => 2,
         'server_save_interval' => 180,
-        'server_stats_interval' => 31536000,
+        'server_stats_interval' => 360,
         'puid' => 1000,
         'pgid' => 1000,
         'autostart_server' => 'true',
