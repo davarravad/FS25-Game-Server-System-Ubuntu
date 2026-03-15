@@ -591,6 +591,18 @@ function sync_instance_config_for_server(array $server): array
     ]);
 }
 
+function instance_secrets_for_server(array $server): array
+{
+    $instanceId = (string) ($server['instance_id'] ?? '');
+    if ($instanceId === '') {
+        return ['ok' => false, 'error' => 'Missing instance id'];
+    }
+
+    return agent_post_for_host($server, '/instance/secrets', [
+        'instance_id' => $instanceId,
+    ]);
+}
+
 function format_bytes_human(int $bytes): string
 {
     if ($bytes <= 0) {

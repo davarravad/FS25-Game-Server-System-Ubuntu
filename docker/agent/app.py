@@ -494,6 +494,28 @@ def sync_instance():
     return jsonify({"ok": True, "instance_dir": str(instance_dir)})
 
 
+@app.post("/instance/secrets")
+def instance_secrets():
+    payload = request.get_json(force=True)
+    instance_id = payload.get("instance_id", "").strip()
+
+    if not safe_instance_id(instance_id):
+        return jsonify({"ok": False, "error": "invalid instance id"}), 400
+
+    instance_dir = INSTANCE_BASE_PATH / instance_id
+    env_file = instance_dir / ".env"
+    if not env_file.exists():
+        return jsonify({"ok": False, "error": "instance env file not found"}), 404
+
+    env_values = read_env_file(env_file)
+    return jsonify({
+        "ok": True,
+        "secrets": {
+            "vnc_password": env_values.get("VNC_PASSWORD", ""),
+        },
+    })
+
+
 @app.post("/instance/action")
 def instance_action():
     payload = request.get_json(force=True)

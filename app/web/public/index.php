@@ -1049,6 +1049,8 @@ if ($route === 'server') {
         'instance_id' => $instanceId,
         'action' => 'logs',
     ]);
+    $secretsResult = instance_secrets_for_server($server);
+    $vncPassword = (string) ($secretsResult['secrets']['vnc_password'] ?? '');
     $statusOutput = $statusAgent['result']['stdout'] ?? ($statusAgent['result']['stderr'] ?? 'No Docker compose status returned');
     $logOutput = $logsAgent['result']['stdout'] ?? ($logsAgent['result']['stderr'] ?? 'No container logs returned');
     $flash = flash();
@@ -1081,6 +1083,8 @@ if ($route === 'server') {
             .log-block { display: grid; gap: 10px; }
             .log-view { margin: 0; white-space: pre-wrap; word-break: break-word; background: #050814; border: 1px solid #243041; border-radius: 12px; padding: 16px; max-height: 420px; overflow: auto; }
             .inline-status { padding: 12px; background: #1e293b; border: 1px solid #334155; border-radius: 10px; margin-bottom: 16px; display: none; }
+            .secret-row { display: flex; gap: 10px; align-items: end; }
+            .secret-row input { flex: 1; }
             @media (max-width: 900px) { .grid.two, .grid.form { grid-template-columns: 1fr; } }
         </style>
     </head>
@@ -1144,6 +1148,13 @@ if ($route === 'server') {
                     <div class="meter-bar"><div class="meter-fill" id="disk-fill" style="width: <?= h((string) min(max($diskPercent, 0), 100)) ?>%"></div></div>
                 </div>
                 <div class="muted" style="margin-top:16px;" id="runtime-status">Status: <?= h(($metrics['running'] ?? false) ? 'running' : 'stopped') ?></div>
+                <div style="margin-top:16px;">
+                    <label>VNC Password</label>
+                    <div class="secret-row">
+                        <input id="vnc-password-field" value="<?= h($vncPassword) ?>" readonly>
+                        <button class="gray" type="button" id="copy-vnc-password">Copy</button>
+                    </div>
+                </div>
                 <div class="muted" style="margin-top:8px;">Panel detail edits update stored panel metadata. If ports or image settings must also change in the runtime container config, recreate or sync the instance afterward.</div>
             </div>
         </div>
@@ -1179,6 +1190,8 @@ if ($route === 'server') {
         const diskLabel = document.getElementById('disk-label');
         const diskFill = document.getElementById('disk-fill');
         const runtimeStatus = document.getElementById('runtime-status');
+        const vncPasswordField = document.getElementById('vnc-password-field');
+        const copyVncPassword = document.getElementById('copy-vnc-password');
         const actionForms = document.querySelectorAll('.server-action-form');
 
         function scrollToBottom(element) {
@@ -1281,6 +1294,17 @@ if ($route === 'server') {
         scrollToBottom(serverLogView);
         refreshLiveView();
         window.setInterval(refreshLiveView, 5000);
+
+        if (copyVncPassword && vncPasswordField) {
+            copyVncPassword.addEventListener('click', async () => {
+                try {
+                    await navigator.clipboard.writeText(vncPasswordField.value);
+                    setInlineStatus('VNC password copied.');
+                } catch (error) {
+                    setInlineStatus('Unable to copy VNC password.', true);
+                }
+            });
+        }
     </script>
     </body>
     </html>
