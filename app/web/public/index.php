@@ -208,7 +208,9 @@ if ($route === 'upload_token') {
     $filename = basename((string) ($_GET['filename'] ?? ''));
     $server = $instanceId !== '' ? find_instance_with_host($instanceId) : null;
     $host = $server ?: find_host($hostId);
+    $subpath = trim((string) ($_GET['subpath'] ?? ''));
     $context = upload_context_for_request($server ? null : $host, $server, $target);
+    $context = $context ? context_with_subpath($context, $subpath) : null;
 
     if (!$host || !(int) ($host['is_enabled'] ?? 0) || !$context) {
         header('Content-Type: application/json', true, 404);
@@ -261,7 +263,9 @@ if ($route === 'upload_chunk' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $isLastChunk = (string) ($_GET['is_last'] ?? '0') === '1';
     $server = $instanceId !== '' ? find_instance_with_host($instanceId) : null;
     $host = $server ?: find_host($hostId);
+    $subpath = trim((string) ($_GET['subpath'] ?? ''));
     $context = upload_context_for_request($server ? null : $host, $server, $target);
+    $context = $context ? context_with_subpath($context, $subpath) : null;
 
     if (!$host || !(int) ($host['is_enabled'] ?? 0) || !$context) {
         header('Content-Type: application/json', true, 404);
@@ -281,9 +285,11 @@ if ($route === 'upload_large' || $route === 'installer_upload') {
     $hostId = (int) ($_GET['host_id'] ?? 0);
     $instanceId = (string) ($_GET['instance_id'] ?? '');
     $target = trim((string) ($_GET['target'] ?? ($route === 'installer_upload' ? 'installer' : '')));
+    $subpath = trim((string) ($_GET['subpath'] ?? ''));
     $server = $instanceId !== '' ? find_instance_with_host($instanceId) : null;
     $host = $server ?: find_host($hostId);
     $context = upload_context_for_request($server ? null : $host, $server, $target);
+    $context = $context ? context_with_subpath($context, $subpath) : null;
 
     if (!$host || !(int) ($host['is_enabled'] ?? 0) || !$context) {
         flash('Select a valid upload target.');
@@ -386,7 +392,7 @@ if ($route === 'upload_large' || $route === 'installer_upload') {
         statusText.className = 'muted';
 
         try {
-            const tokenResponse = await fetch(`/?route=upload_token&host_id=${encodeURIComponent(hostId)}&target=${encodeURIComponent(target)}${instanceId ? `&instance_id=${encodeURIComponent(instanceId)}` : ''}&filename=${encodeURIComponent(file.name)}`, {
+            const tokenResponse = await fetch(`/?route=upload_token&host_id=${encodeURIComponent(hostId)}&target=${encodeURIComponent(target)}${instanceId ? `&instance_id=${encodeURIComponent(instanceId)}` : ''}<?= $subpath !== '' ? '&subpath=' . rawurlencode($subpath) : '' ?>&filename=${encodeURIComponent(file.name)}`, {
                 credentials: 'same-origin',
             });
             const tokenData = await tokenResponse.json();
@@ -1321,9 +1327,10 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
             </div>
             <div class="flex" style="margin-bottom:14px;">
                 <?php foreach ($hosts as $host): ?>
-                    <a class="button-link" href="/?route=file_management&amp;fm_scope=host&amp;fm_host_id=<?= h((string) $host['id']) ?>&amp;fm_target=game">browse <?= h($host['name']) ?> game</a>
-                    <a class="button-link" href="/?route=file_management&amp;fm_scope=host&amp;fm_host_id=<?= h((string) $host['id']) ?>&amp;fm_target=dlc">browse <?= h($host['name']) ?> dlc</a>
-                    <a class="button-link" href="/?route=file_management&amp;fm_scope=host&amp;fm_host_id=<?= h((string) $host['id']) ?>&amp;fm_target=installer">browse <?= h($host['name']) ?> installer</a>
+                    <?php $hostPrefix = count($hosts) > 1 ? $host['name'] . ' ' : ''; ?>
+                    <a class="button-link" href="/?route=file_management&amp;fm_scope=host&amp;fm_host_id=<?= h((string) $host['id']) ?>&amp;fm_target=game">browse <?= h($hostPrefix) ?>game</a>
+                    <a class="button-link" href="/?route=file_management&amp;fm_scope=host&amp;fm_host_id=<?= h((string) $host['id']) ?>&amp;fm_target=dlc">browse <?= h($hostPrefix) ?>dlc</a>
+                    <a class="button-link" href="/?route=file_management&amp;fm_scope=host&amp;fm_host_id=<?= h((string) $host['id']) ?>&amp;fm_target=installer">browse <?= h($hostPrefix) ?>installer</a>
                 <?php endforeach; ?>
             </div>
             <div class="flex" style="margin-bottom:14px;">
@@ -1335,6 +1342,11 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                 <?php endforeach; ?>
             </div>
             <?php if ($fileContext && ($fileListing['ok'] ?? false)): ?>
+                <?php
+                    $breadcrumbParts = array_values(array_filter(explode('/', (string) ($fileListing['subpath'] ?? ''))));
+                    $breadcrumbTrail = [];
+                    $breadcrumbAccum = '';
+                ?>
                 <div class="flex" style="margin-bottom:12px;">
                     <?php if (($fileListing['subpath'] ?? '') !== ''): ?>
                         <?php
@@ -1343,7 +1355,17 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                         ?>
                         <a class="button-link gray" href="/?route=file_management&amp;fm_scope=<?= h($fileScope) ?><?= $fileServer ? '&amp;fm_instance_id=' . h($fileInstanceId) : '&amp;fm_host_id=' . h((string) $fileHostId) ?>&amp;fm_target=<?= h($fileTarget) ?>&amp;fm_subpath=<?= h($parentSubpath) ?>">up one level</a>
                     <?php endif; ?>
-                    <a class="button-link" href="/?route=upload_large<?= $fileServer ? '&amp;instance_id=' . h($fileInstanceId) : '&amp;host_id=' . h((string) ($fileHost['id'] ?? 0)) ?>&amp;target=<?= h($fileTarget) ?>">upload here</a>
+                    <a class="button-link" href="/?route=upload_large<?= $fileServer ? '&amp;instance_id=' . h($fileInstanceId) : '&amp;host_id=' . h((string) ($fileHost['id'] ?? 0)) ?>&amp;target=<?= h($fileTarget) ?><?= ($fileListing['subpath'] ?? '') !== '' ? '&amp;subpath=' . h((string) $fileListing['subpath']) : '' ?>">upload here</a>
+                </div>
+                <div class="flex" style="margin-bottom:12px;">
+                    <span class="stat-chip">root</span>
+                    <?php foreach ($breadcrumbParts as $part): ?>
+                        <?php
+                            $breadcrumbAccum = $breadcrumbAccum === '' ? $part : $breadcrumbAccum . '/' . $part;
+                            $breadcrumbTrail[] = $breadcrumbAccum;
+                        ?>
+                        <a class="stat-chip" href="/?route=file_management&amp;fm_scope=<?= h($fileScope) ?><?= $fileServer ? '&amp;fm_instance_id=' . h($fileInstanceId) : '&amp;fm_host_id=' . h((string) $fileHostId) ?>&amp;fm_target=<?= h($fileTarget) ?>&amp;fm_subpath=<?= h($breadcrumbAccum) ?>"><?= h($part) ?></a>
+                    <?php endforeach; ?>
                 </div>
                 <div class="dir-list">
                     <?php foreach (($fileListing['files'] ?? []) as $entry): ?>
@@ -1375,47 +1397,6 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                 <div class="notice">No default host is configured yet. Update or recreate the local host record on the Managed Hosts page before using file operations.</div>
             </div>
         <?php endif; ?>
-        <?php foreach ($hosts as $host): ?>
-            <?php
-                $health = agent_health_for_host($host);
-                $installerListing = ($health['ok'] ?? false) ? installer_directory_listing_for_host($host) : ['ok' => false, 'files' => []];
-            ?>
-            <div class="card">
-                <div class="flex" style="justify-content:space-between;align-items:center;">
-                    <div>
-                        <h2 style="margin-bottom:6px;"><?= h($host['name']) ?></h2>
-                        <div class="muted">Status: <?= h(($health['ok'] ?? false) ? 'online' : 'offline') ?></div>
-                        <div class="muted small">game: <?= h($host['shared_game_path'] ?? '/opt/fs25/game') ?></div>
-                        <div class="muted small">dlc: <?= h($host['shared_dlc_path'] ?? '/opt/fs25/dlc') ?></div>
-                        <div class="muted small">installer: <?= h($host['shared_installer_path'] ?? '/opt/fs25/installer') ?></div>
-                    </div>
-                    <div class="flex">
-                        <a class="button-link" href="/?route=upload_large&amp;host_id=<?= h((string) $host['id']) ?>&amp;target=game">game upload</a>
-                        <a class="button-link" href="/?route=upload_large&amp;host_id=<?= h((string) $host['id']) ?>&amp;target=dlc">dlc upload</a>
-                        <a class="button-link" href="/?route=upload_large&amp;host_id=<?= h((string) $host['id']) ?>&amp;target=installer">installer upload</a>
-                    </div>
-                </div>
-                <h3 style="margin-bottom:8px;">Installer Listing</h3>
-                <div class="dir-list">
-                    <?php foreach (($installerListing['files'] ?? []) as $entry): ?>
-                        <div class="dir-item">
-                            <div class="muted"><?= h($entry['name']) ?></div>
-                            <div class="muted small"><?= h($entry['is_dir'] ? 'directory' : 'file') ?><?php if ($entry['is_file']): ?> | <?= h((string) $entry['size']) ?> bytes<?php endif; ?></div>
-                            <?php if (($entry['is_zip'] ?? false) === true): ?>
-                                <form method="post" action="/?route=installer_unzip">
-                                    <input type="hidden" name="host_id" value="<?= h((string) $host['id']) ?>">
-                                    <input type="hidden" name="filename" value="<?= h($entry['name']) ?>">
-                                    <button class="gray" type="submit">unzip zip</button>
-                                </form>
-                            <?php endif; ?>
-                        </div>
-                    <?php endforeach; ?>
-                    <?php if (!(($installerListing['files'] ?? []))): ?>
-                        <div class="muted small">No installer files found.</div>
-                    <?php endif; ?>
-                </div>
-            </div>
-        <?php endforeach; ?>
         <?php endif; ?>
 
         <?php if ($pageRoute === 'create_server'): ?>

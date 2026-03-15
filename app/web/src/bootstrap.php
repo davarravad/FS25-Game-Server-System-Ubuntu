@@ -633,6 +633,40 @@ function file_context_for_request(?array $host, ?array $server, string $target):
     return upload_context_for_request($host, $server, $target);
 }
 
+function normalize_relative_subpath(string $subpath): ?string
+{
+    $clean = trim(str_replace('\\', '/', $subpath), '/');
+    if ($clean === '') {
+        return '';
+    }
+
+    foreach (explode('/', $clean) as $segment) {
+        if ($segment === '' || $segment === '.' || $segment === '..') {
+            return null;
+        }
+        if (preg_match('/^[a-zA-Z0-9._ -]+$/', $segment) !== 1) {
+            return null;
+        }
+    }
+
+    return $clean;
+}
+
+function context_with_subpath(array $context, string $subpath): ?array
+{
+    $normalized = normalize_relative_subpath($subpath);
+    if ($normalized === null) {
+        return null;
+    }
+
+    if ($normalized === '') {
+        return $context;
+    }
+
+    $context['path'] = rtrim((string) $context['path'], '/\\') . '/' . $normalized;
+    return $context;
+}
+
 function file_access_status_for_context(array $context): array
 {
     return agent_post_for_host($context['host'], '/fs/check', [
