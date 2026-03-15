@@ -644,9 +644,14 @@ if ($route === 'action' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $instanceId = (string)($_POST['instance_id'] ?? '');
     $action = (string)($_POST['action'] ?? '');
+    $wantsJson = strtolower((string) ($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '')) === 'xmlhttprequest'
+        || (string) ($_POST['response_format'] ?? '') === 'json';
     $server = find_instance_with_host($instanceId);
 
     if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
+        if ($wantsJson) {
+            json_response(['ok' => false, 'error' => 'Managed host for this server is missing or disabled.'], 404);
+        }
         flash('Managed host for this server is missing or disabled.');
         redirect_route('game_servers');
     }
@@ -661,13 +666,71 @@ if ($route === 'action' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->execute([$action, $instanceId]);
     }
 
+    if ($wantsJson) {
+        json_response([
+            'ok' => (bool) ($agent['ok'] ?? false),
+            'action' => $action,
+            'instance_id' => $instanceId,
+            'panel_status' => $action !== 'logs' && ($agent['ok'] ?? false) ? $action : (string) ($server['status'] ?? 'unknown'),
+            'message' => ($agent['ok'] ?? false) ? 'Action completed.' : 'Action failed.',
+            'result' => $agent['result'] ?? null,
+            'error' => $agent['error'] ?? null,
+        ], ($agent['ok'] ?? false) ? 200 : 500);
+    }
+
     if ($action === 'logs') {
         $_SESSION['logs'] = $agent['result']['stdout'] ?? ($agent['result']['stderr'] ?? 'No logs returned');
     } else {
         flash(($agent['ok'] ?? false) ? 'Action completed.' : 'Action failed.');
     }
 
+    $redirectTo = (string) ($_POST['redirect_to'] ?? 'game_servers');
+    if ($redirectTo === 'server') {
+        header('Location: /?route=server&instance_id=' . rawurlencode($instanceId));
+        exit;
+    }
+
     redirect_route('game_servers');
+}
+
+if ($route === 'server_live') {
+    require_login();
+
+    $instanceId = (string) ($_GET['instance_id'] ?? '');
+    $server = find_instance_with_host($instanceId);
+
+    if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
+        json_response(['ok' => false, 'error' => 'Managed host for this server is missing or disabled.'], 404);
+    }
+
+    $metricsResult = instance_metrics_for_server($server);
+    $statusAgent = agent_post_for_host($server, '/instance/action', [
+        'instance_id' => $instanceId,
+        'action' => 'status',
+    ]);
+    $logsAgent = agent_post_for_host($server, '/instance/action', [
+        'instance_id' => $instanceId,
+        'action' => 'logs',
+    ]);
+    $metrics = ($metricsResult['metrics'] ?? []);
+
+    json_response([
+        'ok' => true,
+        'instance_id' => $instanceId,
+        'panel_status' => (string) ($server['status'] ?? 'unknown'),
+        'metrics_ok' => (bool) ($metricsResult['ok'] ?? false),
+        'metrics' => [
+            'running' => (bool) ($metrics['running'] ?? false),
+            'cpu_percent' => (float) ($metrics['cpu_percent'] ?? 0),
+            'memory_percent' => (float) ($metrics['memory_percent'] ?? 0),
+            'memory_used_bytes' => (int) ($metrics['memory_used_bytes'] ?? 0),
+            'memory_limit_bytes' => (int) ($metrics['memory_limit_bytes'] ?? 0),
+            'disk_used_bytes' => (int) ($metrics['disk_used_bytes'] ?? 0),
+            'disk_percent' => (float) ($metrics['disk_percent'] ?? 0),
+        ],
+        'status_output' => (string) ($statusAgent['result']['stdout'] ?? ($statusAgent['result']['stderr'] ?? 'No Docker compose status returned')),
+        'log_output' => (string) ($logsAgent['result']['stdout'] ?? ($logsAgent['result']['stderr'] ?? 'No container logs returned')),
+    ]);
 }
 
 if ($route === 'logs') {
@@ -954,12 +1017,14 @@ if ($route === 'server') {
             .log-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
             .log-block { display: grid; gap: 10px; }
             .log-view { margin: 0; white-space: pre-wrap; word-break: break-word; background: #050814; border: 1px solid #243041; border-radius: 12px; padding: 16px; max-height: 420px; overflow: auto; }
+            .inline-status { padding: 12px; background: #1e293b; border: 1px solid #334155; border-radius: 10px; margin-bottom: 16px; display: none; }
             @media (max-width: 900px) { .grid.two, .grid.form { grid-template-columns: 1fr; } }
         </style>
     </head>
     <body>
     <div class="page">
         <?php if ($flash): ?><div class="flash"><?= h($flash) ?></div><?php endif; ?>
+        <div class="inline-status" id="server-inline-status"></div>
         <div class="actions" style="margin-bottom:16px;">
             <a class="button-link gray" href="/?route=game_servers">Back to Game Servers</a>
             <?php if ($novncUrl): ?><a class="button-link" href="/?route=console&amp;instance_id=<?= h($server['instance_id']) ?>">VNC Viewer</a><?php endif; ?>
@@ -967,9 +1032,11 @@ if ($route === 'server') {
             <?php if ($vncUrl): ?><a class="button-link" href="<?= h($vncUrl) ?>">Direct VNC</a><?php endif; ?>
             <a class="button-link" href="/?route=logs&amp;instance_id=<?= h($server['instance_id']) ?>">Logs</a>
             <?php foreach (['start', 'stop', 'restart', 'pull', 'rebuild'] as $act): ?>
-                <form method="post" action="/?route=action" style="display:inline;">
+                <form method="post" action="/?route=action" style="display:inline;" class="server-action-form">
                     <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
                     <input type="hidden" name="action" value="<?= h($act) ?>">
+                    <input type="hidden" name="redirect_to" value="server">
+                    <input type="hidden" name="response_format" value="json">
                     <button class="<?= in_array($act, ['pull', 'rebuild'], true) ? 'gray' : '' ?>" type="submit"><?= h($act) ?></button>
                 </form>
             <?php endforeach; ?>
@@ -1004,18 +1071,18 @@ if ($route === 'server') {
                     $diskPercent = (float) ($metrics['disk_percent'] ?? 0);
                 ?>
                 <div class="meter">
-                    <div>CPU: <?= h(number_format($cpuPercent, 1)) ?>%</div>
-                    <div class="meter-bar"><div class="meter-fill" style="width: <?= h((string) min(max($cpuPercent, 0), 100)) ?>%"></div></div>
+                    <div id="cpu-label">CPU: <?= h(number_format($cpuPercent, 1)) ?>%</div>
+                    <div class="meter-bar"><div class="meter-fill" id="cpu-fill" style="width: <?= h((string) min(max($cpuPercent, 0), 100)) ?>%"></div></div>
                 </div>
                 <div class="meter" style="margin-top:16px;">
-                    <div>RAM: <?= h(format_bytes_human((int) ($metrics['memory_used_bytes'] ?? 0))) ?> / <?= h(format_bytes_human((int) ($metrics['memory_limit_bytes'] ?? 0))) ?> (<?= h(number_format($memoryPercent, 1)) ?>%)</div>
-                    <div class="meter-bar"><div class="meter-fill" style="width: <?= h((string) min(max($memoryPercent, 0), 100)) ?>%"></div></div>
+                    <div id="memory-label">RAM: <?= h(format_bytes_human((int) ($metrics['memory_used_bytes'] ?? 0))) ?> / <?= h(format_bytes_human((int) ($metrics['memory_limit_bytes'] ?? 0))) ?> (<?= h(number_format($memoryPercent, 1)) ?>%)</div>
+                    <div class="meter-bar"><div class="meter-fill" id="memory-fill" style="width: <?= h((string) min(max($memoryPercent, 0), 100)) ?>%"></div></div>
                 </div>
                 <div class="meter" style="margin-top:16px;">
-                    <div>Disk: <?= h(format_bytes_human((int) ($metrics['disk_used_bytes'] ?? 0))) ?> (<?= h(number_format($diskPercent, 1)) ?>%)</div>
-                    <div class="meter-bar"><div class="meter-fill" style="width: <?= h((string) min(max($diskPercent, 0), 100)) ?>%"></div></div>
+                    <div id="disk-label">Disk: <?= h(format_bytes_human((int) ($metrics['disk_used_bytes'] ?? 0))) ?> (<?= h(number_format($diskPercent, 1)) ?>%)</div>
+                    <div class="meter-bar"><div class="meter-fill" id="disk-fill" style="width: <?= h((string) min(max($diskPercent, 0), 100)) ?>%"></div></div>
                 </div>
-                <div class="muted" style="margin-top:16px;">Status: <?= h(($metrics['running'] ?? false) ? 'running' : 'stopped') ?></div>
+                <div class="muted" style="margin-top:16px;" id="runtime-status">Status: <?= h(($metrics['running'] ?? false) ? 'running' : 'stopped') ?></div>
                 <div class="muted" style="margin-top:8px;">Panel detail edits update stored panel metadata. If ports or image settings must also change in the runtime container config, recreate or sync the instance afterward.</div>
             </div>
         </div>
@@ -1030,7 +1097,7 @@ if ($route === 'server') {
             <div class="log-grid">
                 <div class="log-block">
                     <div class="muted">Docker compose status</div>
-                    <pre class="log-view"><?= h($statusOutput) ?></pre>
+                    <pre class="log-view" id="server-status-view"><?= h($statusOutput) ?></pre>
                 </div>
                 <div class="log-block">
                     <div class="muted">Docker logs</div>
@@ -1040,10 +1107,118 @@ if ($route === 'server') {
         </div>
     </div>
     <script>
+        const instanceId = <?= json_encode((string) $server['instance_id']) ?>;
         const serverLogView = document.getElementById('server-log-view');
-        if (serverLogView) {
-            serverLogView.scrollTop = serverLogView.scrollHeight;
+        const serverStatusView = document.getElementById('server-status-view');
+        const inlineStatus = document.getElementById('server-inline-status');
+        const cpuLabel = document.getElementById('cpu-label');
+        const cpuFill = document.getElementById('cpu-fill');
+        const memoryLabel = document.getElementById('memory-label');
+        const memoryFill = document.getElementById('memory-fill');
+        const diskLabel = document.getElementById('disk-label');
+        const diskFill = document.getElementById('disk-fill');
+        const runtimeStatus = document.getElementById('runtime-status');
+        const actionForms = document.querySelectorAll('.server-action-form');
+
+        function scrollToBottom(element) {
+            if (element) {
+                element.scrollTop = element.scrollHeight;
+            }
         }
+
+        function formatBytes(bytes) {
+            const value = Number(bytes) || 0;
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            let size = value;
+            let unitIndex = 0;
+            while (size >= 1024 && unitIndex < units.length - 1) {
+                size /= 1024;
+                unitIndex += 1;
+            }
+            return `${size.toFixed(size >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+        }
+
+        function setInlineStatus(message, isError = false) {
+            if (!inlineStatus) {
+                return;
+            }
+            inlineStatus.style.display = 'block';
+            inlineStatus.textContent = message;
+            inlineStatus.style.background = isError ? '#7f1d1d' : '#1e293b';
+            inlineStatus.style.borderColor = isError ? '#b91c1c' : '#334155';
+        }
+
+        function updateLiveView(payload) {
+            if (!payload || !payload.metrics) {
+                return;
+            }
+            const cpuPercent = Number(payload.metrics.cpu_percent || 0);
+            const memoryPercent = Number(payload.metrics.memory_percent || 0);
+            const diskPercent = Number(payload.metrics.disk_percent || 0);
+            const memoryUsed = Number(payload.metrics.memory_used_bytes || 0);
+            const memoryLimit = Number(payload.metrics.memory_limit_bytes || 0);
+            const diskUsed = Number(payload.metrics.disk_used_bytes || 0);
+
+            if (cpuLabel) cpuLabel.textContent = `CPU: ${cpuPercent.toFixed(1)}%`;
+            if (cpuFill) cpuFill.style.width = `${Math.max(0, Math.min(cpuPercent, 100))}%`;
+            if (memoryLabel) memoryLabel.textContent = `RAM: ${formatBytes(memoryUsed)} / ${formatBytes(memoryLimit)} (${memoryPercent.toFixed(1)}%)`;
+            if (memoryFill) memoryFill.style.width = `${Math.max(0, Math.min(memoryPercent, 100))}%`;
+            if (diskLabel) diskLabel.textContent = `Disk: ${formatBytes(diskUsed)} (${diskPercent.toFixed(1)}%)`;
+            if (diskFill) diskFill.style.width = `${Math.max(0, Math.min(diskPercent, 100))}%`;
+            if (runtimeStatus) runtimeStatus.textContent = `Status: ${payload.metrics.running ? 'running' : 'stopped'}`;
+            if (serverStatusView) serverStatusView.textContent = payload.status_output || 'No Docker compose status returned';
+            if (serverLogView) {
+                serverLogView.textContent = payload.log_output || 'No container logs returned';
+                scrollToBottom(serverLogView);
+            }
+        }
+
+        async function refreshLiveView() {
+            try {
+                const response = await fetch(`/?route=server_live&instance_id=${encodeURIComponent(instanceId)}`, {
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                    credentials: 'same-origin',
+                });
+                if (!response.ok) {
+                    throw new Error(`Live status failed (${response.status})`);
+                }
+                const payload = await response.json();
+                updateLiveView(payload);
+            } catch (error) {
+                setInlineStatus(error.message, true);
+            }
+        }
+
+        actionForms.forEach((form) => {
+            form.addEventListener('submit', async (event) => {
+                event.preventDefault();
+                const button = form.querySelector('button[type="submit"]');
+                if (button) button.disabled = true;
+                setInlineStatus(`Running ${form.querySelector('input[name="action"]').value}...`);
+                try {
+                    const response = await fetch(form.action, {
+                        method: 'POST',
+                        body: new FormData(form),
+                        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                        credentials: 'same-origin',
+                    });
+                    const payload = await response.json();
+                    if (!response.ok || !payload.ok) {
+                        throw new Error(payload.error || payload.message || `Action failed (${response.status})`);
+                    }
+                    setInlineStatus(payload.message || 'Action completed.');
+                    await refreshLiveView();
+                } catch (error) {
+                    setInlineStatus(error.message, true);
+                } finally {
+                    if (button) button.disabled = false;
+                }
+            });
+        });
+
+        scrollToBottom(serverLogView);
+        refreshLiveView();
+        window.setInterval(refreshLiveView, 5000);
     </script>
     </body>
     </html>
