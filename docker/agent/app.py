@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -21,6 +22,7 @@ TEMPLATE_DIR = Path("/app/templates/fs25")
 STATE_FILE_NAME = ".panel-state.json"
 SFTP_UID = int(os.getenv("SFTP_UID", "1000"))
 SFTP_GID = int(os.getenv("SFTP_GID", "1000"))
+COMPOSE_COMMAND = None
 
 
 def require_auth():
@@ -46,6 +48,32 @@ def run_command(cmd, cwd=None):
         "stderr": result.stderr,
         "command": cmd,
     }
+
+
+def compose_command():
+    global COMPOSE_COMMAND
+
+    if COMPOSE_COMMAND is not None:
+        return COMPOSE_COMMAND
+
+    docker_path = shutil.which("docker")
+    if docker_path:
+        probe = run_command([docker_path, "compose", "version"])
+        if probe["code"] == 0:
+            COMPOSE_COMMAND = [docker_path, "compose"]
+            return COMPOSE_COMMAND
+
+    docker_compose_path = shutil.which("docker-compose")
+    if docker_compose_path:
+        COMPOSE_COMMAND = [docker_compose_path]
+        return COMPOSE_COMMAND
+
+    COMPOSE_COMMAND = ["docker", "compose"]
+    return COMPOSE_COMMAND
+
+
+def compose_cmd(*args):
+    return [*compose_command(), *args]
 
 
 def write_file(path: Path, content: str):
@@ -166,7 +194,7 @@ def restore_desired_instances():
         if not compose_file.exists() or not bool(state.get("desired_running")):
             continue
 
-        run_command(["docker", "compose", "-f", str(compose_file), "up", "-d"], cwd=str(instance_dir))
+        run_command(compose_cmd("-f", str(compose_file), "up", "-d"), cwd=str(instance_dir))
 
 
 def decode_base64url(value: str) -> bytes:
@@ -297,9 +325,7 @@ def instance_metrics(instance_id: str) -> dict:
         "running": False,
     }
 
-    ps_result = run_command([
-        "docker", "compose", "-f", str(compose_file), "ps", "--status", "running", "--services",
-    ], cwd=str(instance_dir))
+    ps_result = run_command(compose_cmd("-f", str(compose_file), "ps", "--status", "running", "--services"), cwd=str(instance_dir))
     if ps_result["code"] == 0:
         metrics["running"] = "fs25" in [line.strip() for line in ps_result["stdout"].splitlines()]
 
@@ -432,14 +458,14 @@ def instance_action():
         return jsonify({"ok": False, "error": "instance compose file not found"}), 404
 
     action_map = {
-        "start": ["docker", "compose", "-f", str(compose_file), "up", "-d"],
-        "stop": ["docker", "compose", "-f", str(compose_file), "stop"],
-        "restart": ["docker", "compose", "-f", str(compose_file), "restart"],
-        "pull": ["docker", "compose", "-f", str(compose_file), "pull"],
-        "rebuild": ["docker", "compose", "-f", str(compose_file), "up", "-d", "--force-recreate"],
-        "down": ["docker", "compose", "-f", str(compose_file), "down"],
-        "logs": ["docker", "compose", "-f", str(compose_file), "logs", "--tail", "200"],
-        "status": ["docker", "compose", "-f", str(compose_file), "ps", "-a"],
+        "start": compose_cmd("-f", str(compose_file), "up", "-d"),
+        "stop": compose_cmd("-f", str(compose_file), "stop"),
+        "restart": compose_cmd("-f", str(compose_file), "restart"),
+        "pull": compose_cmd("-f", str(compose_file), "pull"),
+        "rebuild": compose_cmd("-f", str(compose_file), "up", "-d", "--force-recreate"),
+        "down": compose_cmd("-f", str(compose_file), "down"),
+        "logs": compose_cmd("-f", str(compose_file), "logs", "--tail", "200"),
+        "status": compose_cmd("-f", str(compose_file), "ps", "-a"),
     }
 
     if action not in action_map:
@@ -468,7 +494,7 @@ def delete_instance():
     compose_file = instance_dir / "compose.yml"
 
     if compose_file.exists():
-        run_command(["docker", "compose", "-f", str(compose_file), "down"], cwd=str(instance_dir))
+        run_command(compose_cmd("-f", str(compose_file), "down"), cwd=str(instance_dir))
 
     if instance_dir.exists():
         for root, dirs, files in os.walk(instance_dir, topdown=False):

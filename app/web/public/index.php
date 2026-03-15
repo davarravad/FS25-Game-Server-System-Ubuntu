@@ -1923,14 +1923,14 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                         $memoryPercent = (float) ($metrics['memory_percent'] ?? 0);
                         $diskPercent = (float) ($metrics['disk_percent'] ?? 0);
                     ?>
-                    <div class="card server-card">
+                    <div class="card server-card" data-live-instance-id="<?= h((string) $server['instance_id']) ?>">
                         <a class="server-card-link" href="<?= h($detailUrl) ?>">
                             <div class="server-card-head">
                                 <div>
                                     <h3 class="server-card-title"><?= h($server['server_name']) ?></h3>
                                     <div class="muted"><?= h($server['instance_id']) ?> on <?= h($server['host_name'] ?? 'unassigned') ?></div>
                                 </div>
-                                <div class="stat-chip"><?= h(($metrics['running'] ?? false) ? 'running' : 'stopped') ?></div>
+                                <div class="stat-chip" data-live-running><?= h(($metrics['running'] ?? false) ? 'running' : 'stopped') ?></div>
                             </div>
                         </a>
                         <div class="flex">
@@ -1940,16 +1940,16 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                         </div>
                         <div class="health-grid">
                             <div class="health-meter">
-                                <div class="health-label"><span>CPU</span><span><?= h(number_format($cpuPercent, 1)) ?>%</span></div>
-                                <div class="health-bar"><div class="health-fill <?= $cpuPercent >= 85 ? 'warn' : '' ?>" style="width: <?= h((string) min(max($cpuPercent, 0), 100)) ?>%"></div></div>
+                                <div class="health-label"><span>CPU</span><span data-live-cpu-label><?= h(number_format($cpuPercent, 1)) ?>%</span></div>
+                                <div class="health-bar"><div class="health-fill <?= $cpuPercent >= 85 ? 'warn' : '' ?>" data-live-cpu-fill style="width: <?= h((string) min(max($cpuPercent, 0), 100)) ?>%"></div></div>
                             </div>
                             <div class="health-meter">
-                                <div class="health-label"><span>RAM</span><span><?= h(number_format($memoryPercent, 1)) ?>% | <?= h(format_bytes_human((int) ($metrics['memory_used_bytes'] ?? 0))) ?></span></div>
-                                <div class="health-bar"><div class="health-fill <?= $memoryPercent >= 85 ? 'warn' : '' ?>" style="width: <?= h((string) min(max($memoryPercent, 0), 100)) ?>%"></div></div>
+                                <div class="health-label"><span>RAM</span><span data-live-memory-label><?= h(number_format($memoryPercent, 1)) ?>% | <?= h(format_bytes_human((int) ($metrics['memory_used_bytes'] ?? 0))) ?></span></div>
+                                <div class="health-bar"><div class="health-fill <?= $memoryPercent >= 85 ? 'warn' : '' ?>" data-live-memory-fill style="width: <?= h((string) min(max($memoryPercent, 0), 100)) ?>%"></div></div>
                             </div>
                             <div class="health-meter">
-                                <div class="health-label"><span>Disk</span><span><?= h(number_format($diskPercent, 1)) ?>% | <?= h(format_bytes_human((int) ($metrics['disk_used_bytes'] ?? 0))) ?></span></div>
-                                <div class="health-bar"><div class="health-fill <?= $diskPercent >= 85 ? 'warn' : '' ?>" style="width: <?= h((string) min(max($diskPercent, 0), 100)) ?>%"></div></div>
+                                <div class="health-label"><span>Disk</span><span data-live-disk-label><?= h(number_format($diskPercent, 1)) ?>% | <?= h(format_bytes_human((int) ($metrics['disk_used_bytes'] ?? 0))) ?></span></div>
+                                <div class="health-bar"><div class="health-fill <?= $diskPercent >= 85 ? 'warn' : '' ?>" data-live-disk-fill style="width: <?= h((string) min(max($diskPercent, 0), 100)) ?>%"></div></div>
                             </div>
                         </div>
                         <div class="actions">
@@ -1980,6 +1980,98 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                 <div>Use Managed Hosts to maintain the default local host, File Management to handle installers, Create Server for provisioning, and Game Servers for day-to-day operations.</div>
             </div>
         </footer>
+        <?php if ($pageRoute === 'game_servers'): ?>
+        <script>
+            const liveServerCards = Array.from(document.querySelectorAll('[data-live-instance-id]'));
+
+            function liveFormatBytes(bytes) {
+                const value = Number(bytes) || 0;
+                const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+                let size = value;
+                let unitIndex = 0;
+                while (size >= 1024 && unitIndex < units.length - 1) {
+                    size /= 1024;
+                    unitIndex += 1;
+                }
+                return `${size.toFixed(size >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+            }
+
+            function applyWarnClass(element, percent) {
+                if (!element) {
+                    return;
+                }
+                element.classList.toggle('warn', percent >= 85);
+            }
+
+            function updateLiveServerCard(card, payload) {
+                if (!card || !payload || !payload.metrics) {
+                    return;
+                }
+                const cpuPercent = Number(payload.metrics.cpu_percent || 0);
+                const memoryPercent = Number(payload.metrics.memory_percent || 0);
+                const diskPercent = Number(payload.metrics.disk_percent || 0);
+                const memoryUsed = Number(payload.metrics.memory_used_bytes || 0);
+                const diskUsed = Number(payload.metrics.disk_used_bytes || 0);
+
+                const runningEl = card.querySelector('[data-live-running]');
+                const cpuLabel = card.querySelector('[data-live-cpu-label]');
+                const cpuFill = card.querySelector('[data-live-cpu-fill]');
+                const memoryLabel = card.querySelector('[data-live-memory-label]');
+                const memoryFill = card.querySelector('[data-live-memory-fill]');
+                const diskLabel = card.querySelector('[data-live-disk-label]');
+                const diskFill = card.querySelector('[data-live-disk-fill]');
+
+                if (runningEl) {
+                    runningEl.textContent = payload.metrics.running ? 'running' : 'stopped';
+                }
+                if (cpuLabel) {
+                    cpuLabel.textContent = `${cpuPercent.toFixed(1)}%`;
+                }
+                if (cpuFill) {
+                    cpuFill.style.width = `${Math.max(0, Math.min(cpuPercent, 100))}%`;
+                    applyWarnClass(cpuFill, cpuPercent);
+                }
+                if (memoryLabel) {
+                    memoryLabel.textContent = `${memoryPercent.toFixed(1)}% | ${liveFormatBytes(memoryUsed)}`;
+                }
+                if (memoryFill) {
+                    memoryFill.style.width = `${Math.max(0, Math.min(memoryPercent, 100))}%`;
+                    applyWarnClass(memoryFill, memoryPercent);
+                }
+                if (diskLabel) {
+                    diskLabel.textContent = `${diskPercent.toFixed(1)}% | ${liveFormatBytes(diskUsed)}`;
+                }
+                if (diskFill) {
+                    diskFill.style.width = `${Math.max(0, Math.min(diskPercent, 100))}%`;
+                    applyWarnClass(diskFill, diskPercent);
+                }
+            }
+
+            async function refreshGameServerCards() {
+                await Promise.all(liveServerCards.map(async (card) => {
+                    const instanceId = card.getAttribute('data-live-instance-id');
+                    if (!instanceId) {
+                        return;
+                    }
+                    try {
+                        const response = await fetch(`/?route=server_live&instance_id=${encodeURIComponent(instanceId)}`, {
+                            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                            credentials: 'same-origin',
+                        });
+                        if (!response.ok) {
+                            return;
+                        }
+                        const payload = await response.json();
+                        updateLiveServerCard(card, payload);
+                    } catch (error) {
+                    }
+                }));
+            }
+
+            refreshGameServerCards();
+            window.setInterval(refreshGameServerCards, 5000);
+        </script>
+        <?php endif; ?>
     <?php endif; ?>
 </div>
 </body>
