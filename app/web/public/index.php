@@ -68,6 +68,7 @@ if ($route === 'api_node_hosts') {
             'id' => (int) $host['id'],
             'name' => (string) $host['name'],
             'agent_url' => (string) $host['agent_url'],
+            'access_host' => (string) ($host['access_host'] ?? ''),
             'shared_game_path' => (string) ($host['shared_game_path'] ?? '/opt/fs25/game'),
             'shared_dlc_path' => (string) ($host['shared_dlc_path'] ?? '/opt/fs25/dlc'),
             'shared_installer_path' => (string) ($host['shared_installer_path'] ?? '/opt/fs25/installer'),
@@ -92,7 +93,8 @@ if ($route === 'api_node_servers') {
         SELECT
             si.*,
             mh.name AS host_name,
-            mh.agent_url
+            mh.agent_url,
+            mh.access_host
         FROM server_instances si
         LEFT JOIN managed_hosts mh ON mh.id = si.host_id
         ORDER BY si.created_at DESC
@@ -112,6 +114,7 @@ if ($route === 'api_node_servers') {
             'sftp_port' => (int) ($server['sftp_port'] ?? 0),
             'sftp_username' => (string) ($server['sftp_username'] ?? ''),
             'web_url' => instance_access_url($server, 'web'),
+            'vnc_url' => instance_access_url($server, 'vnc'),
             'novnc_url' => instance_access_url($server, 'novnc'),
             'sftp_url' => instance_access_url($server, 'sftp'),
             'created_at' => (string) ($server['created_at'] ?? ''),
@@ -133,6 +136,7 @@ if ($route === 'host_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $host = find_host($hostId);
     $name = trim((string) ($_POST['name'] ?? ''));
     $agentUrl = trim((string) ($_POST['agent_url'] ?? ''));
+    $accessHost = trim((string) ($_POST['access_host'] ?? ''));
     $agentToken = trim((string) ($_POST['agent_token'] ?? ''));
     $sharedGamePath = trim((string) ($_POST['shared_game_path'] ?? '/opt/fs25/game'));
     $sharedDlcPath = trim((string) ($_POST['shared_dlc_path'] ?? '/opt/fs25/dlc'));
@@ -150,10 +154,10 @@ if ($route === 'host_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $stmt = db()->prepare('
         UPDATE managed_hosts
-        SET name = ?, agent_url = ?, agent_token = ?, shared_game_path = ?, shared_dlc_path = ?, shared_installer_path = ?
+        SET name = ?, agent_url = ?, access_host = ?, agent_token = ?, shared_game_path = ?, shared_dlc_path = ?, shared_installer_path = ?
         WHERE id = ?
     ');
-    $stmt->execute([$name, $agentUrl, $agentToken, $sharedGamePath, $sharedDlcPath, $sharedInstallerPath, $hostId]);
+    $stmt->execute([$name, $agentUrl, $accessHost, $agentToken, $sharedGamePath, $sharedDlcPath, $sharedInstallerPath, $hostId]);
 
     flash('Default host updated.');
     redirect_route('managed_hosts');
@@ -851,6 +855,7 @@ if ($route === 'server') {
     $metricsResult = instance_metrics_for_server($server);
     $metrics = ($metricsResult['metrics'] ?? []);
     $webUrl = instance_access_url($server, 'web');
+    $vncUrl = instance_access_url($server, 'vnc');
     $novncUrl = instance_access_url($server, 'novnc');
     $flash = flash();
     ?><!doctype html>
@@ -888,6 +893,7 @@ if ($route === 'server') {
             <a class="button-link gray" href="/?route=game_servers">Back to Game Servers</a>
             <?php if ($novncUrl): ?><a class="button-link" href="/?route=console&amp;instance_id=<?= h($server['instance_id']) ?>">VNC Viewer</a><?php endif; ?>
             <?php if ($webUrl): ?><a class="button-link" href="<?= h($webUrl) ?>" target="_blank" rel="noreferrer">Game Webpage</a><?php endif; ?>
+            <?php if ($vncUrl): ?><a class="button-link" href="<?= h($vncUrl) ?>">Direct VNC</a><?php endif; ?>
             <a class="button-link" href="/?route=logs&amp;instance_id=<?= h($server['instance_id']) ?>">Logs</a>
             <?php foreach (['start', 'stop', 'restart', 'pull', 'rebuild'] as $act): ?>
                 <form method="post" action="/?route=action" style="display:inline;">
@@ -961,6 +967,7 @@ if ($route === 'console') {
     }
 
     $novncUrl = instance_access_url($server, 'novnc');
+    $vncUrl = instance_access_url($server, 'vnc');
 
     if (!$novncUrl) {
         flash('noVNC URL is not available for this server.');
@@ -1003,7 +1010,10 @@ if ($route === 'console') {
                     <?php if ($webUrl): ?>
                         <a class="button-link" href="/?route=web_admin&amp;instance_id=<?= h($server['instance_id']) ?>">Game Webpage</a>
                     <?php endif; ?>
-                    <a class="button-link primary" href="<?= h($novncUrl) ?>" target="_blank" rel="noreferrer">Open Direct VNC</a>
+                    <?php if ($vncUrl): ?>
+                        <a class="button-link" href="<?= h($vncUrl) ?>">Direct VNC</a>
+                    <?php endif; ?>
+                    <a class="button-link primary" href="<?= h($novncUrl) ?>" target="_blank" rel="noreferrer">Open noVNC Direct</a>
                 </div>
             </div>
         </div>
@@ -1191,6 +1201,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                     si.*,
                     mh.name AS host_name,
                     mh.agent_url,
+                    mh.access_host,
                     mh.agent_token,
                     mh.is_enabled
                 FROM server_instances si
@@ -1324,6 +1335,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                     <input type="hidden" name="host_id" value="<?= h((string) $localHost['id']) ?>">
                     <div><label>Host Name</label><input name="name" value="<?= h((string) $localHost['name']) ?>" required></div>
                     <div><label>Agent API URL</label><input name="agent_url" value="<?= h((string) $localHost['agent_url']) ?>" required></div>
+                    <div><label>Access Host/IP</label><input name="access_host" value="<?= h((string) ($localHost['access_host'] ?? '')) ?>" placeholder="15.204.86.248"></div>
                     <div><label>Agent Token</label><input name="agent_token" type="password" value="<?= h((string) $localHost['agent_token']) ?>" required></div>
                     <div><label>Shared Game Path</label><input name="shared_game_path" value="<?= h((string) ($localHost['shared_game_path'] ?? '/opt/fs25/game')) ?>" required></div>
                     <div><label>Shared DLC Path</label><input name="shared_dlc_path" value="<?= h((string) ($localHost['shared_dlc_path'] ?? '/opt/fs25/dlc')) ?>" required></div>
@@ -1338,10 +1350,11 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
             <h2>How To Use This Page</h2>
             <div class="stack muted">
                 <div>1. Review the default local host details and update them if the agent URL, token, or storage paths change.</div>
-                <div>2. Verify the host shows as online.</div>
-                <div>3. Prepare storage once so shared folders exist.</div>
-                <div>4. Use File Management to upload installer archives or DLC.</div>
-                <div>5. Create servers after the shared files are ready.</div>
+                <div>2. Set Access Host/IP to the reachable address players and admins should use for game web, VNC, and noVNC links.</div>
+                <div>3. Verify the host shows as online.</div>
+                <div>4. Prepare storage once so shared folders exist.</div>
+                <div>5. Use File Management to upload installer archives or DLC.</div>
+                <div>6. Create servers after the shared files are ready.</div>
             </div>
         </div>
         </div>
@@ -1352,6 +1365,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                             <tr>
                                 <th>Name</th>
                                 <th>API URL</th>
+                                <th>Access Host/IP</th>
                                 <th>Shared FS</th>
                                 <th>Status</th>
                                 <th>Setup</th>
@@ -1363,6 +1377,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                             <tr>
                                 <td><?= h($localHost['name']) ?></td>
                                 <td><?= h($localHost['agent_url']) ?></td>
+                                <td><?= h((string) ($localHost['access_host'] ?? '')) ?></td>
                                 <td>
                                     <div class="stack muted">
                                         <div>game: <?= h($localHost['shared_game_path'] ?? '/opt/fs25/game') ?></div>
@@ -1380,7 +1395,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                                 </td>
                             </tr>
                         <?php else: ?>
-                            <tr><td colspan="5" class="muted">No default host is available.</td></tr>
+                            <tr><td colspan="6" class="muted">No default host is available.</td></tr>
                         <?php endif; ?>
                         </tbody>
                     </table>
@@ -1513,7 +1528,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                     <select name="host_id" required>
                         <option value="">Select host</option>
                         <?php foreach ($createHosts as $host): ?>
-                            <option value="<?= h((string) $host['id']) ?>"><?= h($host['name']) ?> (<?= h($host['agent_url']) ?>)</option>
+                            <option value="<?= h((string) $host['id']) ?>"><?= h($host['name']) ?> (API <?= h($host['agent_url']) ?><?= ($host['access_host'] ?? '') !== '' ? ' | access ' . h((string) $host['access_host']) : '' ?>)</option>
                         <?php endforeach; ?>
                     </select>
                 </div>

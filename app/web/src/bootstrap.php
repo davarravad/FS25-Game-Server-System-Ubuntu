@@ -50,6 +50,7 @@ function ensure_schema(PDO $pdo): void
             id INT AUTO_INCREMENT PRIMARY KEY,
             name VARCHAR(150) NOT NULL,
             agent_url VARCHAR(255) NOT NULL,
+            access_host VARCHAR(255) NOT NULL DEFAULT '',
             agent_token VARCHAR(255) NOT NULL,
             shared_game_path VARCHAR(255) NOT NULL DEFAULT '/opt/fs25/game',
             shared_dlc_path VARCHAR(255) NOT NULL DEFAULT '/opt/fs25/dlc',
@@ -60,6 +61,7 @@ function ensure_schema(PDO $pdo): void
         )
     ");
 
+    $pdo->exec("ALTER TABLE managed_hosts ADD COLUMN IF NOT EXISTS access_host VARCHAR(255) NOT NULL DEFAULT '' AFTER agent_url");
     $pdo->exec("ALTER TABLE managed_hosts ADD COLUMN IF NOT EXISTS shared_game_path VARCHAR(255) NOT NULL DEFAULT '/opt/fs25/game' AFTER agent_token");
     $pdo->exec("ALTER TABLE managed_hosts ADD COLUMN IF NOT EXISTS shared_dlc_path VARCHAR(255) NOT NULL DEFAULT '/opt/fs25/dlc' AFTER shared_game_path");
     $pdo->exec("ALTER TABLE managed_hosts ADD COLUMN IF NOT EXISTS shared_installer_path VARCHAR(255) NOT NULL DEFAULT '/opt/fs25/installer' AFTER shared_dlc_path");
@@ -87,6 +89,9 @@ function bootstrap_default_admin(PDO $pdo): void
 function bootstrap_default_host(PDO $pdo): void
 {
     $agentUrl = trim((string) env_value('AGENT_URL', 'http://agent:8081'));
+    $appUrl = rtrim((string) env_value('APP_URL', 'http://localhost:8080'), '/');
+    $appParts = parse_url($appUrl);
+    $defaultAccessHost = is_array($appParts) && !empty($appParts['host']) ? (string) $appParts['host'] : 'localhost';
     $agentToken = (string) env_value('AGENT_SHARED_TOKEN', '');
     $defaultName = trim((string) env_value('DEFAULT_HOST_NAME', 'Local Agent'));
     $sharedGamePath = trim((string) env_value('SHARED_GAME_PATH', '/opt/fs25/game'));
@@ -98,10 +103,10 @@ function bootstrap_default_host(PDO $pdo): void
 
     if (!$firstHostId) {
         $insert = $pdo->prepare('
-            INSERT INTO managed_hosts (name, agent_url, agent_token, shared_game_path, shared_dlc_path, shared_installer_path, is_enabled)
-            VALUES (?, ?, ?, ?, ?, ?, 1)
+            INSERT INTO managed_hosts (name, agent_url, access_host, agent_token, shared_game_path, shared_dlc_path, shared_installer_path, is_enabled)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1)
         ');
-        $insert->execute([$defaultName, $agentUrl, $agentToken, $sharedGamePath, $sharedDlcPath, $sharedInstallerPath]);
+        $insert->execute([$defaultName, $agentUrl, $defaultAccessHost, $agentToken, $sharedGamePath, $sharedDlcPath, $sharedInstallerPath]);
         $firstHostId = (int) $pdo->lastInsertId();
     }
 
@@ -189,6 +194,7 @@ function node_summary(): array
             'id' => (int) $localHost['id'],
             'name' => (string) $localHost['name'],
             'agent_url' => (string) $localHost['agent_url'],
+            'access_host' => (string) ($localHost['access_host'] ?? ''),
             'shared_game_path' => (string) ($localHost['shared_game_path'] ?? '/opt/fs25/game'),
             'shared_dlc_path' => (string) ($localHost['shared_dlc_path'] ?? '/opt/fs25/dlc'),
             'shared_installer_path' => (string) ($localHost['shared_installer_path'] ?? '/opt/fs25/installer'),
@@ -463,6 +469,7 @@ function find_instance_with_host(string $instanceId): ?array
             si.*,
             mh.name AS host_name,
             mh.agent_url,
+            mh.access_host,
             mh.agent_token,
             mh.is_enabled
         FROM server_instances si
@@ -474,6 +481,65 @@ function find_instance_with_host(string $instanceId): ?array
     $server = $stmt->fetch();
 
     return $server ?: null;
+}
+
+function internal_host_name(string $host): bool
+{
+    return in_array(strtolower($host), ['agent', 'localhost', '127.0.0.1', '::1'], true);
+}
+
+function default_access_endpoint(): array
+{
+    $appUrl = rtrim((string) env_value('APP_URL', 'http://localhost:8080'), '/');
+    $appParts = parse_url($appUrl);
+
+    return [
+        'scheme' => is_array($appParts) && !empty($appParts['scheme']) ? (string) $appParts['scheme'] : 'http',
+        'host' => is_array($appParts) && !empty($appParts['host']) ? (string) $appParts['host'] : 'localhost',
+    ];
+}
+
+function resolved_access_endpoint(array $server): ?array
+{
+    $default = default_access_endpoint();
+    $rawAccessHost = trim((string) ($server['access_host'] ?? ''));
+
+    if ($rawAccessHost !== '') {
+        if (str_contains($rawAccessHost, '://')) {
+            $parts = parse_url($rawAccessHost);
+            if (is_array($parts) && !empty($parts['host'])) {
+                return [
+                    'scheme' => (string) ($parts['scheme'] ?? $default['scheme']),
+                    'host' => (string) $parts['host'],
+                ];
+            }
+        }
+
+        return [
+            'scheme' => $default['scheme'],
+            'host' => $rawAccessHost,
+        ];
+    }
+
+    $agentUrl = trim((string) ($server['agent_url'] ?? ''));
+    if ($agentUrl === '') {
+        return null;
+    }
+
+    $parts = parse_url($agentUrl);
+    if (!is_array($parts) || empty($parts['host'])) {
+        return null;
+    }
+
+    $host = (string) $parts['host'];
+    if (internal_host_name($host)) {
+        return $default;
+    }
+
+    return [
+        'scheme' => (string) ($parts['scheme'] ?? $default['scheme']),
+        'host' => $host,
+    ];
 }
 
 function instance_metrics_for_server(array $server): array
@@ -785,30 +851,16 @@ function stream_upload_chunk_for_host(array $host, string $filename, string $pat
 
 function instance_access_url(array $server, string $kind): ?string
 {
-    $agentUrl = (string) ($server['agent_url'] ?? '');
-    if ($agentUrl === '') {
+    $endpoint = resolved_access_endpoint($server);
+    if (!$endpoint) {
         return null;
     }
-
-    $parts = parse_url($agentUrl);
-    if (!is_array($parts) || empty($parts['host'])) {
-        return null;
-    }
-
-    $scheme = $parts['scheme'] ?? 'http';
-    $host = (string) $parts['host'];
-    $appUrl = rtrim((string) env_value('APP_URL', 'http://localhost:8080'), '/');
-    $appParts = parse_url($appUrl);
-    $fallbackHost = is_array($appParts) && !empty($appParts['host']) ? (string) $appParts['host'] : null;
-    $fallbackScheme = is_array($appParts) && !empty($appParts['scheme']) ? (string) $appParts['scheme'] : 'http';
-
-    if (in_array(strtolower($host), ['agent', 'localhost', '127.0.0.1', '::1'], true) && $fallbackHost) {
-        $host = $fallbackHost;
-        $scheme = $fallbackScheme;
-    }
+    $scheme = (string) $endpoint['scheme'];
+    $host = (string) $endpoint['host'];
 
     $port = match ($kind) {
         'web' => (int) ($server['web_port'] ?? 0),
+        'vnc' => (int) ($server['vnc_port'] ?? 0),
         'novnc' => (int) ($server['novnc_port'] ?? 0),
         'sftp' => (int) ($server['sftp_port'] ?? 0),
         default => 0,
@@ -827,6 +879,14 @@ function instance_access_url(array $server, string $kind): ?string
             rawurlencode($host),
             $port
         );
+    }
+
+    if ($kind === 'vnc') {
+        return sprintf('vnc://%s:%d', $host, $port);
+    }
+
+    if ($kind === 'sftp') {
+        return sprintf('sftp://%s:%d', $host, $port);
     }
 
     return sprintf('%s://%s:%d', $scheme, $host, $port);
