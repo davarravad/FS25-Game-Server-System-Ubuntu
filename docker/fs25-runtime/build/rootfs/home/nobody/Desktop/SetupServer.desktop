@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Setup Server
+Comment=Prepare this server instance without overwriting existing server settings.
+Exec=/usr/local/bin/setup_server_fs25.sh
+Icon=/home/nobody/.icons/FS25/fs25server.png
+Path=
+Terminal=true
+StartupNotify=false
