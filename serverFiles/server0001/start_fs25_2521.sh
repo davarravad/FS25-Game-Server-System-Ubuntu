@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
+. /usr/local/bin/runtime_log.sh
+
 export WINEDEBUG=-all
 export WINEPREFIX=/home/nobody/.fs25server
 
@@ -27,12 +29,18 @@ while true; do
   fi
 
   if [ -f "$EXE" ]; then
+    runtime_log_write "Console: Server seen offline for port ${FS_PORT}. Starting it back up..."
     echo "[$TAG] launching dedicatedServer.exe (${FS_PORT})"
+    runtime_log_write "Console: Server marked as starting..."
     wine "$EXE" || true
+    runtime_log_write "Console: Server process exited for port ${FS_PORT}."
+    runtime_log_write "Console: Server marked as offline..."
     echo "[$TAG] dedicatedServer.exe exited; restarting in 10s..."
+    runtime_log_write "Console: Restarting server for port ${FS_PORT} in 10s..."
     sleep 10
   else
     echo "[$TAG] missing EXE: $EXE"
+    runtime_log_write "Console: Missing dedicatedServer.exe for port ${FS_PORT} at ${EXE}"
     sleep 30
   fi
 done

@@ -333,13 +333,14 @@ EOF
         fi
     fi
 
-    if [ ! -f "$PORT_LAUNCHER_PATH" ]; then
-        if [ -f "$launcher_template" ]; then
-            cp -f "$launcher_template" "$PORT_LAUNCHER_PATH"
-        else
-            cat >"$PORT_LAUNCHER_PATH" <<'EOF'
+    if [ -f "$launcher_template" ]; then
+        cp -f "$launcher_template" "$PORT_LAUNCHER_PATH"
+    else
+        cat >"$PORT_LAUNCHER_PATH" <<'EOF'
 #!/bin/bash
 set -euo pipefail
+
+. /usr/local/bin/runtime_log.sh
 
 export WINEDEBUG=-all
 export WINEPREFIX=/home/nobody/.fs25server
@@ -365,21 +366,26 @@ while true; do
   fi
 
   if [ -f "$EXE" ]; then
+    runtime_log_write "Console: Server seen offline for port ${FS_PORT}. Starting it back up..."
     echo "[$TAG] launching dedicatedServer.exe (${FS_PORT})"
+    runtime_log_write "Console: Server marked as starting..."
     wine "$EXE" || true
+    runtime_log_write "Console: Server process exited for port ${FS_PORT}."
+    runtime_log_write "Console: Server marked as offline..."
     echo "[$TAG] dedicatedServer.exe exited; restarting in 10s..."
+    runtime_log_write "Console: Restarting server for port ${FS_PORT} in 10s..."
     sleep 10
   else
     echo "[$TAG] missing EXE: $EXE"
+    runtime_log_write "Console: Missing dedicatedServer.exe for port ${FS_PORT} at ${EXE}"
     sleep 30
   fi
 done
 EOF
-        fi
-
-        sed -i "s/FS_PORT=\"2521\"/FS_PORT=\"${CUSTOM_PORT_VALUE}\"/" "$PORT_LAUNCHER_PATH"
-        chmod +x "$PORT_LAUNCHER_PATH"
     fi
+
+    sed -i "s/FS_PORT=\"2521\"/FS_PORT=\"${CUSTOM_PORT_VALUE}\"/" "$PORT_LAUNCHER_PATH"
+    chmod +x "$PORT_LAUNCHER_PATH"
 
     echo -e "${GREEN}INFO: Custom server files are ready in ${PORT_SERVER_DIR}${NOCOLOR}"
 }
