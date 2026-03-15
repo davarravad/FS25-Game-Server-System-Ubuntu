@@ -126,17 +126,7 @@ rm /tmp/permissions_heredoc
 
 cat <<'EOF' > /tmp/envvars_heredoc
 
-# Webserver
-
-if [ -n "$WEB_USERNAME" ]; then
-    sed -i "s/<username>admin<\/username>/<username>$WEB_USERNAME<\/username>/" /home/nobody/.build/fs25/default_dedicatedServer.xml
-fi
-
-if [ -n "$WEB_PASSWORD" ]; then
-    sed -i "s/<passphrase>webpassword<\/passphrase>/<passphrase>$WEB_PASSWORD<\/passphrase>/" /home/nobody/.build/fs25/default_dedicatedServer.xml
-fi
-
-# Gameserver
+# Gameserver profile template
 
 if [ -n "$SERVER_NAME" ]; then
     sed -i "s/<game_name><\/game_name>/<game_name>$SERVER_NAME<\/game_name>/" /home/nobody/.build/fs25/default_dedicatedServerConfig.xml

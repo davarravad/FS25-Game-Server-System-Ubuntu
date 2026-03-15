@@ -64,7 +64,10 @@ has_shared_game_install() {
 }
 
 has_custom_server_files() {
-    require_custom_port
+    if [[ -z "$CUSTOM_PORT_VALUE" ]] || ! [[ "$CUSTOM_PORT_VALUE" =~ ^[0-9]+$ ]]; then
+        return 1
+    fi
+
     [ -f "${PORT_SERVER_DIR}/dedicatedServer.exe" ] &&
     [ -f "${PORT_SERVER_DIR}/dedicatedServer.xml" ] &&
     [ -f "${PORT_SERVER_DIR}/cert.pem" ] &&

@@ -1,5 +1,7 @@
 #!/bin/bash
 
+. /usr/local/bin/runtime_log.sh
+
 WEBSERVER_PORT="${WEB_PORT:-${SERVER_PORT:-7999}}"
 
 # Autostart
@@ -8,23 +10,37 @@ if [[ $AUTOSTART_SERVER = "true" ]] || [[ $AUTOSTART_SERVER = "web_only" ]]; the
 
   . /usr/local/bin/start_fs25.sh &
 
-  # Wait for the webserver to start
-  echo "Waiting for the webserver to start..."
-  sleep 30
+  runtime_log_write "Waiting for webserver to come up..."
 
-  # Safely get the webserver IP
-  while read line ; do
-    if nc -z $line $WEBSERVER_PORT; then
-      DETECTED_WEBSERVER_IP="$line"
+  attempt=1
+  max_attempts=12
+  DETECTED_WEBSERVER_IP=""
+  while [ "$attempt" -le "$max_attempts" ]; do
+    runtime_log_write "Checking if FS25 control panel is online - Attempt ${attempt}"
+    while read line ; do
+      if nc -z "$line" "$WEBSERVER_PORT"; then
+        DETECTED_WEBSERVER_IP="$line"
+      fi
+    done <<< "$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}')"
+
+    if [ -n "$DETECTED_WEBSERVER_IP" ]; then
+      break
     fi
-  done <<< "$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}')"
+
+    runtime_log_write "Attempt ${attempt} failed. Retrying in 10s..."
+    attempt=$((attempt + 1))
+    sleep 10
+  done
 
   # Check if an IP address was found
   if [ -n "$DETECTED_WEBSERVER_IP" ]; then
-    echo "Webserver IP: $DETECTED_WEBSERVER_IP";
+    runtime_log_write "[Webserver]: Now accessible using: http://${DETECTED_WEBSERVER_IP}:${WEBSERVER_PORT}"
+    runtime_log_write "[Webserver]: Username: ${WEB_USERNAME}"
+    runtime_log_write "[Webserver]: Password: ${WEB_PASSWORD}"
+    runtime_log_write "Console: Server marked as running..."
     export WEBSERVER_LISTENING_ON="$DETECTED_WEBSERVER_IP"
   else
-    echo "No IP address found for the webserver."
+    runtime_log_write "No IP address found for the webserver."
     exit 1
   fi
 
@@ -50,4 +66,5 @@ if [[ $AUTOSTART_SERVER = "true" ]] || [[ $AUTOSTART_SERVER = "web_only" ]]; the
 fi;
 
 # Keep the container running
+trap 'runtime_log_write "Received shutdown signal, stopping server..."; runtime_log_write "Server stopped gracefully."; runtime_log_write "Console: Server marked as offline..."; exit 0' TERM INT
 cat
