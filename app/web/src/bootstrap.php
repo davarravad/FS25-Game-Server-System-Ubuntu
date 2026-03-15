@@ -237,7 +237,12 @@ function generate_sftp_password(int $length = 20): string
 function canonical_fs25_image_name(?string $imageName): string
 {
     $normalized = trim((string) $imageName);
-    if ($normalized === '' || $normalized === 'toetje585/arch-fs25server:latest') {
+    if (
+        $normalized === '' ||
+        $normalized === 'toetje585/arch-fs25server:latest' ||
+        $normalized === 'fsg/fs25-runtime' ||
+        $normalized === 'fsg/fs25-runtime:latest'
+    ) {
         return 'fsg/fs25-runtime:local';
     }
 
