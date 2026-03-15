@@ -34,6 +34,25 @@ HOST_GAME_EXEC="${GAME_INSTALL_DIR}/FarmingSimulator2025.exe"
 HOST_GAME_VERSION="${GAME_INSTALL_DIR}/VERSION"
 HOST_WEB_CONFIG="${GAME_INSTALL_DIR}/dedicatedServer.xml"
 HOST_GAME_DIR_MARKER="${GAME_INSTALL_DIR}/x64"
+SERVER_TEMPLATE_DIR="/home/nobody/.build/serverFiles/server0001"
+SERVER_PORT_VALUE="${SERVER_PORT:-}"
+PORT_SERVER_DIR=""
+PORT_X64_DIR=""
+PORT_LAUNCHER_PATH=""
+
+if [[ -z "$SERVER_PORT_VALUE" ]]; then
+    echo -e "${RED}ERROR: SERVER_PORT is not set for this container.${NOCOLOR}"
+    exit 1
+fi
+
+if ! [[ "$SERVER_PORT_VALUE" =~ ^[0-9]+$ ]]; then
+    echo -e "${RED}ERROR: SERVER_PORT must be numeric, got '${SERVER_PORT_VALUE}'.${NOCOLOR}"
+    exit 1
+fi
+
+PORT_SERVER_DIR="${GAME_INSTALL_DIR}/${SERVER_PORT_VALUE}"
+PORT_X64_DIR="${PORT_SERVER_DIR}/x64"
+PORT_LAUNCHER_PATH="${GAME_INSTALL_DIR}/start_fs25_${SERVER_PORT_VALUE}.sh"
 
 ensure_runtime_directories() {
     mkdir -p "$INSTALL_DIR" "$GAME_ROOT_DIR" "$CONFIG_DIR" "$INSTANCE_PROFILE_DIR" "$DLC_DIR"
@@ -49,7 +68,10 @@ has_shared_game_install() {
 has_instance_setup_completed() {
     [ -f "$SETUP_MARKER" ] &&
     [ -f "$SERVER_CONFIG" ] &&
-    [ -f "$WEB_CONFIG" ]
+    [ -f "$WEB_CONFIG" ] &&
+    [ -f "${PORT_SERVER_DIR}/dedicatedServer.exe" ] &&
+    [ -f "${PORT_SERVER_DIR}/dedicatedServer.xml" ] &&
+    [ -x "$PORT_LAUNCHER_PATH" ]
 }
 
 resolve_installer_path() {
@@ -64,6 +86,129 @@ resolve_installer_path() {
     fi
 
     return 1
+}
+
+copy_tree_contents() {
+    local src_dir="$1"
+    local dest_dir="$2"
+
+    mkdir -p "$dest_dir"
+    cp -R "${src_dir}/." "$dest_dir/"
+}
+
+escape_sed_replacement() {
+    printf '%s' "$1" | sed 's/[\/&]/\\&/g'
+}
+
+prepare_port_server_files() {
+    local tls_port=""
+    local dedicated_server_template=""
+    local web_data_template=""
+    local run_bat_template=""
+    local launcher_template=""
+    local escaped_web_username=""
+    local escaped_web_password=""
+
+    tls_port="$((SERVER_PORT_VALUE + 10000))"
+    dedicated_server_template="${SERVER_TEMPLATE_DIR}/dedicatedServer.xml"
+    web_data_template="${SERVER_TEMPLATE_DIR}/web_data"
+    run_bat_template="${SERVER_TEMPLATE_DIR}/x64/run.bat"
+    launcher_template="${SERVER_TEMPLATE_DIR}/start_fs25_2521.sh"
+    escaped_web_username="$(escape_sed_replacement "${WEB_USERNAME:-admin}")"
+    escaped_web_password="$(escape_sed_replacement "${WEB_PASSWORD:-webpassword}")"
+
+    mkdir -p "$PORT_SERVER_DIR" "$PORT_X64_DIR"
+
+    for required_file in dedicatedServer.exe cert.pem pk.pem; do
+        if [ ! -f "${GAME_INSTALL_DIR}/${required_file}" ]; then
+            echo -e "${RED}ERROR: Missing ${GAME_INSTALL_DIR}/${required_file}. The shared game install is incomplete.${NOCOLOR}"
+            exit 1
+        fi
+        cp -f "${GAME_INSTALL_DIR}/${required_file}" "${PORT_SERVER_DIR}/${required_file}"
+    done
+
+    if [ -d "$web_data_template" ]; then
+        rm -rf "${PORT_SERVER_DIR}/web_data"
+        copy_tree_contents "$web_data_template" "${PORT_SERVER_DIR}/web_data"
+    elif [ -d "${GAME_INSTALL_DIR}/web_data" ]; then
+        rm -rf "${PORT_SERVER_DIR}/web_data"
+        copy_tree_contents "${GAME_INSTALL_DIR}/web_data" "${PORT_SERVER_DIR}/web_data"
+    else
+        echo -e "${YELLOW}WARNING: No web_data template was found. Continuing without copying web assets.${NOCOLOR}"
+    fi
+
+    if [ -f "$dedicated_server_template" ]; then
+        cp -f "$dedicated_server_template" "${PORT_SERVER_DIR}/dedicatedServer.xml"
+    elif [ -f "${GAME_INSTALL_DIR}/dedicatedServer.xml" ]; then
+        cp -f "${GAME_INSTALL_DIR}/dedicatedServer.xml" "${PORT_SERVER_DIR}/dedicatedServer.xml"
+    else
+        echo -e "${RED}ERROR: No dedicatedServer.xml template was found.${NOCOLOR}"
+        exit 1
+    fi
+
+    sed -i "s/port=\"2521\"/port=\"${SERVER_PORT_VALUE}\"/" "${PORT_SERVER_DIR}/dedicatedServer.xml"
+    sed -i "s/port=\"12521\"/port=\"${tls_port}\"/" "${PORT_SERVER_DIR}/dedicatedServer.xml"
+    sed -i "s/<username>admin<\\/username>/<username>${escaped_web_username}<\\/username>/" "${PORT_SERVER_DIR}/dedicatedServer.xml"
+    sed -i "s/<passphrase>[^<]*<\\/passphrase>/<passphrase>${escaped_web_password}<\\/passphrase>/" "${PORT_SERVER_DIR}/dedicatedServer.xml"
+    sed -i 's/exe="[^"]*"/exe="run.bat"/' "${PORT_SERVER_DIR}/dedicatedServer.xml"
+
+    if [ -f "$run_bat_template" ]; then
+        cp -f "$run_bat_template" "${PORT_X64_DIR}/run.bat"
+    else
+        cat >"${PORT_X64_DIR}/run.bat" <<'EOF'
+@ECHO OFF
+CD "C:\Program Files (x86)\Farming Simulator 2025"
+FarmingSimulator2025.exe -server
+EOF
+    fi
+
+    if [ -f "$launcher_template" ]; then
+        cp -f "$launcher_template" "$PORT_LAUNCHER_PATH"
+    else
+        cat >"$PORT_LAUNCHER_PATH" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+export WINEDEBUG=-all
+export WINEPREFIX=/home/nobody/.fs25server
+
+FS_PORT="2521"
+
+GAME_DIR="$WINEPREFIX/drive_c/Program Files (x86)/Farming Simulator 2025/${FS_PORT}"
+EXE="${GAME_DIR}/dedicatedServer.exe"
+TAG="start_fs25_${FS_PORT}"
+
+LOCK="/tmp/fs25_${FS_PORT}.lock"
+exec 9>"$LOCK"
+if ! flock -n 9; then
+  echo "[$TAG] launcher already running (lock $LOCK). Exiting."
+  exit 0
+fi
+
+while true; do
+  if pgrep -af "dedicatedServer\\.exe" | grep -F "$GAME_DIR" >/dev/null 2>&1; then
+    echo "[$TAG] server already running; sleeping 15s..."
+    sleep 15
+    continue
+  fi
+
+  if [ -f "$EXE" ]; then
+    echo "[$TAG] launching dedicatedServer.exe (${FS_PORT})"
+    wine "$EXE" || true
+    echo "[$TAG] dedicatedServer.exe exited; restarting in 10s..."
+    sleep 10
+  else
+    echo "[$TAG] missing EXE: $EXE"
+    sleep 30
+  fi
+done
+EOF
+    fi
+
+    sed -i "s/FS_PORT=\"2521\"/FS_PORT=\"${SERVER_PORT_VALUE}\"/" "$PORT_LAUNCHER_PATH"
+    chmod +x "$PORT_LAUNCHER_PATH"
+
+    echo -e "${GREEN}INFO: Prepared dedicated server files in ${PORT_SERVER_DIR}${NOCOLOR}"
 }
 
 scan_dlc_installers() {
@@ -201,6 +346,8 @@ else
 fi
 
 . /usr/local/bin/copy_server_config.sh
+
+prepare_port_server_files
 
 # Install DLC (only those not already installed)
 
