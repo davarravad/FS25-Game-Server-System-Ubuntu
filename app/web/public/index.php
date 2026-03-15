@@ -213,6 +213,14 @@ if ($route === 'upload_token') {
     $context = $context ? context_with_subpath($context, $subpath) : null;
 
     if (!$host || !(int) ($host['is_enabled'] ?? 0) || !$context) {
+        // Log target resolution failures so path issues can be traced from the web container logs.
+        error_log(sprintf(
+            '[upload_token] invalid target host_id=%d instance_id=%s target=%s subpath=%s',
+            $hostId,
+            $instanceId,
+            $target,
+            $subpath
+        ));
         header('Content-Type: application/json', true, 404);
         echo json_encode(['ok' => false, 'error' => 'Upload target not found']);
         exit;
@@ -220,6 +228,15 @@ if ($route === 'upload_token') {
 
     $access = file_access_status_for_context($context);
     if (!(bool) ($access['ok'] ?? false) || !(bool) (($access['status']['writable'] ?? false))) {
+        error_log(sprintf(
+            '[upload_token] target not writable path=%s host_id=%d instance_id=%s target=%s subpath=%s access=%s',
+            (string) $context['path'],
+            $hostId,
+            $instanceId,
+            $target,
+            $subpath,
+            json_encode($access)
+        ));
         header('Content-Type: application/json', true, 409);
         echo json_encode([
             'ok' => false,
@@ -238,14 +255,17 @@ if ($route === 'upload_token') {
     header('Content-Type: application/json');
     echo json_encode([
         'ok' => true,
+        // Preserve the validated subpath so the chunk endpoint writes to the same directory context.
         'upload_url' => '/?route=upload_chunk'
             . '&host_id=' . rawurlencode((string) ($host['id'] ?? 0))
             . '&target=' . rawurlencode($target)
             . ($server ? '&instance_id=' . rawurlencode($instanceId) : '')
+            . ($subpath !== '' ? '&subpath=' . rawurlencode($subpath) : '')
             . '&filename=' . rawurlencode($filename),
         'filename' => $filename,
         'target_label' => $context['label'],
         'path' => $context['path'],
+        'subpath' => $subpath,
     ]);
     exit;
 }
@@ -268,12 +288,56 @@ if ($route === 'upload_chunk' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $context = $context ? context_with_subpath($context, $subpath) : null;
 
     if (!$host || !(int) ($host['is_enabled'] ?? 0) || !$context) {
+        error_log(sprintf(
+            '[upload_chunk] invalid target host_id=%d instance_id=%s target=%s subpath=%s filename=%s offset=%d',
+            $hostId,
+            $instanceId,
+            $target,
+            $subpath,
+            $filename,
+            $offset
+        ));
         header('Content-Type: application/json', true, 404);
         echo json_encode(['ok' => false, 'error' => 'Upload target not found']);
         exit;
     }
 
+    $access = file_access_status_for_context($context);
+    if (!(bool) ($access['ok'] ?? false) || !(bool) (($access['status']['writable'] ?? false))) {
+        error_log(sprintf(
+            '[upload_chunk] target not writable path=%s host_id=%d instance_id=%s target=%s subpath=%s filename=%s offset=%d access=%s',
+            (string) $context['path'],
+            $hostId,
+            $instanceId,
+            $target,
+            $subpath,
+            $filename,
+            $offset,
+            json_encode($access)
+        ));
+        header('Content-Type: application/json', true, 409);
+        echo json_encode([
+            'ok' => false,
+            'error' => 'Upload target is not writable from the agent container',
+            'access' => $access,
+        ]);
+        exit;
+    }
+
     $result = stream_upload_chunk_for_host($host, $filename, (string) $context['path'], $offset, $totalSize, $isLastChunk);
+    if (!(bool) ($result['ok'] ?? false)) {
+        error_log(sprintf(
+            '[upload_chunk] upload failed path=%s host_id=%d instance_id=%s target=%s subpath=%s filename=%s offset=%d result=%s',
+            (string) $context['path'],
+            $hostId,
+            $instanceId,
+            $target,
+            $subpath,
+            $filename,
+            $offset,
+            json_encode($result)
+        ));
+    }
     header('Content-Type: application/json', true, ($result['ok'] ?? false) ? 200 : 502);
     echo json_encode($result);
     exit;
