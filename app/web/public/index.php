@@ -1145,6 +1145,18 @@ if ($route === 'server') {
             .grid.form { grid-template-columns: repeat(3, 1fr); }
             .muted { color: #a8b3c7; }
             .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+            .server-toolbar { display: grid; gap: 16px; grid-template-columns: 1.2fr 1fr; align-items: start; }
+            .toolbar-panel { display: grid; gap: 14px; }
+            .toolbar-group { display: grid; gap: 10px; }
+            .toolbar-label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #8ea0bb; }
+            .toolbar-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+            .toolbar-actions form { margin: 0; }
+            .toolbar-actions.compact button,
+            .toolbar-actions.compact .button-link { min-width: 132px; justify-content: center; text-align: center; }
+            .danger-card { border-color: #7f1d1d; background: linear-gradient(180deg, #221217, #171c25); }
+            .danger-title { color: #fecaca; margin-top: 0; }
+            .danger-copy { color: #fca5a5; }
+            .danger-row { display: grid; gap: 12px; grid-template-columns: minmax(220px, 320px) auto; align-items: end; }
             .button-link, button { display: inline-block; padding: 10px 14px; border-radius: 8px; border: 0; background: #2563eb; color: #fff; text-decoration: none; cursor: pointer; }
             .button-link.gray, button.gray { background: #475569; }
             button.danger { background: #b91c1c; }
@@ -1167,37 +1179,52 @@ if ($route === 'server') {
             .inline-status { padding: 12px; background: #1e293b; border: 1px solid #334155; border-radius: 10px; margin-bottom: 16px; display: none; }
             .secret-row { display: flex; gap: 10px; align-items: end; }
             .secret-row input { flex: 1; }
-            @media (max-width: 900px) { .grid.two, .grid.form { grid-template-columns: 1fr; } }
+            @media (max-width: 900px) { .grid.two, .grid.form, .server-toolbar, .danger-row { grid-template-columns: 1fr; } }
         </style>
     </head>
     <body>
     <div class="page">
         <?php if ($flash): ?><div class="flash"><?= h($flash) ?></div><?php endif; ?>
         <div class="inline-status" id="server-inline-status"></div>
-        <div class="actions" style="margin-bottom:16px;">
-            <a class="button-link gray" href="/?route=game_servers">Back to Game Servers</a>
-            <?php if ($novncUrl): ?><a class="button-link" href="/?route=console&amp;instance_id=<?= h($server['instance_id']) ?>">VNC Viewer</a><?php endif; ?>
-            <?php if ($webUrl): ?><a class="button-link" href="<?= h($webUrl) ?>" target="_blank" rel="noreferrer">Game Webpage</a><?php endif; ?>
-            <?php if ($vncUrl): ?><a class="button-link" href="<?= h($vncUrl) ?>">Direct VNC</a><?php endif; ?>
-            <a class="button-link" href="/?route=logs&amp;instance_id=<?= h($server['instance_id']) ?>">Logs</a>
-            <?php foreach (['start', 'stop', 'restart', 'backend_reboot'] as $act): ?>
-                <form method="post" action="/?route=server_command" style="display:inline;" class="server-action-form">
-                    <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
-                    <input type="hidden" name="action" value="<?= h($act) ?>">
-                    <button type="submit"><?= h($act === 'backend_reboot' ? 'backend reboot' : $act) ?></button>
-                </form>
-            <?php endforeach; ?>
-            <form method="post" action="/?route=server_delete" style="display:inline;" class="server-delete-form">
-                <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
-                <input type="text" name="delete_code" placeholder="Type <?= h($server['instance_id']) ?>" autocomplete="off" spellcheck="false" style="width:220px;">
-                <button class="danger" type="submit">Delete Server</button>
-            </form>
+        <div class="card">
+            <div class="server-toolbar">
+                <div class="toolbar-panel">
+                    <div>
+                        <h1 style="margin:0;"><?= h($server['server_name']) ?></h1>
+                        <div class="muted" style="margin-top:6px;"><?= h($server['instance_id']) ?> on <?= h($server['host_name'] ?? 'managed host') ?></div>
+                    </div>
+                    <div class="toolbar-group">
+                        <div class="toolbar-label">Server Controls</div>
+                        <div class="toolbar-actions compact">
+                            <?php foreach (['start', 'stop', 'restart', 'backend_reboot'] as $act): ?>
+                                <form method="post" action="/?route=server_command" class="server-action-form">
+                                    <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
+                                    <input type="hidden" name="action" value="<?= h($act) ?>">
+                                    <button type="submit"><?= h($act === 'backend_reboot' ? 'backend reboot' : $act) ?></button>
+                                </form>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+                </div>
+                <div class="toolbar-panel">
+                    <div class="toolbar-group">
+                        <div class="toolbar-label">Navigation</div>
+                        <div class="toolbar-actions">
+                            <a class="button-link gray" href="/?route=game_servers">Back to Game Servers</a>
+                            <a class="button-link" href="/?route=logs&amp;instance_id=<?= h($server['instance_id']) ?>">Logs</a>
+                            <?php if ($novncUrl): ?><a class="button-link" href="/?route=console&amp;instance_id=<?= h($server['instance_id']) ?>">VNC Viewer</a><?php endif; ?>
+                            <?php if ($webUrl): ?><a class="button-link" href="<?= h($webUrl) ?>" target="_blank" rel="noreferrer">Game Webpage</a><?php endif; ?>
+                            <?php if ($vncUrl): ?><a class="button-link" href="<?= h($vncUrl) ?>">Direct VNC</a><?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <div class="grid two">
             <div class="card">
-                <h1 style="margin-top:0;"><?= h($server['server_name']) ?></h1>
-                <div class="muted"><?= h($server['instance_id']) ?> on <?= h($server['host_name'] ?? 'managed host') ?></div>
+                <h2 style="margin-top:0;">Panel Details</h2>
+                <div class="muted">Update the panel-managed settings and runtime sync values for this server.</div>
                 <?php $serverImageOptions = fs25_image_options((string) ($server['image_name'] ?? '')); ?>
                 <form method="post" action="/?route=server_update" class="grid form" style="margin-top:18px;">
                     <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
@@ -1287,6 +1314,22 @@ if ($route === 'server') {
                     <pre class="log-view" id="server-log-view"><?= h($logOutput) ?></pre>
                 </div>
             </div>
+        </div>
+        <div class="card danger-card">
+            <h2 class="danger-title">Danger Zone</h2>
+            <div class="danger-copy">Deleting a server removes the panel record and the instance files on the managed host. Type the exact instance ID to confirm.</div>
+            <form method="post" action="/?route=server_delete" class="server-delete-form" style="margin-top:16px;">
+                <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
+                <div class="danger-row">
+                    <div>
+                        <label>Confirmation Code</label>
+                        <input type="text" name="delete_code" placeholder="Type <?= h($server['instance_id']) ?>" autocomplete="off" spellcheck="false">
+                    </div>
+                    <div>
+                        <button class="danger" type="submit">Delete Server</button>
+                    </div>
+                </div>
+            </form>
         </div>
     </div>
     <script>
@@ -1693,7 +1736,7 @@ if (!current_user() && $route !== 'login') {
 $flash = flash();
 $logs = $_SESSION['logs'] ?? null;
 unset($_SESSION['logs']);
-$pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers', 'create_server'], true)
+$pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers', 'create_server', 'docs'], true)
     ? $route
     : 'game_servers';
 
@@ -1848,6 +1891,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                     <a class="nav-link <?= $pageRoute === 'file_management' ? 'active' : '' ?>" href="/?route=file_management">File Management</a>
                     <a class="nav-link <?= $pageRoute === 'game_servers' ? 'active' : '' ?>" href="/?route=game_servers">Game Servers</a>
                     <a class="nav-link <?= $pageRoute === 'create_server' ? 'active' : '' ?>" href="/?route=create_server">Create Server</a>
+                    <a class="nav-link <?= $pageRoute === 'docs' ? 'active' : '' ?>" href="/?route=docs">Docs</a>
                     <a class="nav-link" href="/?route=logout">Logout</a>
                 </nav>
             </div>
@@ -1916,6 +1960,11 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                 <h1>Create Server</h1>
                 <p>Build a new FS25 server instance on a managed host. Choose a prepared host, set unique ports, and provision a new server from one form.</p>
             </section>
+        <?php elseif ($pageRoute === 'docs'): ?>
+            <section class="hero">
+                <h1>Documentation</h1>
+                <p>This page is the full operator guide for the panel. It covers setup, shared storage, creating servers, using the VNC desktop, installing the game, preparing server files, lifecycle actions, logs, remote access, and the built-in node API.</p>
+            </section>
         <?php else: ?>
             <section class="hero">
                 <h1>Game Servers</h1>
@@ -1934,7 +1983,13 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                     <div><label>Host Name</label><input name="name" value="<?= h((string) $localHost['name']) ?>" required></div>
                     <div><label>Agent API URL</label><input name="agent_url" value="<?= h((string) $localHost['agent_url']) ?>" required></div>
                     <div><label>Access Host/IP</label><input name="access_host" value="<?= h((string) ($localHost['access_host'] ?? '')) ?>" placeholder="15.204.86.248"></div>
-                    <div><label>Agent Token</label><input name="agent_token" type="password" value="<?= h((string) $localHost['agent_token']) ?>" required></div>
+                    <div>
+                        <label>Agent Token</label>
+                        <div class="secret-row">
+                            <input id="managed-host-agent-token" name="agent_token" type="password" value="<?= h((string) $localHost['agent_token']) ?>" required>
+                            <button class="gray" type="button" id="copy-agent-token">Copy</button>
+                        </div>
+                    </div>
                     <div><label>Shared Game Path</label><input name="shared_game_path" value="<?= h((string) ($localHost['shared_game_path'] ?? '/opt/fs25/game')) ?>" required></div>
                     <div><label>Shared DLC Path</label><input name="shared_dlc_path" value="<?= h((string) ($localHost['shared_dlc_path'] ?? '/opt/fs25/dlc')) ?>" required></div>
                     <div><label>Shared Installer Path</label><input name="shared_installer_path" value="<?= h((string) ($localHost['shared_installer_path'] ?? '/opt/fs25/installer')) ?>" required></div>
@@ -1997,6 +2052,126 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                         <?php endif; ?>
                         </tbody>
                     </table>
+        </div>
+        <?php endif; ?>
+
+        <?php if ($pageRoute === 'docs'): ?>
+        <div class="page-grid two">
+            <div class="card">
+                <h2>System Overview</h2>
+                <div class="stack muted">
+                    <div>This website is the control plane for an FS25 node. The panel stores metadata, the agent writes runtime files and runs Docker commands, and each instance mounts shared game, DLC, and installer folders from the host.</div>
+                    <div>Multiple FS25 servers can reuse one shared base install while keeping separate ports, configs, saves, logs, mods, SFTP access, and per-server `dedicatedServer.xml` files.</div>
+                    <div>The normal flow is: configure Managed Hosts, upload installers in File Management, create a server, open VNC, run Install Game, run Setup Server, then use the Game Servers page for day-to-day operations.</div>
+                </div>
+            </div>
+            <div class="card">
+                <h2>Quick Start</h2>
+                <div class="stack muted">
+                    <div>1. Confirm the default local host record and Access Host/IP in Managed Hosts.</div>
+                    <div>2. Upload the base installer and DLC installers into shared storage using File Management.</div>
+                    <div>3. Create a server with unique Game, Web, VNC, noVNC, and SFTP ports.</div>
+                    <div>4. Open VNC for that server and click Install Game, then Setup Server.</div>
+                    <div>5. Start the server from the panel and watch the lifecycle log until the backend and web admin panel are online.</div>
+                </div>
+            </div>
+        </div>
+        <div class="card">
+            <h2>Managed Hosts</h2>
+            <div class="stack muted">
+                <div><strong>Host Name</strong>: Label used by the panel for the node host record.</div>
+                <div><strong>Agent API URL</strong>: URL used by the panel to talk to the node agent. For a local install this is usually `http://agent:8081`.</div>
+                <div><strong>Access Host/IP</strong>: Address used to generate links for external web, VNC, noVNC, and SFTP access. Set this to the LAN IP, public IP, or hostname users should actually use.</div>
+                <div><strong>Agent Token</strong>: Shared secret used by the panel when making authenticated agent calls.</div>
+                <div><strong>Shared Game Path</strong>: Host path containing the shared FS25 base install.</div>
+                <div><strong>Shared DLC Path</strong>: Host path used for DLC installers and related shared DLC assets.</div>
+                <div><strong>Shared Installer Path</strong>: Host path used for the base installer files uploaded through the panel.</div>
+                <div><strong>Prepare Storage</strong>: Creates the shared host folders with the expected permissions.</div>
+            </div>
+        </div>
+        <div class="card">
+            <h2>File Management</h2>
+            <div class="stack muted">
+                <div>File Management is for host-wide storage under `/opt/fs25/*`, not just one server.</div>
+                <div>Use installer uploads for the base game installer and extracted archives.</div>
+                <div>Use DLC uploads for DLC installer `.exe` files that the runtime setup scripts can detect.</div>
+                <div>Use the file explorer to verify the upload path, list files, and unzip archives directly on the host.</div>
+                <div>Use the admin SFTP credentials shown in the panel if you need direct file-system access to `/opt`, shared storage, instances, or backups.</div>
+            </div>
+        </div>
+        <div class="card">
+            <h2>Create Server</h2>
+            <div class="stack muted">
+                <div><strong>Instance ID</strong>: Internal identifier used for folders, container names, logs, and delete confirmation. It must stay unique.</div>
+                <div><strong>Game Port</strong>: External game traffic port.</div>
+                <div><strong>Admin Web Port</strong>: Port used by the FS25 web admin panel and the custom per-server folder name inside the shared install.</div>
+                <div><strong>TLS Port</strong>: Port written into the per-server `dedicatedServer.xml` TLS section.</div>
+                <div><strong>VNC Port</strong> and <strong>noVNC Port</strong>: Remote desktop access to the instance container.</div>
+                <div><strong>SFTP Port</strong>: Per-server SFTP sidecar port exposing the config directory.</div>
+                <div><strong>Web Username</strong> and <strong>Web Password</strong>: Initial admin credentials written into the per-server `dedicatedServer.xml`.</div>
+                <div><strong>Auto Start Server</strong>: Controls whether the game backend should auto-launch when the runtime container starts.</div>
+            </div>
+        </div>
+        <div class="card">
+            <h2>VNC and Desktop Usage</h2>
+            <div class="stack muted">
+                <div>Open a server and use VNC Viewer or noVNC to reach the runtime desktop.</div>
+                <div><strong>Install Game</strong> checks whether the shared base game is already installed. If not, it looks in the shared installer path, runs the installer, verifies license files, and processes DLC installers.</div>
+                <div><strong>Setup Server</strong> prepares the per-server folder under the shared install using the server web port. It copies runtime files, writes `run.bat`, creates the launcher, and updates the per-server `dedicatedServer.xml`.</div>
+                <div>The desktop scripts are intended to keep their windows open so operator messages remain visible until acknowledged.</div>
+                <div>Use the VNC desktop when you need to enter the game key, observe install messages, or interact with the local FS25 web admin page from inside the container.</div>
+            </div>
+        </div>
+        <div class="card">
+            <h2>Game Servers Page</h2>
+            <div class="stack muted">
+                <div>The main Game Servers page shows server cards with live runtime health and direct links.</div>
+                <div>The server detail page contains the lifecycle controls, panel-managed settings, runtime summary, lifecycle log, and VNC password copy button.</div>
+                <div><strong>start</strong>: syncs panel settings to the instance and starts the containers.</div>
+                <div><strong>stop</strong>: stops the instance containers.</div>
+                <div><strong>restart</strong>: restarts the instance containers.</div>
+                <div><strong>backend reboot</strong>: kills `dedicatedServer.exe` inside the runtime container so the launcher/watchdog can start it again.</div>
+                <div><strong>Delete Server</strong>: removes the panel record and instance files after the exact instance ID is typed in the confirmation field.</div>
+            </div>
+        </div>
+        <div class="card">
+            <h2>Logs and Troubleshooting</h2>
+            <div class="stack muted">
+                <div>The panel uses a structured lifecycle log instead of raw Docker logs. It records start, stop, install, launcher restarts, web panel checks, and related runtime steps.</div>
+                <div>If the server web admin page works inside VNC but not from another machine, check the generated instance `compose.yml`, Access Host/IP, and any firewall or router rules.</div>
+                <div>If you recreate a deleted server using the same instance ID, check for leftover instance folders, shared per-port folders, or stale Docker containers using the same names.</div>
+                <div>If credentials or ports do not appear in the per-server `dedicatedServer.xml`, save the server in the panel again and restart or backend reboot it so the runtime reads the updated file.</div>
+            </div>
+        </div>
+        <div class="card">
+            <h2>Node API</h2>
+            <div class="stack muted">
+                <div>The node API is for an external main website or automation client that needs read-only access to node, host, and server data.</div>
+                <div>Authentication supports `Authorization: Bearer YOUR_NODE_API_TOKEN` or `X-Node-Token: YOUR_NODE_API_TOKEN`.</div>
+                <div>The API is served by the panel and currently exposes three endpoints.</div>
+            </div>
+            <pre>GET /?route=api_node_status
+Purpose: Returns local node summary, local managed host info, and system counts.
+
+GET /?route=api_node_hosts
+Purpose: Returns managed host records and agent health information.
+
+GET /?route=api_node_servers
+Purpose: Returns server records, ports, URLs, host data, and basic status fields.</pre>
+            <div class="stack muted">
+                <div>`api_node_status` is useful for health dashboards and installation checks.</div>
+                <div>`api_node_hosts` is useful for host inventory and connectivity checks.</div>
+                <div>`api_node_servers` is useful for external server lists, dashboards, portals, and operational readouts.</div>
+                <div>The current API is informational. It does not expose server mutation commands such as start, stop, restart, or delete.</div>
+            </div>
+        </div>
+        <div class="card">
+            <h2>API Examples</h2>
+            <pre>curl -H "Authorization: Bearer YOUR_NODE_API_TOKEN" "<?= h($node['api_status_url']) ?>"
+
+curl -H "Authorization: Bearer YOUR_NODE_API_TOKEN" "<?= h($node['api_hosts_url']) ?>"
+
+curl -H "Authorization: Bearer YOUR_NODE_API_TOKEN" "<?= h($node['api_servers_url']) ?>"</pre>
         </div>
         <?php endif; ?>
 
@@ -2280,11 +2455,52 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
         <footer class="footer">
             <div class="footer-inner">
                 <div>FSG FS25 Node</div>
-                <div>Use Managed Hosts to maintain the default local host, File Management to handle installers, Create Server for provisioning, and Game Servers for day-to-day operations.</div>
+                <div>Use Managed Hosts to maintain the default local host, File Management to handle installers, Create Server for provisioning, Docs for operator guidance, and Game Servers for day-to-day operations.</div>
             </div>
         </footer>
-        <?php if ($pageRoute === 'game_servers'): ?>
+        <?php if ($pageRoute === 'game_servers' || $pageRoute === 'managed_hosts'): ?>
         <script>
+            function fallbackCopyText(value) {
+                const input = document.createElement('textarea');
+                input.value = value;
+                input.setAttribute('readonly', '');
+                input.style.position = 'absolute';
+                input.style.left = '-9999px';
+                document.body.appendChild(input);
+                input.select();
+                let copied = false;
+                try {
+                    copied = document.execCommand('copy');
+                } catch (error) {
+                }
+                document.body.removeChild(input);
+                return copied;
+            }
+
+            <?php if ($pageRoute === 'managed_hosts'): ?>
+            const agentTokenField = document.getElementById('managed-host-agent-token');
+            const copyAgentToken = document.getElementById('copy-agent-token');
+            if (copyAgentToken && agentTokenField) {
+                copyAgentToken.addEventListener('click', async () => {
+                    try {
+                        if (navigator.clipboard && window.isSecureContext) {
+                            await navigator.clipboard.writeText(agentTokenField.value);
+                            window.alert('Agent token copied.');
+                            return;
+                        }
+                        if (fallbackCopyText(agentTokenField.value)) {
+                            window.alert('Agent token copied.');
+                            return;
+                        }
+                        window.alert('Unable to copy agent token.');
+                    } catch (error) {
+                        window.alert('Unable to copy agent token.');
+                    }
+                });
+            }
+            <?php endif; ?>
+
+            <?php if ($pageRoute === 'game_servers'): ?>
             const liveServerCards = Array.from(document.querySelectorAll('[data-live-instance-id]'));
 
             function liveFormatBytes(bytes) {
@@ -2374,6 +2590,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
 
             refreshGameServerCards();
             window.setInterval(refreshGameServerCards, 5000);
+            <?php endif; ?>
         </script>
         <?php endif; ?>
     <?php endif; ?>

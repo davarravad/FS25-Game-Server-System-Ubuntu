@@ -924,7 +924,14 @@ def create_instance():
     write_instance_state(instance_id, False)
     append_runtime_log(instance_id, "Console: Server created.")
     firewall = sync_public_port_access(instance_id, next_values=values)
-    port_server_sync = sync_port_server_xml(values)
+    try:
+        port_server_sync = sync_port_server_xml(values)
+    except Exception as exc:
+        port_server_sync = {
+            "ok": False,
+            "status": "error",
+            "message": f"Custom server file sync failed: {exc}",
+        }
 
     return jsonify({"ok": True, "instance_dir": str(instance_dir), "firewall": firewall, "port_server_sync": port_server_sync})
 
@@ -945,7 +952,14 @@ def sync_instance():
     values = build_instance_values(instance_id, payload, existing_env)
     render_instance_files(instance_dir, values, write_env=True)
     firewall = sync_public_port_access(instance_id, next_values=values, current_values=existing_env)
-    port_server_sync = sync_port_server_xml(values, existing_env)
+    try:
+        port_server_sync = sync_port_server_xml(values, existing_env)
+    except Exception as exc:
+        port_server_sync = {
+            "ok": False,
+            "status": "error",
+            "message": f"Custom server file sync failed: {exc}",
+        }
 
     return jsonify({"ok": True, "instance_dir": str(instance_dir), "firewall": firewall, "port_server_sync": port_server_sync})
 
