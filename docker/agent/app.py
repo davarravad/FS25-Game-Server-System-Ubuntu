@@ -479,7 +479,14 @@ def instance_action():
         elif action in {"stop", "down"}:
             write_instance_state(instance_id, False)
 
-    return jsonify({"ok": True, "result": result})
+    response = {
+        "ok": result["code"] == 0,
+        "result": result,
+    }
+    if result["code"] != 0:
+        response["error"] = (result.get("stderr") or result.get("stdout") or "Command failed").strip()
+
+    return jsonify(response), (200 if result["code"] == 0 else 500)
 
 
 @app.post("/instance/delete")
