@@ -763,10 +763,18 @@ if ($route === 'server_delete' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     require_login();
 
     $instanceId = (string) ($_POST['instance_id'] ?? '');
+    $deleteCode = trim((string) ($_POST['delete_code'] ?? ''));
     $server = find_instance_with_host($instanceId);
 
     if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
         json_response(['ok' => false, 'error' => 'Managed host for this server is missing or disabled.'], 404);
+    }
+
+    if ($deleteCode !== $instanceId) {
+        json_response([
+            'ok' => false,
+            'error' => 'Delete confirmation code mismatch. Type the exact instance ID to confirm deletion.',
+        ], 422);
     }
 
     $agent = agent_post_for_host($server, '/instance/delete', [
@@ -1172,15 +1180,16 @@ if ($route === 'server') {
             <?php if ($webUrl): ?><a class="button-link" href="<?= h($webUrl) ?>" target="_blank" rel="noreferrer">Game Webpage</a><?php endif; ?>
             <?php if ($vncUrl): ?><a class="button-link" href="<?= h($vncUrl) ?>">Direct VNC</a><?php endif; ?>
             <a class="button-link" href="/?route=logs&amp;instance_id=<?= h($server['instance_id']) ?>">Logs</a>
-            <?php foreach (['start', 'stop', 'restart', 'backend_reboot', 'pull', 'rebuild'] as $act): ?>
+            <?php foreach (['start', 'stop', 'restart', 'backend_reboot'] as $act): ?>
                 <form method="post" action="/?route=server_command" style="display:inline;" class="server-action-form">
                     <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
                     <input type="hidden" name="action" value="<?= h($act) ?>">
-                    <button class="<?= in_array($act, ['pull', 'rebuild'], true) ? 'gray' : '' ?>" type="submit"><?= h($act === 'backend_reboot' ? 'backend reboot' : $act) ?></button>
+                    <button type="submit"><?= h($act === 'backend_reboot' ? 'backend reboot' : $act) ?></button>
                 </form>
             <?php endforeach; ?>
             <form method="post" action="/?route=server_delete" style="display:inline;" class="server-delete-form">
                 <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
+                <input type="text" name="delete_code" placeholder="Type <?= h($server['instance_id']) ?>" autocomplete="off" spellcheck="false" style="width:220px;">
                 <button class="danger" type="submit">Delete Server</button>
             </form>
         </div>
@@ -1485,7 +1494,9 @@ if ($route === 'server') {
         if (deleteForm) {
             deleteForm.addEventListener('submit', async (event) => {
                 event.preventDefault();
-                if (!window.confirm(`Delete server ${instanceId}? This removes the panel record and the instance files on the managed host.`)) {
+                const deleteCodeField = deleteForm.querySelector('input[name="delete_code"]');
+                if (!deleteCodeField || deleteCodeField.value.trim() !== instanceId) {
+                    setInlineStatus(`Type ${instanceId} exactly to delete this server.`, true);
                     return;
                 }
 
