@@ -578,6 +578,7 @@ if ($route === 'create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         'server_players' => (int)($_POST['server_players'] ?? (int) $defaults['server_players']),
         'server_port' => (int)($_POST['server_port'] ?? (int) $defaults['server_port']),
         'web_port' => (int)($_POST['web_port'] ?? (int) $defaults['web_port']),
+        'tls_port' => (int)($_POST['tls_port'] ?? (int) $defaults['tls_port']),
         'vnc_port' => (int)($_POST['vnc_port'] ?? (int) $defaults['vnc_port']),
         'novnc_port' => (int)($_POST['novnc_port'] ?? (int) $defaults['novnc_port']),
         'sftp_port' => (int)($_POST['sftp_port'] ?? (int) $defaults['sftp_port']),
@@ -618,8 +619,8 @@ if ($route === 'create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $stmt = db()->prepare('
         INSERT INTO server_instances
-        (host_id, instance_id, server_name, image_name, server_port, web_port, vnc_port, novnc_port, sftp_port, sftp_username, sftp_password, web_username, web_password, server_players, server_region, server_map, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (host_id, instance_id, server_name, image_name, server_port, web_port, tls_port, vnc_port, novnc_port, sftp_port, sftp_username, sftp_password, web_username, web_password, server_players, server_region, server_map, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ');
 
     $stmt->execute([
@@ -629,6 +630,7 @@ if ($route === 'create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $payload['image_name'],
         $payload['server_port'],
         $payload['web_port'],
+        $payload['tls_port'],
         $payload['vnc_port'],
         $payload['novnc_port'],
         $payload['sftp_port'],
@@ -642,10 +644,12 @@ if ($route === 'create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         'created',
     ]);
 
-    $firewallMessage = agent_firewall_summary($agent);
-    flash($firewallMessage
-        ? 'Server created. ' . $firewallMessage
-        : 'Server created.');
+    $messages = array_filter([
+        'Server created.',
+        agent_firewall_summary($agent),
+        agent_port_server_summary($agent),
+    ]);
+    flash(implode(' ', $messages));
     redirect_route('game_servers');
 }
 
@@ -991,6 +995,7 @@ if ($route === 'server_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         'image_name' => canonical_fs25_image_name((string) ($_POST['image_name'] ?? '')),
         'server_port' => (int) ($_POST['server_port'] ?? 0),
         'web_port' => (int) ($_POST['web_port'] ?? 0),
+        'tls_port' => (int) ($_POST['tls_port'] ?? 0),
         'vnc_port' => (int) ($_POST['vnc_port'] ?? 0),
         'novnc_port' => (int) ($_POST['novnc_port'] ?? 0),
         'sftp_port' => (int) ($_POST['sftp_port'] ?? 0),
@@ -1024,7 +1029,7 @@ if ($route === 'server_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $stmt = db()->prepare('
         UPDATE server_instances
-        SET server_name = ?, image_name = ?, server_port = ?, web_port = ?, vnc_port = ?, novnc_port = ?, sftp_port = ?, sftp_username = ?, sftp_password = ?, web_username = ?, web_password = ?, server_players = ?, server_region = ?, server_map = ?
+        SET server_name = ?, image_name = ?, server_port = ?, web_port = ?, tls_port = ?, vnc_port = ?, novnc_port = ?, sftp_port = ?, sftp_username = ?, sftp_password = ?, web_username = ?, web_password = ?, server_players = ?, server_region = ?, server_map = ?
         WHERE instance_id = ?
     ');
     $stmt->execute([
@@ -1032,6 +1037,7 @@ if ($route === 'server_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $payload['image_name'],
         $payload['server_port'],
         $payload['web_port'],
+        $payload['tls_port'],
         $payload['vnc_port'],
         $payload['novnc_port'],
         $payload['sftp_port'],
@@ -1055,10 +1061,12 @@ if ($route === 'server_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    $firewallMessage = isset($sync) ? agent_firewall_summary($sync) : null;
-    flash($firewallMessage
-        ? 'Server details updated and runtime config synced. ' . $firewallMessage
-        : 'Server details updated and runtime config synced.');
+    $messages = array_filter([
+        'Server details updated and runtime config synced.',
+        isset($sync) ? agent_firewall_summary($sync) : null,
+        isset($sync) ? agent_port_server_summary($sync) : null,
+    ]);
+    flash(implode(' ', $messages));
     header('Location: /?route=server&instance_id=' . rawurlencode($instanceId));
     exit;
 }
@@ -1164,11 +1172,11 @@ if ($route === 'server') {
             <?php if ($webUrl): ?><a class="button-link" href="<?= h($webUrl) ?>" target="_blank" rel="noreferrer">Game Webpage</a><?php endif; ?>
             <?php if ($vncUrl): ?><a class="button-link" href="<?= h($vncUrl) ?>">Direct VNC</a><?php endif; ?>
             <a class="button-link" href="/?route=logs&amp;instance_id=<?= h($server['instance_id']) ?>">Logs</a>
-            <?php foreach (['start', 'stop', 'restart', 'pull', 'rebuild'] as $act): ?>
+            <?php foreach (['start', 'stop', 'restart', 'backend_reboot', 'pull', 'rebuild'] as $act): ?>
                 <form method="post" action="/?route=server_command" style="display:inline;" class="server-action-form">
                     <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
                     <input type="hidden" name="action" value="<?= h($act) ?>">
-                    <button class="<?= in_array($act, ['pull', 'rebuild'], true) ? 'gray' : '' ?>" type="submit"><?= h($act) ?></button>
+                    <button class="<?= in_array($act, ['pull', 'rebuild'], true) ? 'gray' : '' ?>" type="submit"><?= h($act === 'backend_reboot' ? 'backend reboot' : $act) ?></button>
                 </form>
             <?php endforeach; ?>
             <form method="post" action="/?route=server_delete" style="display:inline;" class="server-delete-form">
@@ -1196,6 +1204,7 @@ if ($route === 'server') {
                     <div><label>Players</label><input name="server_players" type="number" value="<?= h((string) $server['server_players']) ?>"></div>
                     <div><label>Game Port</label><input name="server_port" type="number" value="<?= h((string) $server['server_port']) ?>"></div>
                     <div><label>Admin Web Port</label><input name="web_port" type="number" value="<?= h((string) $server['web_port']) ?>"></div>
+                    <div><label>TLS Port</label><input name="tls_port" type="number" value="<?= h((string) ($server['tls_port'] ?? ((int) ($server['web_port'] ?? 18000) + 10000))) ?>"></div>
                     <div><label>VNC Port</label><input name="vnc_port" type="number" value="<?= h((string) $server['vnc_port']) ?>"></div>
                     <div><label>noVNC Port</label><input name="novnc_port" type="number" value="<?= h((string) $server['novnc_port']) ?>"></div>
                     <div><label>SFTP Port</label><input name="sftp_port" type="number" value="<?= h((string) $server['sftp_port']) ?>"></div>
@@ -2124,6 +2133,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
 
                 <div><label>Game Port</label><input name="server_port" type="number" value="<?= h((string) $createDefaults['server_port']) ?>"></div>
                 <div><label>Admin Web Port</label><input name="web_port" type="number" value="<?= h((string) $createDefaults['web_port']) ?>"></div>
+                <div><label>TLS Port</label><input name="tls_port" type="number" value="<?= h((string) $createDefaults['tls_port']) ?>"></div>
                 <div><label>VNC Port</label><input name="vnc_port" type="number" value="<?= h((string) $createDefaults['vnc_port']) ?>"></div>
                 <div><label>noVNC Port</label><input name="novnc_port" type="number" value="<?= h((string) $createDefaults['novnc_port']) ?>"></div>
 

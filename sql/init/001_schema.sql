@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS server_instances (
     image_name VARCHAR(255) NOT NULL,
     server_port INT NOT NULL,
     web_port INT NOT NULL,
+    tls_port INT NOT NULL DEFAULT 28000,
     vnc_port INT NOT NULL,
     novnc_port INT NOT NULL,
     sftp_port INT NOT NULL,

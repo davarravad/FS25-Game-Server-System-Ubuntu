@@ -253,7 +253,7 @@ update_port_server_xml() {
     local escaped_web_username=""
     local escaped_web_password=""
 
-    tls_port="$((CUSTOM_PORT_VALUE + 10000))"
+    tls_port="${TLS_PORT:-$((CUSTOM_PORT_VALUE + 10000))}"
     escaped_web_username="$(escape_sed_replacement "$(xml_escape "${WEB_USERNAME:-admin}")")"
     escaped_web_password="$(escape_sed_replacement "$(xml_escape "${WEB_PASSWORD:-webpassword}")")"
 
@@ -275,7 +275,7 @@ prepare_port_server_files() {
     local escaped_web_username=""
     local escaped_web_password=""
 
-    tls_port="$((CUSTOM_PORT_VALUE + 10000))"
+    tls_port="${TLS_PORT:-$((CUSTOM_PORT_VALUE + 10000))}"
     dedicated_server_template="${SERVER_TEMPLATE_DIR}/dedicatedServer.xml"
     web_data_template="${SERVER_TEMPLATE_DIR}/web_data"
     run_bat_template="${SERVER_TEMPLATE_DIR}/x64/run.bat"
