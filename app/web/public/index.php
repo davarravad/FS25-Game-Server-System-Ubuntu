@@ -685,8 +685,25 @@ if ($route === 'logs') {
         'instance_id' => $instanceId,
         'action' => 'logs',
     ]);
+    $statusAgent = agent_post_for_host($server, '/instance/action', [
+        'instance_id' => $instanceId,
+        'action' => 'status',
+    ]);
+    $metricsResult = instance_metrics_for_server($server);
+    $metrics = ($metricsResult['metrics'] ?? []);
 
     $logOutput = $agent['result']['stdout'] ?? ($agent['result']['stderr'] ?? 'No logs returned');
+    $statusOutput = $statusAgent['result']['stdout'] ?? ($statusAgent['result']['stderr'] ?? 'No status output returned');
+    $runtimeStatus = ($metrics['running'] ?? false) ? 'running' : 'stopped';
+    $panelStatus = (string) ($server['status'] ?? 'unknown');
+    $statusSummary = [
+        'Panel status: ' . $panelStatus,
+        'Container runtime: ' . $runtimeStatus,
+        'Metrics query: ' . (($metricsResult['ok'] ?? false) ? 'ok' : 'failed'),
+    ];
+    if (!empty($statusAgent['result']['code']) || !($statusAgent['ok'] ?? false)) {
+        $statusSummary[] = 'Compose status command: failed';
+    }
     ?><!doctype html>
     <html lang="en">
     <head>
@@ -703,8 +720,15 @@ if ($route === 'logs') {
             .actions { display: flex; gap: 10px; flex-wrap: wrap; }
             .button-link { display: inline-block; padding: 10px 14px; border-radius: 8px; background: #475569; color: #fff; text-decoration: none; }
             .button-link.primary { background: #2563eb; }
-            .content { padding: 20px; }
-            pre { margin: 0; white-space: pre-wrap; word-break: break-word; background: #050814; border: 1px solid #243041; border-radius: 12px; padding: 16px; min-height: calc(100vh - 120px); overflow: auto; }
+            .content { padding: 20px; display: grid; gap: 16px; }
+            .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+            .card { background: #121826; border: 1px solid #243041; border-radius: 12px; padding: 16px; }
+            .stack { display: grid; gap: 8px; }
+            pre { margin: 0; white-space: pre-wrap; word-break: break-word; background: #050814; border: 1px solid #243041; border-radius: 12px; padding: 16px; overflow: auto; }
+            .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+            .status-tile { background: #0b1020; border: 1px solid #243041; border-radius: 10px; padding: 12px; }
+            .status-label { color: #a8b3c7; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+            .status-value { margin-top: 6px; font-size: 18px; font-weight: 700; }
         </style>
     </head>
     <body>
@@ -720,7 +744,41 @@ if ($route === 'logs') {
             </div>
         </div>
         <div class="content">
-            <pre><?= h($logOutput) ?></pre>
+            <div class="card">
+                <div class="status-grid">
+                    <div class="status-tile">
+                        <div class="status-label">Panel</div>
+                        <div class="status-value"><?= h($panelStatus) ?></div>
+                    </div>
+                    <div class="status-tile">
+                        <div class="status-label">Container</div>
+                        <div class="status-value"><?= h($runtimeStatus) ?></div>
+                    </div>
+                    <div class="status-tile">
+                        <div class="status-label">CPU</div>
+                        <div class="status-value"><?= h(number_format((float) ($metrics['cpu_percent'] ?? 0), 1)) ?>%</div>
+                    </div>
+                    <div class="status-tile">
+                        <div class="status-label">RAM</div>
+                        <div class="status-value"><?= h(number_format((float) ($metrics['memory_percent'] ?? 0), 1)) ?>%</div>
+                    </div>
+                </div>
+                <div class="stack muted" style="margin-top:12px;">
+                    <?php foreach ($statusSummary as $line): ?>
+                        <div><?= h($line) ?></div>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+            <div class="grid">
+                <div class="card">
+                    <div class="muted" style="margin-bottom:10px;">Docker compose status</div>
+                    <pre><?= h($statusOutput) ?></pre>
+                </div>
+                <div class="card">
+                    <div class="muted" style="margin-bottom:10px;">Container logs</div>
+                    <pre><?= h($logOutput) ?></pre>
+                </div>
+            </div>
         </div>
     </div>
     </body>

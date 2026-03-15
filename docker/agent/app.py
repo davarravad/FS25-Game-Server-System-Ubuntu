@@ -439,6 +439,7 @@ def instance_action():
         "rebuild": ["docker", "compose", "-f", str(compose_file), "up", "-d", "--force-recreate"],
         "down": ["docker", "compose", "-f", str(compose_file), "down"],
         "logs": ["docker", "compose", "-f", str(compose_file), "logs", "--tail", "200"],
+        "status": ["docker", "compose", "-f", str(compose_file), "ps", "-a"],
     }
 
     if action not in action_map:
