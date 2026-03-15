@@ -80,6 +80,13 @@ def compose_cmd(*args):
     return [*compose_command(), *args]
 
 
+def canonical_image_name(image_name: str) -> str:
+    normalized = (image_name or "").strip()
+    if normalized in {"", "toetje585/arch-fs25server:latest", "fsg/fs25-runtime", "fsg/fs25-runtime:latest"}:
+        return FS25_RUNTIME_IMAGE
+    return normalized
+
+
 def image_exists(image_name: str) -> bool:
     result = run_command(["docker", "image", "inspect", image_name])
     return result["code"] == 0
@@ -97,6 +104,7 @@ def runtime_target_arch() -> str:
 
 
 def ensure_runtime_image(image_name: str, force_rebuild: bool = False) -> dict:
+    image_name = canonical_image_name(image_name)
     if image_name != FS25_RUNTIME_IMAGE:
         return {"ok": True, "skipped": True}
 
@@ -127,7 +135,7 @@ def image_name_from_compose(compose_file: Path) -> str:
     for raw_line in compose_file.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if line.startswith("image:"):
-            return line.split(":", 1)[1].strip().strip('"').strip("'")
+            return canonical_image_name(line.split(":", 1)[1].strip().strip('"').strip("'"))
 
     return FS25_RUNTIME_IMAGE
 
@@ -217,7 +225,7 @@ def build_instance_values(instance_id: str, payload: dict, existing_env: dict | 
         "SFTP_PORT": current("SFTP_PORT", 2222),
         "SFTP_USERNAME": current("SFTP_USERNAME", "fs25"),
         "SFTP_PASSWORD": current("SFTP_PASSWORD", "changeme"),
-        "IMAGE_NAME": current("IMAGE_NAME", FS25_RUNTIME_IMAGE),
+        "IMAGE_NAME": canonical_image_name(str(current("IMAGE_NAME", FS25_RUNTIME_IMAGE))),
         "INSTANCE_BASE_PATH": str(INSTANCE_BASE_PATH),
         "SHARED_GAME_PATH": current("SHARED_GAME_PATH", "/opt/fs25/game"),
         "SHARED_DLC_PATH": current("SHARED_DLC_PATH", "/opt/fs25/dlc"),
