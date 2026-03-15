@@ -18,6 +18,54 @@ function json_response(array $payload, int $status = 200): void
     exit;
 }
 
+function allowed_node_api_server_actions(): array
+{
+    return ['start', 'stop', 'restart', 'backend_reboot', 'logs'];
+}
+
+function perform_server_lifecycle_action(array $server, string $action, bool $syncBeforeAction = true): array
+{
+    $instanceId = (string) ($server['instance_id'] ?? '');
+    if ($instanceId === '') {
+        return ['ok' => false, 'error' => 'Missing instance id'];
+    }
+
+    if (!(int) ($server['is_enabled'] ?? 0)) {
+        return ['ok' => false, 'error' => 'Managed host for this server is missing or disabled.'];
+    }
+
+    if ($syncBeforeAction && in_array($action, ['start', 'restart'], true)) {
+        $sync = sync_instance_config_for_server($server);
+        if (!($sync['ok'] ?? false)) {
+            return ['ok' => false, 'error' => 'Config sync failed: ' . ($sync['error'] ?? 'Unknown error')];
+        }
+    }
+
+    $agent = agent_post_for_host($server, '/instance/action', [
+        'instance_id' => $instanceId,
+        'action' => $action,
+    ]);
+
+    if (($agent['ok'] ?? false) && $action !== 'logs') {
+        $stmt = db()->prepare('UPDATE server_instances SET status = ? WHERE instance_id = ?');
+        $stmt->execute([$action, $instanceId]);
+    }
+
+    $updatedServer = find_instance_with_host($instanceId) ?: $server;
+
+    return [
+        'ok' => (bool) ($agent['ok'] ?? false),
+        'action' => $action,
+        'instance_id' => $instanceId,
+        'panel_status' => $action !== 'logs' && ($agent['ok'] ?? false)
+            ? $action
+            : (string) ($updatedServer['status'] ?? 'unknown'),
+        'message' => ($agent['ok'] ?? false) ? 'Action completed.' : 'Action failed.',
+        'result' => $agent['result'] ?? null,
+        'error' => $agent['error'] ?? null,
+    ];
+}
+
 $route = $_GET['route'] ?? 'dashboard';
 
 if ($route === 'login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -127,6 +175,39 @@ if ($route === 'api_node_servers') {
         'node' => local_node_config(),
         'servers' => $payload,
     ]);
+}
+
+if ($route === 'api_node_server_action' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!node_api_request_authorized()) {
+        json_response(['ok' => false, 'error' => node_api_enabled() ? 'Unauthorized' : 'Node API is disabled'], node_api_enabled() ? 401 : 503);
+    }
+
+    $rawBody = file_get_contents('php://input');
+    $decodedBody = json_decode($rawBody !== false ? $rawBody : '', true);
+    $requestData = is_array($decodedBody) ? $decodedBody : $_POST;
+
+    $instanceId = trim((string) ($requestData['instance_id'] ?? ''));
+    $action = trim((string) ($requestData['action'] ?? ''));
+
+    if ($instanceId === '') {
+        json_response(['ok' => false, 'error' => 'instance_id is required'], 422);
+    }
+
+    if (!in_array($action, allowed_node_api_server_actions(), true)) {
+        json_response([
+            'ok' => false,
+            'error' => 'Unsupported action',
+            'allowed_actions' => allowed_node_api_server_actions(),
+        ], 422);
+    }
+
+    $server = find_instance_with_host($instanceId);
+    if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
+        json_response(['ok' => false, 'error' => 'Managed host for this server is missing or disabled.'], 404);
+    }
+
+    $result = perform_server_lifecycle_action($server, $action, true);
+    json_response($result, ($result['ok'] ?? false) ? 200 : 500);
 }
 
 if ($route === 'host_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -670,43 +751,16 @@ if ($route === 'action' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect_route('game_servers');
     }
 
-    if (in_array($action, ['start', 'restart', 'rebuild', 'pull'], true)) {
-        $sync = sync_instance_config_for_server($server);
-        if (!($sync['ok'] ?? false)) {
-            if ($wantsJson) {
-                json_response(['ok' => false, 'error' => 'Config sync failed: ' . ($sync['error'] ?? 'Unknown error')], 500);
-            }
-            flash('Config sync failed: ' . ($sync['error'] ?? 'Unknown error'));
-            redirect_route('game_servers');
-        }
-    }
-
-    $agent = agent_post_for_host($server, '/instance/action', [
-        'instance_id' => $instanceId,
-        'action' => $action,
-    ]);
-
-    if (($agent['ok'] ?? false) && $action !== 'logs') {
-        $stmt = db()->prepare('UPDATE server_instances SET status = ? WHERE instance_id = ?');
-        $stmt->execute([$action, $instanceId]);
-    }
+    $result = perform_server_lifecycle_action($server, $action, true);
 
     if ($wantsJson) {
-        json_response([
-            'ok' => (bool) ($agent['ok'] ?? false),
-            'action' => $action,
-            'instance_id' => $instanceId,
-            'panel_status' => $action !== 'logs' && ($agent['ok'] ?? false) ? $action : (string) ($server['status'] ?? 'unknown'),
-            'message' => ($agent['ok'] ?? false) ? 'Action completed.' : 'Action failed.',
-            'result' => $agent['result'] ?? null,
-            'error' => $agent['error'] ?? null,
-        ], ($agent['ok'] ?? false) ? 200 : 500);
+        json_response($result, ($result['ok'] ?? false) ? 200 : 500);
     }
 
     if ($action === 'logs') {
-        $_SESSION['logs'] = $agent['result']['stdout'] ?? ($agent['result']['stderr'] ?? 'No logs returned');
+        $_SESSION['logs'] = $result['result']['stdout'] ?? ($result['result']['stderr'] ?? 'No logs returned');
     } else {
-        flash(($agent['ok'] ?? false) ? 'Action completed.' : 'Action failed.');
+        flash(($result['ok'] ?? false) ? 'Action completed.' : 'Action failed.');
     }
 
     $redirectTo = (string) ($_POST['redirect_to'] ?? 'game_servers');
@@ -729,34 +783,8 @@ if ($route === 'server_command' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         json_response(['ok' => false, 'error' => 'Managed host for this server is missing or disabled.'], 404);
     }
 
-    if (in_array($action, ['start', 'restart', 'rebuild', 'pull'], true)) {
-        $sync = sync_instance_config_for_server($server);
-        if (!($sync['ok'] ?? false)) {
-            json_response(['ok' => false, 'error' => 'Config sync failed: ' . ($sync['error'] ?? 'Unknown error')], 500);
-        }
-    }
-
-    $agent = agent_post_for_host($server, '/instance/action', [
-        'instance_id' => $instanceId,
-        'action' => $action,
-    ]);
-
-    if (($agent['ok'] ?? false) && $action !== 'logs') {
-        $stmt = db()->prepare('UPDATE server_instances SET status = ? WHERE instance_id = ?');
-        $stmt->execute([$action, $instanceId]);
-    }
-
-    $updatedServer = find_instance_with_host($instanceId) ?: $server;
-
-    json_response([
-        'ok' => (bool) ($agent['ok'] ?? false),
-        'action' => $action,
-        'instance_id' => $instanceId,
-        'panel_status' => (string) ($updatedServer['status'] ?? 'unknown'),
-        'message' => ($agent['ok'] ?? false) ? 'Action completed.' : 'Action failed.',
-        'result' => $agent['result'] ?? null,
-        'error' => $agent['error'] ?? null,
-    ], ($agent['ok'] ?? false) ? 200 : 500);
+    $result = perform_server_lifecycle_action($server, $action, true);
+    json_response($result, ($result['ok'] ?? false) ? 200 : 500);
 }
 
 if ($route === 'server_delete' && $_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -1764,6 +1792,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
         .hero p { margin: 0; max-width: 880px; color: #b2bfd3; }
         .page-grid { display: grid; gap: 20px; }
         .page-grid.two { grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr); align-items: start; }
+        .page-grid.equal { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
         .card { background: rgba(23, 28, 37, 0.96); border: 1px solid #2a3240; border-radius: 16px; padding: 20px; margin-bottom: 20px; box-shadow: 0 18px 40px rgba(0, 0, 0, 0.18); }
         input, select { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #fff; }
         button { padding: 10px 14px; border-radius: 8px; border: 0; cursor: pointer; background: #2563eb; color: #fff; }
@@ -1806,7 +1835,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
         .footer { border-top: 1px solid #243041; background: rgba(10, 14, 22, 0.9); }
         .footer-inner { max-width: 1240px; margin: 0 auto; padding: 18px 24px 24px; display: flex; justify-content: space-between; gap: 18px; flex-wrap: wrap; color: #8ea0bc; font-size: 13px; }
         @media (max-width: 900px) {
-            .grid-2, .grid-4, .page-grid.two { grid-template-columns: 1fr; }
+            .grid-2, .grid-4, .page-grid.two, .page-grid.equal { grid-template-columns: 1fr; }
             .topbar-inner { align-items: start; flex-direction: column; }
         }
     </style>
@@ -1846,7 +1875,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                     mh.is_enabled
                 FROM server_instances si
                 LEFT JOIN managed_hosts mh ON mh.id = si.host_id
-                ORDER BY si.created_at DESC
+                ORDER BY si.server_name ASC, si.instance_id ASC
             ')->fetchAll();
             foreach ($servers as &$serverRow) {
                 $metricsResult = instance_metrics_for_server($serverRow);
@@ -2146,9 +2175,9 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
         <div class="card">
             <h2>Node API</h2>
             <div class="stack muted">
-                <div>The node API is for an external main website or automation client that needs read-only access to node, host, and server data.</div>
+                <div>The node API is for an external main website or automation client that needs authenticated access to node, host, and server data plus a small safe set of remote lifecycle controls.</div>
                 <div>Authentication supports `Authorization: Bearer YOUR_NODE_API_TOKEN` or `X-Node-Token: YOUR_NODE_API_TOKEN`.</div>
-                <div>The API is served by the panel and currently exposes three endpoints.</div>
+                <div>The API is served by the panel. It exposes read endpoints and one controlled action endpoint for runtime lifecycle operations only.</div>
             </div>
             <pre>GET /?route=api_node_status
 Purpose: Returns local node summary, local managed host info, and system counts.
@@ -2162,7 +2191,7 @@ Purpose: Returns server records, ports, URLs, host data, and basic status fields
                 <div>`api_node_status` is useful for health dashboards and installation checks.</div>
                 <div>`api_node_hosts` is useful for host inventory and connectivity checks.</div>
                 <div>`api_node_servers` is useful for external server lists, dashboards, portals, and operational readouts.</div>
-                <div>The current API is informational. It does not expose server mutation commands such as start, stop, restart, or delete.</div>
+                <div>The action API intentionally does not expose any settings mutation. It cannot edit ports, credentials, names, maps, or other configuration values.</div>
             </div>
         </div>
         <div class="card">
@@ -2171,7 +2200,22 @@ Purpose: Returns server records, ports, URLs, host data, and basic status fields
 
 curl -H "Authorization: Bearer YOUR_NODE_API_TOKEN" "<?= h($node['api_hosts_url']) ?>"
 
-curl -H "Authorization: Bearer YOUR_NODE_API_TOKEN" "<?= h($node['api_servers_url']) ?>"</pre>
+curl -H "Authorization: Bearer YOUR_NODE_API_TOKEN" "<?= h($node['api_servers_url']) ?>"
+
+curl -X POST \
+  -H "Authorization: Bearer YOUR_NODE_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"instance_id":"fs25-0001","action":"restart"}' \
+  "<?= h(rtrim($node['app_url'], '/')) ?>/?route=api_node_server_action"</pre>
+            <div class="stack muted">
+                <div><strong>POST `/?route=api_node_server_action`</strong> accepts only the actions `start`, `stop`, `restart`, `backend_reboot`, and `logs`.</div>
+                <div><strong>`start`</strong>: syncs panel-managed runtime config to the instance and starts the server stack.</div>
+                <div><strong>`stop`</strong>: stops the server stack.</div>
+                <div><strong>`restart`</strong>: restarts the server stack.</div>
+                <div><strong>`backend_reboot`</strong>: kills `dedicatedServer.exe` so the watchdog can bring it back online without fully rebuilding the stack.</div>
+                <div><strong>`logs`</strong>: returns the structured lifecycle log content.</div>
+                <div>Because the action route is allowlisted, attempts to send config-changing commands are rejected.</div>
+            </div>
         </div>
         <?php endif; ?>
 
@@ -2368,7 +2412,7 @@ curl -H "Authorization: Bearer YOUR_NODE_API_TOKEN" "<?= h($node['api_servers_ur
         <?php endif; ?>
 
         <?php if ($pageRoute === 'game_servers'): ?>
-        <div class="page-grid two">
+        <div class="page-grid equal">
             <div class="card">
                 <h2>How To Use This Page</h2>
                 <div class="stack muted">
