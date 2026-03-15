@@ -448,12 +448,22 @@ function flash(?string $message = null): ?string
 
 function agent_post_for_host(array $host, string $path, array $payload): array
 {
-    $url = rtrim((string) ($host['agent_url'] ?? ''), '/') . $path;
+    $baseUrl = trim((string) ($host['agent_url'] ?? ''));
+    if ($baseUrl === '') {
+        return ['ok' => false, 'error' => 'Agent URL is missing'];
+    }
 
+    $url = rtrim($baseUrl, '/') . $path;
     $ch = curl_init($url);
+    if ($ch === false) {
+        return ['ok' => false, 'error' => 'Unable to initialize agent request'];
+    }
+
     curl_setopt_array($ch, [
         CURLOPT_POST => true,
         CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CONNECTTIMEOUT => 5,
+        CURLOPT_TIMEOUT => 20,
         CURLOPT_HTTPHEADER => [
             'Content-Type: application/json',
             'X-Agent-Token: ' . (string) ($host['agent_token'] ?? ''),
@@ -482,9 +492,13 @@ function agent_health_for_host(array $host): array
 {
     $url = rtrim((string) ($host['agent_url'] ?? ''), '/') . '/health';
     $ch = curl_init($url);
+    if ($ch === false) {
+        return ['ok' => false, 'error' => 'Unable to initialize host health request'];
+    }
 
     curl_setopt_array($ch, [
         CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CONNECTTIMEOUT => 3,
         CURLOPT_TIMEOUT => 3,
     ]);
 

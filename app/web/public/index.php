@@ -1150,6 +1150,8 @@ if ($route === 'server') {
     ]);
     $secretsResult = instance_secrets_for_server($server);
     $vncPassword = (string) ($secretsResult['secrets']['vnc_password'] ?? '');
+    $initialRuntimeState = $metrics['runtime_state'] ?? ['state' => (($metrics['running'] ?? false) ? 'online' : 'offline'), 'label' => (($metrics['running'] ?? false) ? 'Online' : 'Offline'), 'detail' => ''];
+    $isRuntimeRunning = in_array((string) ($initialRuntimeState['state'] ?? 'offline'), ['online', 'booting', 'degraded'], true);
     $statusOutput = implode("\n", [
         'Panel status: ' . (string) ($server['status'] ?? 'unknown'),
         'Container runtime: ' . (($metrics['running'] ?? false) ? 'running' : 'stopped'),
@@ -1188,6 +1190,7 @@ if ($route === 'server') {
             .button-link, button { display: inline-block; padding: 10px 14px; border-radius: 8px; border: 0; background: #2563eb; color: #fff; text-decoration: none; cursor: pointer; }
             .button-link.gray, button.gray { background: #475569; }
             button.danger { background: #b91c1c; }
+            button:disabled { opacity: 0.45; cursor: not-allowed; }
             input { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #fff; }
             label { display: block; margin-bottom: 8px; color: #dbe4f0; }
             .flash { padding: 12px; background: #1d4ed8; border-radius: 10px; margin-bottom: 16px; }
@@ -1228,7 +1231,11 @@ if ($route === 'server') {
                                 <form method="post" action="/?route=server_command" class="server-action-form">
                                     <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
                                     <input type="hidden" name="action" value="<?= h($act) ?>">
-                                    <button type="submit"><?= h($act === 'backend_reboot' ? 'backend reboot' : $act) ?></button>
+                                    <button
+                                        type="submit"
+                                        data-server-action="<?= h($act) ?>"
+                                        <?= (($act === 'start' && $isRuntimeRunning) || (in_array($act, ['stop', 'restart', 'backend_reboot'], true) && !$isRuntimeRunning)) ? 'disabled' : '' ?>
+                                    ><?= h($act === 'backend_reboot' ? 'backend reboot' : $act) ?></button>
                                 </form>
                             <?php endforeach; ?>
                         </div>
@@ -1300,11 +1307,10 @@ if ($route === 'server') {
                     <div id="disk-label">Disk: <?= h(format_bytes_human((int) ($metrics['disk_used_bytes'] ?? 0))) ?> (<?= h(number_format($diskPercent, 1)) ?>%)</div>
                     <div class="meter-bar"><div class="meter-fill" id="disk-fill" style="width: <?= h((string) min(max($diskPercent, 0), 100)) ?>%"></div></div>
                 </div>
-                <?php $runtimeState = $metrics['runtime_state'] ?? ['state' => (($metrics['running'] ?? false) ? 'online' : 'offline'), 'label' => (($metrics['running'] ?? false) ? 'Online' : 'Offline'), 'detail' => '']; ?>
                 <div style="margin-top:16px;">
-                    <span class="status-chip <?= h((string) ($runtimeState['state'] ?? 'offline')) ?>" id="runtime-state-chip"><?= h((string) ($runtimeState['label'] ?? 'Offline')) ?></span>
+                    <span class="status-chip <?= h((string) ($initialRuntimeState['state'] ?? 'offline')) ?>" id="runtime-state-chip"><?= h((string) ($initialRuntimeState['label'] ?? 'Offline')) ?></span>
                 </div>
-                <div class="muted" style="margin-top:10px;" id="runtime-status-detail"><?= h((string) ($runtimeState['detail'] ?? '')) ?></div>
+                <div class="muted" style="margin-top:10px;" id="runtime-status-detail"><?= h((string) ($initialRuntimeState['detail'] ?? '')) ?></div>
                 <div class="muted" style="margin-top:8px;" id="runtime-status">Desired: <?= h((bool) ($metrics['desired_running'] ?? false) ? 'start' : 'stop') ?></div>
                 <div class="container-status-list" id="container-status-list">
                     <?php foreach (($metrics['containers'] ?? []) as $container): ?>
@@ -1378,6 +1384,7 @@ if ($route === 'server') {
         const vncPasswordField = document.getElementById('vnc-password-field');
         const copyVncPassword = document.getElementById('copy-vnc-password');
         const actionForms = document.querySelectorAll('.server-action-form');
+        const actionButtons = document.querySelectorAll('[data-server-action]');
         const deleteForm = document.querySelector('.server-delete-form');
 
         function scrollToBottom(element) {
@@ -1485,6 +1492,22 @@ if ($route === 'server') {
             }).join('');
         }
 
+        function updateActionButtonStates(metrics) {
+            const runtimeState = (metrics && metrics.runtime_state) || { state: 'offline' };
+            const isRunning = ['online', 'booting', 'degraded'].includes(runtimeState.state || 'offline');
+
+            actionButtons.forEach((button) => {
+                const action = button.getAttribute('data-server-action') || '';
+                if (action === 'start') {
+                    button.disabled = isRunning;
+                    return;
+                }
+                if (['stop', 'restart', 'backend_reboot'].includes(action)) {
+                    button.disabled = !isRunning;
+                }
+            });
+        }
+
         function updateLiveView(payload) {
             if (!payload || !payload.metrics) {
                 return;
@@ -1512,6 +1535,7 @@ if ($route === 'server') {
             }
             if (runtimeStatus) runtimeStatus.textContent = `Desired: ${payload.metrics.desired_running ? 'start' : 'stop'}`;
             renderContainerStatuses(payload.metrics.containers || []);
+            updateActionButtonStates(payload.metrics);
             updateScrollableText(serverStatusView, payload.status_output || 'No runtime summary returned');
             if (serverLogView) {
                 appendLogText(serverLogView, payload.log_output || 'No runtime logs returned');
