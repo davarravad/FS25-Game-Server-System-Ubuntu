@@ -172,6 +172,10 @@ def build_instance_values(instance_id: str, payload: dict, existing_env: dict | 
 def render_instance_files(instance_dir: Path, values: dict, write_env: bool = False):
     compose_tpl = (TEMPLATE_DIR / "compose.instance.yml.tpl").read_text(encoding="utf-8")
     write_file(instance_dir / "compose.yml", render_template(compose_tpl, values))
+    write_file(
+        instance_dir / "users.conf",
+        f"{values['SFTP_USERNAME']}:{values['SFTP_PASSWORD']}:1000:1000:FarmingSimulator2025\n",
+    )
 
     if write_env:
         env_tpl = (TEMPLATE_DIR / "server.env.tpl").read_text(encoding="utf-8")

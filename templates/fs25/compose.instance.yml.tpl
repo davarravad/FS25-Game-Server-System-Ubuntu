@@ -26,8 +26,8 @@ services:
   sftp:
     image: atmoz/sftp:alpine
     container_name: {{INSTANCE_ID}}-sftp
-    command: "{{SFTP_USERNAME}}:{{SFTP_PASSWORD}}:1000:1000:FarmingSimulator2025"
     volumes:
+      - ./users.conf:/etc/sftp/users.conf:ro
       - ./data/config:/home/{{SFTP_USERNAME}}/FarmingSimulator2025
     ports:
       - "{{SFTP_PORT}}:22/tcp"
