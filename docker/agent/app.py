@@ -82,6 +82,8 @@ def compose_cmd(*args):
 
 def canonical_image_name(image_name: str) -> str:
     normalized = (image_name or "").strip()
+    if normalized.startswith("fsg/fs25-runtime"):
+        return FS25_RUNTIME_IMAGE
     if normalized in {"", "toetje585/arch-fs25server:latest", "fsg/fs25-runtime", "fsg/fs25-runtime:latest"}:
         return FS25_RUNTIME_IMAGE
     return normalized
