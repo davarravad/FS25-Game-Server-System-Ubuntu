@@ -1132,9 +1132,9 @@ if ($route === 'server') {
             .status-chip.offline { background:#334155; color:#e2e8f0; }
             .container-status-list { display:grid; gap:10px; margin-top:16px; }
             .container-status-item { background:#0f172a; border:1px solid #243041; border-radius:10px; padding:12px; }
-            .log-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
-            .log-block { display: grid; gap: 10px; }
-            .log-view { margin: 0; white-space: pre-wrap; word-break: break-word; background: #050814; border: 1px solid #243041; border-radius: 12px; padding: 16px; max-height: 420px; overflow: auto; }
+            .log-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); align-items: stretch; }
+            .log-block { display: grid; gap: 10px; grid-template-rows: auto minmax(0, 1fr); }
+            .log-view { margin: 0; white-space: pre-wrap; word-break: break-word; background: #050814; border: 1px solid #243041; border-radius: 12px; padding: 16px; height: 500px; overflow: auto; }
             .inline-status { padding: 12px; background: #1e293b; border: 1px solid #334155; border-radius: 10px; margin-bottom: 16px; display: none; }
             .secret-row { display: flex; gap: 10px; align-items: end; }
             .secret-row input { flex: 1; }
@@ -1274,6 +1274,52 @@ if ($route === 'server') {
             }
         }
 
+        function isNearBottom(element, threshold = 24) {
+            if (!element) {
+                return true;
+            }
+            return (element.scrollHeight - element.scrollTop - element.clientHeight) <= threshold;
+        }
+
+        function updateScrollableText(element, nextText) {
+            if (!element) {
+                return;
+            }
+            const previousScrollTop = element.scrollTop;
+            const shouldStickToBottom = isNearBottom(element);
+            element.textContent = nextText;
+            if (shouldStickToBottom) {
+                scrollToBottom(element);
+            } else {
+                element.scrollTop = previousScrollTop;
+            }
+        }
+
+        function appendLogText(element, nextText) {
+            if (!element) {
+                return;
+            }
+            const currentText = element.textContent || '';
+            const incomingText = nextText || '';
+            const shouldStickToBottom = isNearBottom(element);
+            const previousScrollTop = element.scrollTop;
+
+            if (incomingText.startsWith(currentText)) {
+                const appendedText = incomingText.slice(currentText.length);
+                if (appendedText !== '') {
+                    element.textContent = currentText + appendedText;
+                }
+            } else {
+                element.textContent = incomingText;
+            }
+
+            if (shouldStickToBottom) {
+                scrollToBottom(element);
+            } else {
+                element.scrollTop = previousScrollTop;
+            }
+        }
+
         function formatBytes(bytes) {
             const value = Number(bytes) || 0;
             const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -1354,10 +1400,9 @@ if ($route === 'server') {
             }
             if (runtimeStatus) runtimeStatus.textContent = `Desired: ${payload.metrics.desired_running ? 'start' : 'stop'}`;
             renderContainerStatuses(payload.metrics.containers || []);
-            if (serverStatusView) serverStatusView.textContent = payload.status_output || 'No Docker compose status returned';
+            updateScrollableText(serverStatusView, payload.status_output || 'No Docker compose status returned');
             if (serverLogView) {
-                serverLogView.textContent = payload.log_output || 'No container logs returned';
-                scrollToBottom(serverLogView);
+                appendLogText(serverLogView, payload.log_output || 'No container logs returned');
             }
         }
 
