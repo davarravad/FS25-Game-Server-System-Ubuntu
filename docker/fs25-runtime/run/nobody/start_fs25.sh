@@ -9,6 +9,7 @@ export WINEPREFIX=~/.fs25server
 CUSTOM_PORT_VALUE="${WEB_PORT:-${SERVER_PORT:-}}"
 LAUNCHER_PATH="/opt/fs25/game/Farming Simulator 2025/start_fs25_${CUSTOM_PORT_VALUE}.sh"
 WEB_PORT_VALUE="${WEB_PORT:-${SERVER_PORT:-7999}}"
+CUSTOM_SERVER_EXE="/opt/fs25/game/Farming Simulator 2025/${CUSTOM_PORT_VALUE}/dedicatedServer.exe"
 VERSION_VALUE="unknown"
 
 if [ -f "${GAME_INSTALL_DIR}/VERSION" ]; then
@@ -33,9 +34,16 @@ runtime_log_write "Already running the latest version."
 runtime_log_write "Configuration updated successfully."
 runtime_log_write "Server starting..."
 
+if [ -n "${CUSTOM_PORT_VALUE}" ] && [ -f "/opt/fs25/game/Farming Simulator 2025/${CUSTOM_PORT_VALUE}/dedicatedServer.xml" ]; then
+    update_port_server_xml
+fi
+
 if [ -n "${CUSTOM_PORT_VALUE}" ] && [ -x "${LAUNCHER_PATH}" ]
 then
     "${LAUNCHER_PATH}" & sleep 1 && firefox "http://"$CONTAINER_IP":"$WEB_PORT_VALUE"/index.html?lang=en&username="$WEB_USERNAME"&password="$WEB_PASSWORD"&login=Login"
+elif [ -n "${CUSTOM_PORT_VALUE}" ] && [ -f "${CUSTOM_SERVER_EXE}" ]
+then
+    wine "${CUSTOM_SERVER_EXE}" & sleep 1 && firefox "http://"$CONTAINER_IP":"$WEB_PORT_VALUE"/index.html?lang=en&username="$WEB_USERNAME"&password="$WEB_PASSWORD"&login=Login"
 elif [ -f ~/.fs25server/drive_c/Program\ Files\ \(x86\)/Farming\ Simulator\ 2025/dedicatedServer.exe ]
 then
     wine ~/.fs25server/drive_c/Program\ Files\ \(x86\)/Farming\ Simulator\ 2025/dedicatedServer.exe & sleep 1 && firefox "http://"$CONTAINER_IP":7999/index.html?lang=en&username="$WEB_USERNAME"&password="$WEB_PASSWORD"&login=Login"

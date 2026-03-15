@@ -69,6 +69,8 @@ function ensure_schema(PDO $pdo): void
     $pdo->exec('ALTER TABLE server_instances ADD COLUMN IF NOT EXISTS sftp_port INT NOT NULL DEFAULT 2222 AFTER novnc_port');
     $pdo->exec("ALTER TABLE server_instances ADD COLUMN IF NOT EXISTS sftp_username VARCHAR(100) NOT NULL DEFAULT 'fs25' AFTER sftp_port");
     $pdo->exec("ALTER TABLE server_instances ADD COLUMN IF NOT EXISTS sftp_password VARCHAR(255) NOT NULL DEFAULT 'changeme' AFTER sftp_username");
+    $pdo->exec("ALTER TABLE server_instances ADD COLUMN IF NOT EXISTS web_username VARCHAR(100) NOT NULL DEFAULT 'admin' AFTER sftp_password");
+    $pdo->exec("ALTER TABLE server_instances ADD COLUMN IF NOT EXISTS web_password VARCHAR(255) NOT NULL DEFAULT 'changeme' AFTER web_username");
     $pdo->exec('ALTER TABLE server_instances ADD INDEX IF NOT EXISTS idx_server_instances_host_id (host_id)');
 }
 
@@ -495,6 +497,21 @@ function agent_health_for_host(array $host): array
     return is_array($decoded) ? $decoded : ['ok' => false, 'error' => 'Invalid host response'];
 }
 
+function agent_firewall_summary(array $agentResponse): ?string
+{
+    $firewall = $agentResponse['firewall'] ?? null;
+    if (!is_array($firewall)) {
+        return null;
+    }
+
+    $message = trim((string) ($firewall['message'] ?? ''));
+    if ($message === '') {
+        return null;
+    }
+
+    return $message;
+}
+
 function all_hosts(): array
 {
     return db()->query('SELECT * FROM managed_hosts ORDER BY name ASC, id ASC')->fetchAll();
@@ -626,6 +643,8 @@ function sync_instance_config_for_server(array $server): array
         'sftp_port' => (int) ($server['sftp_port'] ?? 2222),
         'sftp_username' => (string) ($server['sftp_username'] ?? 'fs25'),
         'sftp_password' => (string) ($server['sftp_password'] ?? 'changeme'),
+        'web_username' => (string) ($server['web_username'] ?? 'admin'),
+        'web_password' => (string) ($server['web_password'] ?? 'changeme'),
         'server_players' => (int) ($server['server_players'] ?? 16),
         'server_region' => (string) ($server['server_region'] ?? 'en'),
         'server_map' => (string) ($server['server_map'] ?? 'MapUS'),

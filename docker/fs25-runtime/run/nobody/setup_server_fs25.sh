@@ -5,6 +5,20 @@ set -euo pipefail
 . /usr/local/bin/runtime_log.sh
 . /usr/local/bin/fs25_common.sh
 
+KEEP_OPEN_DONE=0
+
+keep_terminal_open() {
+    if [ "$KEEP_OPEN_DONE" -eq 1 ]; then
+        return
+    fi
+    KEEP_OPEN_DONE=1
+    echo
+    echo "Setup Server finished. Review the messages above."
+    read -r -p "Press Enter to close this window..." _
+}
+
+trap keep_terminal_open EXIT
+
 ensure_runtime_directories
 require_custom_port
 runtime_log_write "Preparing server files..."
@@ -39,4 +53,3 @@ runtime_log_write "Verification complete."
 
 echo -e "${GREEN}INFO: Server setup is ready for web port ${CUSTOM_PORT_VALUE}.${NOCOLOR}"
 echo -e "${GREEN}INFO: You can now click 'Start Server'.${NOCOLOR}"
-pause_before_exit

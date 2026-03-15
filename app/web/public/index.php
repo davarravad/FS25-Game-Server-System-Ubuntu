@@ -618,8 +618,8 @@ if ($route === 'create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $stmt = db()->prepare('
         INSERT INTO server_instances
-        (host_id, instance_id, server_name, image_name, server_port, web_port, vnc_port, novnc_port, sftp_port, sftp_username, sftp_password, server_players, server_region, server_map, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (host_id, instance_id, server_name, image_name, server_port, web_port, vnc_port, novnc_port, sftp_port, sftp_username, sftp_password, web_username, web_password, server_players, server_region, server_map, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ');
 
     $stmt->execute([
@@ -634,13 +634,18 @@ if ($route === 'create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $payload['sftp_port'],
         $payload['sftp_username'],
         $payload['sftp_password'],
+        $payload['web_username'],
+        $payload['web_password'],
         $payload['server_players'],
         $payload['server_region'],
         $payload['server_map'],
         'created',
     ]);
 
-    flash('Server created.');
+    $firewallMessage = agent_firewall_summary($agent);
+    flash($firewallMessage
+        ? 'Server created. ' . $firewallMessage
+        : 'Server created.');
     redirect_route('game_servers');
 }
 
@@ -959,7 +964,10 @@ if ($route === 'delete' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     if (($agent['ok'] ?? false)) {
         $stmt = db()->prepare('DELETE FROM server_instances WHERE instance_id = ?');
         $stmt->execute([$instanceId]);
-        flash('Server deleted.');
+        $firewallMessage = agent_firewall_summary($agent);
+        flash($firewallMessage
+            ? 'Server deleted. ' . $firewallMessage
+            : 'Server deleted.');
     } else {
         flash('Delete failed.');
     }
@@ -988,13 +996,15 @@ if ($route === 'server_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         'sftp_port' => (int) ($_POST['sftp_port'] ?? 0),
         'sftp_username' => trim((string) ($_POST['sftp_username'] ?? '')),
         'sftp_password' => trim((string) ($_POST['sftp_password'] ?? '')),
+        'web_username' => trim((string) ($_POST['web_username'] ?? '')),
+        'web_password' => trim((string) ($_POST['web_password'] ?? '')),
         'server_players' => (int) ($_POST['server_players'] ?? 16),
         'server_region' => trim((string) ($_POST['server_region'] ?? 'en')),
         'server_map' => trim((string) ($_POST['server_map'] ?? 'MapUS')),
     ];
 
-    if ($payload['server_name'] === '' || $payload['image_name'] === '' || $payload['sftp_username'] === '' || $payload['sftp_password'] === '') {
-        flash('Server name, image, SFTP username, and SFTP password are required.');
+    if ($payload['server_name'] === '' || $payload['image_name'] === '' || $payload['sftp_username'] === '' || $payload['sftp_password'] === '' || $payload['web_username'] === '' || $payload['web_password'] === '') {
+        flash('Server name, image, SFTP credentials, and web admin credentials are required.');
         header('Location: /?route=server&instance_id=' . rawurlencode($instanceId));
         exit;
     }
@@ -1014,7 +1024,7 @@ if ($route === 'server_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $stmt = db()->prepare('
         UPDATE server_instances
-        SET server_name = ?, image_name = ?, server_port = ?, web_port = ?, vnc_port = ?, novnc_port = ?, sftp_port = ?, sftp_username = ?, sftp_password = ?, server_players = ?, server_region = ?, server_map = ?
+        SET server_name = ?, image_name = ?, server_port = ?, web_port = ?, vnc_port = ?, novnc_port = ?, sftp_port = ?, sftp_username = ?, sftp_password = ?, web_username = ?, web_password = ?, server_players = ?, server_region = ?, server_map = ?
         WHERE instance_id = ?
     ');
     $stmt->execute([
@@ -1027,13 +1037,28 @@ if ($route === 'server_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $payload['sftp_port'],
         $payload['sftp_username'],
         $payload['sftp_password'],
+        $payload['web_username'],
+        $payload['web_password'],
         $payload['server_players'],
         $payload['server_region'],
         $payload['server_map'],
         $instanceId,
     ]);
 
-    flash('Server details updated in the panel. Recreate or update the runtime config separately if those values also need to change inside the container.');
+    $updatedServer = find_instance_with_host($instanceId);
+    if ($updatedServer && (int) ($updatedServer['is_enabled'] ?? 0)) {
+        $sync = sync_instance_config_for_server($updatedServer);
+        if (!($sync['ok'] ?? false)) {
+            flash('Server details saved, but runtime sync failed: ' . ($sync['error'] ?? 'Unknown error'));
+            header('Location: /?route=server&instance_id=' . rawurlencode($instanceId));
+            exit;
+        }
+    }
+
+    $firewallMessage = isset($sync) ? agent_firewall_summary($sync) : null;
+    flash($firewallMessage
+        ? 'Server details updated and runtime config synced. ' . $firewallMessage
+        : 'Server details updated and runtime config synced.');
     header('Location: /?route=server&instance_id=' . rawurlencode($instanceId));
     exit;
 }
@@ -1176,6 +1201,8 @@ if ($route === 'server') {
                     <div><label>SFTP Port</label><input name="sftp_port" type="number" value="<?= h((string) $server['sftp_port']) ?>"></div>
                     <div><label>SFTP Username</label><input name="sftp_username" value="<?= h($server['sftp_username'] ?? 'fs25') ?>"></div>
                     <div><label>SFTP Password</label><input name="sftp_password" value="<?= h($server['sftp_password'] ?? 'changeme') ?>"></div>
+                    <div><label>Web Username</label><input name="web_username" value="<?= h($server['web_username'] ?? 'admin') ?>"></div>
+                    <div><label>Web Password</label><input name="web_password" value="<?= h($server['web_password'] ?? 'changeme') ?>"></div>
                     <div><label>Region</label><input name="server_region" value="<?= h($server['server_region'] ?? 'en') ?>"></div>
                     <div><label>Map</label><input name="server_map" value="<?= h($server['server_map'] ?? 'MapUS') ?>"></div>
                     <div style="display:flex;align-items:end;"><button type="submit">Save Panel Details</button></div>

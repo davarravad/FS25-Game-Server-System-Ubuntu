@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS server_instances (
     sftp_port INT NOT NULL,
     sftp_username VARCHAR(100) NOT NULL,
     sftp_password VARCHAR(255) NOT NULL,
+    web_username VARCHAR(100) NOT NULL DEFAULT 'admin',
+    web_password VARCHAR(255) NOT NULL DEFAULT 'changeme',
     server_players INT NOT NULL DEFAULT 16,
     server_region VARCHAR(32) NOT NULL DEFAULT 'en',
     server_map VARCHAR(64) NOT NULL DEFAULT 'MapUS',

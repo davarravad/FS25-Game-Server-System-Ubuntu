@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -26,6 +27,8 @@ FS25_RUNTIME_TARGETARCH = os.getenv("FS25_RUNTIME_TARGETARCH", "amd64")
 STATE_FILE_NAME = ".panel-state.json"
 SFTP_UID = int(os.getenv("SFTP_UID", "1000"))
 SFTP_GID = int(os.getenv("SFTP_GID", "1000"))
+HOST_FIREWALL_MODE = os.getenv("HOST_FIREWALL_MODE", "auto").strip().lower()
+HOST_FIREWALL_HELPER_IMAGE = os.getenv("HOST_FIREWALL_HELPER_IMAGE", "ubuntu:24.04").strip() or "ubuntu:24.04"
 COMPOSE_COMMAND = None
 
 
@@ -271,6 +274,139 @@ def read_runtime_log(instance_id: str, max_lines: int = 400) -> str:
     if max_lines > 0:
         lines = lines[-max_lines:]
     return "\n".join(lines)
+
+
+def parse_port_number(value) -> int | None:
+    try:
+        port = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+    if 1 <= port <= 65535:
+        return port
+
+    return None
+
+
+def public_port_rules(values: dict | None) -> list[tuple[int, str, str]]:
+    if not isinstance(values, dict):
+        return []
+
+    rules: list[tuple[int, str, str]] = []
+    seen: set[tuple[int, str]] = set()
+    definitions = [
+        ("SERVER_PORT", "tcp", "game"),
+        ("SERVER_PORT", "udp", "game"),
+        ("WEB_PORT", "tcp", "web"),
+        ("SFTP_PORT", "tcp", "sftp"),
+    ]
+
+    for key, proto, label in definitions:
+        port = parse_port_number(values.get(key))
+        if port is None:
+            continue
+        signature = (port, proto)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        rules.append((port, proto, label))
+
+    return rules
+
+
+def run_host_namespace_shell(script: str) -> dict:
+    helper_cmd = (
+        "nsenter -t 1 -m -u -i -n -p -- /bin/sh -lc "
+        + shlex.quote(script)
+    )
+    return run_command([
+        "docker",
+        "run",
+        "--rm",
+        "--privileged",
+        "--pid=host",
+        "--network=host",
+        HOST_FIREWALL_HELPER_IMAGE,
+        "sh",
+        "-lc",
+        helper_cmd,
+    ])
+
+
+def sync_public_port_access(instance_id: str, next_values: dict | None = None, current_values: dict | None = None) -> dict:
+    next_rules = {(port, proto, label) for port, proto, label in public_port_rules(next_values)}
+    current_rules = {(port, proto, label) for port, proto, label in public_port_rules(current_values)}
+
+    if HOST_FIREWALL_MODE in {"", "off", "disabled", "false", "0"}:
+        return {
+            "ok": True,
+            "status": "disabled",
+            "message": "Host firewall automation is disabled. Docker still publishes the ports directly.",
+        }
+
+    ufw_check = run_host_namespace_shell("command -v ufw >/dev/null 2>&1")
+    if ufw_check["code"] != 0:
+        return {
+            "ok": True,
+            "status": "unmanaged",
+            "message": "Host UFW was not found. Docker publishes the ports, but any external firewall must be opened separately.",
+        }
+
+    status_result = run_host_namespace_shell("ufw status | sed -n '1p'")
+    status_line = (status_result.get("stdout") or status_result.get("stderr") or "").strip()
+    if status_result["code"] != 0:
+        return {
+            "ok": False,
+            "status": "error",
+            "message": "Unable to query host UFW status.",
+            "result": status_result,
+        }
+
+    if "inactive" in status_line.lower():
+        return {
+            "ok": True,
+            "status": "inactive",
+            "message": "Host UFW is inactive. Docker publishes the ports directly unless another upstream firewall blocks them.",
+        }
+
+    errors: list[str] = []
+    changed: list[str] = []
+
+    for port, proto, _label in sorted(current_rules - next_rules):
+        delete_result = run_host_namespace_shell(f"ufw --force delete allow {port}/{proto}")
+        if delete_result["code"] == 0:
+            changed.append(f"closed {port}/{proto}")
+
+    for port, proto, label in sorted(next_rules):
+        comment = shlex.quote(f"fsg-fs25 {instance_id} {label}")
+        allow_result = run_host_namespace_shell(f"ufw allow {port}/{proto} comment {comment}")
+        if allow_result["code"] == 0:
+            changed.append(f"opened {port}/{proto}")
+        else:
+            errors.append(f"{port}/{proto}: {(allow_result.get('stderr') or allow_result.get('stdout') or 'ufw allow failed').strip()}")
+
+    if errors:
+        return {
+            "ok": False,
+            "status": "error",
+            "message": "Some public port firewall rules could not be applied.",
+            "errors": errors,
+            "changed": changed,
+        }
+
+    if changed:
+        return {
+            "ok": True,
+            "status": "configured",
+            "message": "Host firewall rules updated for the server public ports.",
+            "changed": changed,
+        }
+
+    return {
+        "ok": True,
+        "status": "unchanged",
+        "message": "Host firewall rules already matched the server public ports.",
+    }
 
 
 def safe_upload_name(filename: str) -> bool:
@@ -659,8 +795,9 @@ def create_instance():
     render_instance_files(instance_dir, values, write_env=True)
     write_instance_state(instance_id, False)
     append_runtime_log(instance_id, "Console: Server created.")
+    firewall = sync_public_port_access(instance_id, next_values=values)
 
-    return jsonify({"ok": True, "instance_dir": str(instance_dir)})
+    return jsonify({"ok": True, "instance_dir": str(instance_dir), "firewall": firewall})
 
 
 @app.post("/instance/sync")
@@ -677,9 +814,10 @@ def sync_instance():
 
     existing_env = read_env_file(instance_dir / ".env")
     values = build_instance_values(instance_id, payload, existing_env)
-    render_instance_files(instance_dir, values, write_env=False)
+    render_instance_files(instance_dir, values, write_env=True)
+    firewall = sync_public_port_access(instance_id, next_values=values, current_values=existing_env)
 
-    return jsonify({"ok": True, "instance_dir": str(instance_dir)})
+    return jsonify({"ok": True, "instance_dir": str(instance_dir), "firewall": firewall})
 
 
 @app.post("/instance/secrets")
@@ -788,9 +926,12 @@ def delete_instance():
 
     instance_dir = INSTANCE_BASE_PATH / instance_id
     compose_file = instance_dir / "compose.yml"
+    existing_env = read_env_file(instance_dir / ".env")
 
     if compose_file.exists():
         run_command(compose_cmd("-f", str(compose_file), "down"), cwd=str(instance_dir))
+
+    firewall = sync_public_port_access(instance_id, next_values={}, current_values=existing_env)
 
     if instance_dir.exists():
         for root, dirs, files in os.walk(instance_dir, topdown=False):
@@ -803,7 +944,7 @@ def delete_instance():
     with suppress(FileNotFoundError):
         instance_state_path(instance_id).unlink()
 
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "firewall": firewall})
 
 
 @app.post("/instance/metrics")
