@@ -229,6 +229,16 @@ function generate_secure_password(int $length = 20): string
     return random_string_from_charset('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()-_=+', $length);
 }
 
+function generate_sftp_password(int $length = 20): string
+{
+    return random_string_from_charset('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-', $length);
+}
+
+function is_safe_sftp_credential(string $value): bool
+{
+    return (bool) preg_match('/^[a-zA-Z0-9._-]+$/', $value);
+}
+
 function next_instance_sequence(): int
 {
     $rows = db()->query('SELECT instance_id FROM server_instances ORDER BY id ASC')->fetchAll();
@@ -274,7 +284,7 @@ function suggested_create_defaults(): array
         'web_username' => 'admin',
         'web_password' => generate_secure_password(),
         'sftp_username' => 'fs25',
-        'sftp_password' => generate_secure_password(),
+        'sftp_password' => generate_sftp_password(),
         'vnc_password' => generate_secure_password(),
         'server_region' => 'en',
         'server_map' => 'MapUS',

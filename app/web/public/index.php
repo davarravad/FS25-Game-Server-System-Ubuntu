@@ -598,6 +598,11 @@ if ($route === 'create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         'web_password' => trim((string)($_POST['web_password'] ?? '')) ?: (string) $defaults['web_password'],
     ];
 
+    if (!is_safe_sftp_credential((string) $payload['sftp_username']) || !is_safe_sftp_credential((string) $payload['sftp_password'])) {
+        flash('SFTP username and password may only contain letters, numbers, dot, dash, and underscore.');
+        redirect_route('create_server');
+    }
+
     $portConflicts = find_port_conflicts($payload);
     if ($portConflicts) {
         flash('Create failed: ' . implode('; ', $portConflicts));
@@ -938,6 +943,12 @@ if ($route === 'server_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($payload['server_name'] === '' || $payload['image_name'] === '' || $payload['sftp_username'] === '' || $payload['sftp_password'] === '') {
         flash('Server name, image, SFTP username, and SFTP password are required.');
+        header('Location: /?route=server&instance_id=' . rawurlencode($instanceId));
+        exit;
+    }
+
+    if (!is_safe_sftp_credential($payload['sftp_username']) || !is_safe_sftp_credential($payload['sftp_password'])) {
+        flash('SFTP username and password may only contain letters, numbers, dot, dash, and underscore.');
         header('Location: /?route=server&instance_id=' . rawurlencode($instanceId));
         exit;
     }
