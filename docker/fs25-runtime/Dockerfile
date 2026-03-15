@@ -8,19 +8,14 @@ ARG RELEASETAG
 # arch from buildx --platform, e.g. amd64
 ARG TARGETARCH
 
-ADD build/*.conf /etc/supervisor/conf.d/
-
 # add install bash script
-ADD build/root/*.sh /root/
+COPY build/root/ /root/
 
 # add bash script to run app
-ADD run/nobody/*.sh /usr/local/bin/
-
-# add js script to run app
-ADD run/nobody/*.mjs /usr/local/bin/
+COPY run/nobody/ /usr/local/bin/
 
 # add pre-configured config files for nobody
-ADD config/nobody/ /home/nobody/.build/
+COPY config/nobody/ /home/nobody/.build/
 
 # add rootfs files
 
