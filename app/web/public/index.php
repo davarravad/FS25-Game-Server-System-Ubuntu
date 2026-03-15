@@ -1210,6 +1210,29 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                     </div>
                 </div>
             </div>
+            <div class="card">
+                <div class="page-grid two">
+                    <div>
+                        <h2 style="margin-top:0;">Admin SFTP</h2>
+                        <div class="stack muted">
+                            <div>Host: <?= h((string) $node['admin_sftp_host']) ?></div>
+                            <div>Port: <?= h((string) $node['admin_sftp_port']) ?></div>
+                            <div>Username: <?= h((string) $node['admin_sftp_username']) ?></div>
+                            <div>Password: <?= h((string) $node['admin_sftp_password']) ?></div>
+                        </div>
+                    </div>
+                    <div>
+                        <h2 style="margin-top:0;">SFTP Paths</h2>
+                        <div class="stack muted">
+                            <div>SFTP root: <code><?= h((string) $node['admin_sftp_root']) ?></code></div>
+                            <div>Full `/opt` access: <code><?= h((string) $node['admin_sftp_opt_path']) ?></code></div>
+                            <div>Instances: <code>panel/instances</code></div>
+                            <div>Backups: <code>panel/backups</code></div>
+                            <div>Shared FS: <code>panel/shared</code></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         <?php elseif ($pageRoute === 'file_management'): ?>
             <section class="hero">
                 <h1>File Management</h1>
@@ -1317,6 +1340,23 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
             </div>
         </div>
         <div class="card">
+            <h2>Admin SFTP Access</h2>
+            <div class="page-grid two">
+                <div class="stack muted">
+                    <div>Host: <?= h((string) $node['admin_sftp_host']) ?></div>
+                    <div>Port: <?= h((string) $node['admin_sftp_port']) ?></div>
+                    <div>Username: <?= h((string) $node['admin_sftp_username']) ?></div>
+                    <div>Password: <?= h((string) $node['admin_sftp_password']) ?></div>
+                </div>
+                <div class="stack muted">
+                    <div>Use this login for full admin-level access to the node's `/opt` content through SFTP.</div>
+                    <div>Inside SFTP, browse: <code>panel/opt</code></div>
+                    <div>Shared FS shortcuts: <code>panel/shared</code></div>
+                    <div>Instances: <code>panel/instances</code></div>
+                </div>
+            </div>
+        </div>
+        <div class="card">
             <h2>File Explorer</h2>
             <div class="stack muted" style="margin-bottom:14px;">
                 <div>Browse the shared `/opt/fs25/*` folders and the per-server profile-side folders that this panel can reach through the agent.</div>
@@ -1355,7 +1395,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                         ?>
                         <a class="button-link gray" href="/?route=file_management&amp;fm_scope=<?= h($fileScope) ?><?= $fileServer ? '&amp;fm_instance_id=' . h($fileInstanceId) : '&amp;fm_host_id=' . h((string) $fileHostId) ?>&amp;fm_target=<?= h($fileTarget) ?>&amp;fm_subpath=<?= h($parentSubpath) ?>">up one level</a>
                     <?php endif; ?>
-                    <a class="button-link" href="/?route=upload_large<?= $fileServer ? '&amp;instance_id=' . h($fileInstanceId) : '&amp;host_id=' . h((string) ($fileHost['id'] ?? 0)) ?>&amp;target=<?= h($fileTarget) ?><?= ($fileListing['subpath'] ?? '') !== '' ? '&amp;subpath=' . h((string) $fileListing['subpath']) : '' ?>">upload here</a>
+                    <a class="button-link" href="/?route=upload_large<?= $fileServer ? '&amp;instance_id=' . h($fileInstanceId) : '&amp;host_id=' . h((string) ($fileHost['id'] ?? 0)) ?>&amp;target=<?= h($fileTarget) ?><?= ($fileListing['subpath'] ?? '') !== '' ? '&amp;subpath=' . h((string) $fileListing['subpath']) : '' ?>" target="_blank" rel="noreferrer">upload here</a>
                 </div>
                 <div class="flex" style="margin-bottom:12px;">
                     <span class="stat-chip">root</span>

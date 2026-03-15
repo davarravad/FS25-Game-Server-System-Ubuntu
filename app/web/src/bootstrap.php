@@ -112,11 +112,19 @@ function local_node_config(): array
 {
     $nodeName = trim((string) env_value('NODE_NAME', env_value('DEFAULT_HOST_NAME', 'FS25 Local Node')));
     $appUrl = rtrim((string) env_value('APP_URL', 'http://localhost:8080'), '/');
+    $appParts = parse_url($appUrl);
+    $appHost = is_array($appParts) && !empty($appParts['host']) ? (string) $appParts['host'] : 'localhost';
 
     return [
         'name' => $nodeName,
         'slug' => slugify((string) env_value('NODE_SLUG', $nodeName)),
         'app_url' => $appUrl,
+        'admin_sftp_host' => $appHost,
+        'admin_sftp_port' => (string) env_value('ADMIN_SFTP_PORT', '22220'),
+        'admin_sftp_username' => (string) env_value('ADMIN_SFTP_USERNAME', 'paneladmin'),
+        'admin_sftp_password' => (string) env_value('ADMIN_SFTP_PASSWORD', ''),
+        'admin_sftp_root' => 'panel',
+        'admin_sftp_opt_path' => 'panel/opt',
         'api_status_url' => $appUrl . '/?route=api_node_status',
         'api_servers_url' => $appUrl . '/?route=api_node_servers',
         'api_hosts_url' => $appUrl . '/?route=api_node_hosts',

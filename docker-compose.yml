@@ -23,6 +23,9 @@ services:
       SHARED_INSTALLER_PATH: ${SHARED_INSTALLER_PATH}
       ADMIN_DEFAULT_USERNAME: ${ADMIN_DEFAULT_USERNAME}
       ADMIN_DEFAULT_PASSWORD: ${ADMIN_DEFAULT_PASSWORD}
+      ADMIN_SFTP_PORT: ${ADMIN_SFTP_PORT}
+      ADMIN_SFTP_USERNAME: ${ADMIN_SFTP_USERNAME}
+      ADMIN_SFTP_PASSWORD: ${ADMIN_SFTP_PASSWORD}
       INSTANCE_BASE_PATH: ${INSTANCE_BASE_PATH}
       BACKUP_BASE_PATH: ${BACKUP_BASE_PATH}
       TZ: ${TZ}
@@ -80,6 +83,7 @@ services:
       TZ: ${TZ}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - /opt:/opt
       - ${INSTANCE_BASE_PATH}:${INSTANCE_BASE_PATH}
       - ${BACKUP_BASE_PATH}:${BACKUP_BASE_PATH}
       - ${SHARED_GAME_PATH}:${SHARED_GAME_PATH}
@@ -98,6 +102,7 @@ services:
     ports:
       - "${ADMIN_SFTP_PORT}:22"
     volumes:
+      - /opt:/home/${ADMIN_SFTP_USERNAME}/panel/opt
       - ${INSTANCE_BASE_PATH}:/home/${ADMIN_SFTP_USERNAME}/panel/instances
       - ${BACKUP_BASE_PATH}:/home/${ADMIN_SFTP_USERNAME}/panel/backups
       - ${SHARED_GAME_PATH}:/home/${ADMIN_SFTP_USERNAME}/panel/shared/game
