@@ -693,6 +693,40 @@ if ($route === 'action' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     redirect_route('game_servers');
 }
 
+if ($route === 'server_command' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    require_login();
+
+    $instanceId = (string) ($_POST['instance_id'] ?? '');
+    $action = (string) ($_POST['action'] ?? '');
+    $server = find_instance_with_host($instanceId);
+
+    if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
+        json_response(['ok' => false, 'error' => 'Managed host for this server is missing or disabled.'], 404);
+    }
+
+    $agent = agent_post_for_host($server, '/instance/action', [
+        'instance_id' => $instanceId,
+        'action' => $action,
+    ]);
+
+    if (($agent['ok'] ?? false) && $action !== 'logs') {
+        $stmt = db()->prepare('UPDATE server_instances SET status = ? WHERE instance_id = ?');
+        $stmt->execute([$action, $instanceId]);
+    }
+
+    $updatedServer = find_instance_with_host($instanceId) ?: $server;
+
+    json_response([
+        'ok' => (bool) ($agent['ok'] ?? false),
+        'action' => $action,
+        'instance_id' => $instanceId,
+        'panel_status' => (string) ($updatedServer['status'] ?? 'unknown'),
+        'message' => ($agent['ok'] ?? false) ? 'Action completed.' : 'Action failed.',
+        'result' => $agent['result'] ?? null,
+        'error' => $agent['error'] ?? null,
+    ], ($agent['ok'] ?? false) ? 200 : 500);
+}
+
 if ($route === 'server_live') {
     require_login();
 
@@ -1032,11 +1066,9 @@ if ($route === 'server') {
             <?php if ($vncUrl): ?><a class="button-link" href="<?= h($vncUrl) ?>">Direct VNC</a><?php endif; ?>
             <a class="button-link" href="/?route=logs&amp;instance_id=<?= h($server['instance_id']) ?>">Logs</a>
             <?php foreach (['start', 'stop', 'restart', 'pull', 'rebuild'] as $act): ?>
-                <form method="post" action="/?route=action" style="display:inline;" class="server-action-form">
+                <form method="post" action="/?route=server_command" style="display:inline;" class="server-action-form">
                     <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
                     <input type="hidden" name="action" value="<?= h($act) ?>">
-                    <input type="hidden" name="redirect_to" value="server">
-                    <input type="hidden" name="response_format" value="json">
                     <button class="<?= in_array($act, ['pull', 'rebuild'], true) ? 'gray' : '' ?>" type="submit"><?= h($act) ?></button>
                 </form>
             <?php endforeach; ?>
