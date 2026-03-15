@@ -17,6 +17,9 @@ COPY run/nobody/ /usr/local/bin/
 # add pre-configured config files for nobody
 COPY config/nobody/ /home/nobody/.build/
 
+# add server launcher templates
+COPY serverFiles/ /home/nobody/.build/serverFiles/
+
 # add rootfs files
 
 COPY build/rootfs /
