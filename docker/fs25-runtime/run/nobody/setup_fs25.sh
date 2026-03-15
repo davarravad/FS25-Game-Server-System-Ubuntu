@@ -1,17 +1,27 @@
 #!/bin/bash
 
+set -u
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NOCOLOR='\033[0m'
+
 # Path to the game installer directory (where the game installation files are stored)
 INSTALL_DIR="/opt/fs25/installer"
-GAME_INSTALL_DIR="/opt/fs25/game/Farming Simulator 2025"
+GAME_ROOT_DIR="/opt/fs25/game"
+GAME_INSTALL_DIR="${GAME_ROOT_DIR}/Farming Simulator 2025"
 
-# Path to the config  directory (where the game config files are stored)
+# Path to the config directory (where the game config files are stored)
 CONFIG_DIR="/opt/fs25/config"
+INSTANCE_PROFILE_DIR="${CONFIG_DIR}/FarmingSimulator2025"
+SETUP_MARKER="${INSTANCE_PROFILE_DIR}/.setup-complete"
 
 # Path to the DLC installer directory (where downloaded DLCs are stored)
 DLC_DIR="/opt/fs25/dlc"
 
 # Path to the DLC install directory
-PDLC_DIR="${CONFIG_DIR}/FarmingSimulator2025/pdlc"
+PDLC_DIR="${INSTANCE_PROFILE_DIR}/pdlc"
 
 # DLC filename prefix (used to identify official DLC packages)
 DLC_PREFIX="FarmingSimulator25_"
@@ -22,18 +32,38 @@ WEB_CONFIG="$HOME/.fs25server/drive_c/Program Files (x86)/Farming Simulator 2025
 SERVER_CONFIG="$HOME/.fs25server/drive_c/users/$USER/Documents/My Games/FarmingSimulator2025/dedicated_server/dedicatedServerConfig.xml"
 HOST_GAME_EXEC="${GAME_INSTALL_DIR}/FarmingSimulator2025.exe"
 HOST_GAME_VERSION="${GAME_INSTALL_DIR}/VERSION"
-HOST_SERVER_CONFIG="${CONFIG_DIR}/FarmingSimulator2025/dedicated_server/dedicatedServerConfig.xml"
 HOST_WEB_CONFIG="${GAME_INSTALL_DIR}/dedicatedServer.xml"
 HOST_GAME_DIR_MARKER="${GAME_INSTALL_DIR}/x64"
-HOST_CONFIG_DIR_MARKER="${CONFIG_DIR}/FarmingSimulator2025"
 
-has_existing_install() {
+ensure_runtime_directories() {
+    mkdir -p "$INSTALL_DIR" "$GAME_ROOT_DIR" "$CONFIG_DIR" "$INSTANCE_PROFILE_DIR" "$DLC_DIR"
+}
+
+has_shared_game_install() {
     [ -f "$HOST_GAME_EXEC" ] ||
     [ -f "$HOST_GAME_VERSION" ] ||
-    [ -f "$HOST_SERVER_CONFIG" ] ||
     [ -f "$HOST_WEB_CONFIG" ] ||
-    [ -d "$HOST_GAME_DIR_MARKER" ] ||
-    [ -d "$HOST_CONFIG_DIR_MARKER" ]
+    [ -d "$HOST_GAME_DIR_MARKER" ]
+}
+
+has_instance_setup_completed() {
+    [ -f "$SETUP_MARKER" ] &&
+    [ -f "$SERVER_CONFIG" ] &&
+    [ -f "$WEB_CONFIG" ]
+}
+
+resolve_installer_path() {
+    if [ -f "$INSTALL_DIR/FarmingSimulator2025.exe" ]; then
+        INSTALLER_PATH="$INSTALL_DIR/FarmingSimulator2025.exe"
+        return 0
+    fi
+
+    if [ -f "$INSTALL_DIR/Setup.exe" ]; then
+        INSTALLER_PATH="$INSTALL_DIR/Setup.exe"
+        return 0
+    fi
+
+    return 1
 }
 
 scan_dlc_installers() {
@@ -96,25 +126,10 @@ report_installed_dlcs() {
     fi
 }
 
-if [ ! -d "$INSTALL_DIR" ]; then
-    echo -e "${RED}ERROR: Installer directory not found at ${INSTALL_DIR}${NOCOLOR}"
-    exit 1
-fi
+ensure_runtime_directories
 
-# Check which installer file exists
-if [ -f "$INSTALL_DIR/FarmingSimulator2025.exe" ]; then
-    INSTALLER_PATH="$INSTALL_DIR/FarmingSimulator2025.exe"
-elif [ -f "$INSTALL_DIR/Setup.exe" ]; then
-    INSTALLER_PATH="$INSTALL_DIR/Setup.exe"
-else
-    echo "Error: No installer found in $INSTALL_DIR"
-    exit 1
-fi
-
-echo -e "${GREEN}INFO: Using installer at ${INSTALLER_PATH}${NOCOLOR}"
-
-if has_existing_install; then
-    echo -e "${YELLOW}INFO: Existing FS25 game files or server config detected in the mounted host paths. setup_fs25.sh will not overwrite this server.${NOCOLOR}"
+if has_instance_setup_completed; then
+    echo -e "${YELLOW}INFO: Setup already completed for this server profile. Leaving the shared game install and server config untouched.${NOCOLOR}"
     exit 0
 fi
 
@@ -128,13 +143,15 @@ REQUIRED_SPACE=50
 
 . /usr/local/bin/wine_symlinks.sh
 
-if has_existing_install || { [ -f "$FS25_EXEC" ] && [ -f "$WEB_CONFIG" ] && [ -f "$SERVER_CONFIG" ]; }; then
-        echo -e "${YELLOW}INFO: Existing FS25 install and server config detected. setup_fs25.sh will not overwrite this server.${NOCOLOR}"
-        exit 0
-fi
+if has_shared_game_install; then
+        echo -e "${GREEN}INFO: Shared FS25 game files already exist in ${GAME_INSTALL_DIR}. Skipping the game installer.${NOCOLOR}"
+else
+        if ! resolve_installer_path; then
+                echo -e "${RED}ERROR: No installer found in ${INSTALL_DIR}. Upload or copy the extracted FS25 installer there before running Setup.${NOCOLOR}"
+                exit 1
+        fi
 
-# Check if the executable exists
-if [ ! -f "$FS25_EXEC" ]; then
+        echo -e "${GREEN}INFO: Using installer at ${INSTALLER_PATH}${NOCOLOR}"
         echo -e "${GREEN}INFO: FarmingSimulator2025.exe does not exist. Checking available space...${NOCOLOR}"
 
         # Get available free space in /opt/fs25 (in GB)
@@ -148,8 +165,6 @@ if [ ! -f "$FS25_EXEC" ]; then
 
         echo -e "${GREEN}INFO: Sufficient space available. Running the installer...${NOCOLOR}"
         wine "$INSTALLER_PATH" "/SILENT" "/NOCANCEL" "/NOICONS"
-else
-        echo -e "${GREEN}INFO: FarmingSimulator2025.exe already exists. No action needed.${NOCOLOR}"
 fi
 
 # Cleanup Desktop
@@ -172,6 +187,9 @@ count=$(ls -1 ~/.fs25server/drive_c/users/$USER/Documents/My\ Games/FarmingSimul
 if [ $count != 0 ]; then
         echo -e "${GREEN}INFO: Generating the game license files as needed!${NOCOLOR}"
 else
+        if [ ! -f "$FS25_EXEC" ]; then
+                echo -e "${RED}ERROR: The shared game install is still missing after setup. Aborting before touching server config.${NOCOLOR}" && exit 1
+        fi
         wine ~/.fs25server/drive_c/Program\ Files\ \(x86\)/Farming\ Simulator\ 2025/FarmingSimulator2025.exe
 fi
 
@@ -234,6 +252,7 @@ cp /opt/fs25/game/Farming\ Simulator\ 2025/VERSION /opt/fs25/config/FarmingSimul
 # Check config if not exist exit
 
 if [ -f ~/.fs25server/drive_c/users/$USER/Documents/My\ Games/FarmingSimulator2025/dedicated_server/dedicatedServerConfig.xml ]; then
+        touch "${SETUP_MARKER}"
         echo -e "${GREEN}INFO: We can run the server now by clicking on 'Start Server' on the desktop!${NOCOLOR}"
 else
         echo -e "${RED}ERROR: We are missing files?${NOCOLOR}" && exit
