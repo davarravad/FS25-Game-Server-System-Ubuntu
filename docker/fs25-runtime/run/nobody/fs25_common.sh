@@ -29,11 +29,13 @@ CUSTOM_PORT_VALUE="${WEB_PORT:-${SERVER_PORT:-}}"
 PORT_SERVER_DIR=""
 PORT_X64_DIR=""
 PORT_LAUNCHER_PATH=""
+PORT_SERVER_EXE=""
 
 if [[ -n "$CUSTOM_PORT_VALUE" ]] && [[ "$CUSTOM_PORT_VALUE" =~ ^[0-9]+$ ]]; then
     PORT_SERVER_DIR="${GAME_INSTALL_DIR}/${CUSTOM_PORT_VALUE}"
     PORT_X64_DIR="${PORT_SERVER_DIR}/x64"
     PORT_LAUNCHER_PATH="${GAME_INSTALL_DIR}/start_fs25_${CUSTOM_PORT_VALUE}.sh"
+    PORT_SERVER_EXE="${PORT_SERVER_DIR}/dedicatedServer.exe"
 fi
 
 ensure_runtime_directories() {
@@ -54,6 +56,7 @@ require_custom_port() {
     PORT_SERVER_DIR="${GAME_INSTALL_DIR}/${CUSTOM_PORT_VALUE}"
     PORT_X64_DIR="${PORT_SERVER_DIR}/x64"
     PORT_LAUNCHER_PATH="${GAME_INSTALL_DIR}/start_fs25_${CUSTOM_PORT_VALUE}.sh"
+    PORT_SERVER_EXE="${PORT_SERVER_DIR}/dedicatedServer.exe"
 }
 
 has_shared_game_install() {
@@ -100,6 +103,14 @@ copy_tree_contents() {
 
 escape_sed_replacement() {
     printf '%s' "$1" | sed 's/[\/&]/\\&/g'
+}
+
+xml_escape() {
+    local value="$1"
+    value="${value//&/&amp;}"
+    value="${value//</&lt;}"
+    value="${value//>/&gt;}"
+    printf '%s' "$value"
 }
 
 scan_dlc_installers() {
@@ -231,6 +242,28 @@ refresh_game_version_cache() {
     fi
 }
 
+update_port_server_xml() {
+    require_custom_port
+
+    if [ ! -f "${PORT_SERVER_DIR}/dedicatedServer.xml" ]; then
+        return 0
+    fi
+
+    local tls_port=""
+    local escaped_web_username=""
+    local escaped_web_password=""
+
+    tls_port="$((CUSTOM_PORT_VALUE + 10000))"
+    escaped_web_username="$(escape_sed_replacement "$(xml_escape "${WEB_USERNAME:-admin}")")"
+    escaped_web_password="$(escape_sed_replacement "$(xml_escape "${WEB_PASSWORD:-webpassword}")")"
+
+    sed -i -E "s/(<webserver port=\")[0-9]+(\">)/\1${CUSTOM_PORT_VALUE}\2/" "${PORT_SERVER_DIR}/dedicatedServer.xml"
+    sed -i -E "s/(<tls port=\")[0-9]+(\" active=\")/\1${tls_port}\2/" "${PORT_SERVER_DIR}/dedicatedServer.xml"
+    sed -i -E "s#<username>[^<]*</username>#<username>${escaped_web_username}</username>#" "${PORT_SERVER_DIR}/dedicatedServer.xml"
+    sed -i -E "s#<passphrase>[^<]*</passphrase>#<passphrase>${escaped_web_password}</passphrase>#" "${PORT_SERVER_DIR}/dedicatedServer.xml"
+    sed -i -E 's/exe="[^"]*"/exe="run.bat"/' "${PORT_SERVER_DIR}/dedicatedServer.xml"
+}
+
 prepare_port_server_files() {
     require_custom_port
 
@@ -282,14 +315,11 @@ prepare_port_server_files() {
             exit 1
         fi
 
-        sed -i "s/port=\"2521\"/port=\"${CUSTOM_PORT_VALUE}\"/" "${PORT_SERVER_DIR}/dedicatedServer.xml"
-        sed -i "s/port=\"12521\"/port=\"${tls_port}\"/" "${PORT_SERVER_DIR}/dedicatedServer.xml"
-        sed -i "s/<username>admin<\\/username>/<username>${escaped_web_username}<\\/username>/" "${PORT_SERVER_DIR}/dedicatedServer.xml"
-        sed -i "s/<passphrase>[^<]*<\\/passphrase>/<passphrase>${escaped_web_password}<\\/passphrase>/" "${PORT_SERVER_DIR}/dedicatedServer.xml"
-        sed -i 's/exe="[^"]*"/exe="run.bat"/' "${PORT_SERVER_DIR}/dedicatedServer.xml"
     else
         echo -e "${YELLOW}INFO: Existing ${PORT_SERVER_DIR}/dedicatedServer.xml found, leaving it untouched.${NOCOLOR}"
     fi
+
+    update_port_server_xml
 
     if [ ! -f "${PORT_X64_DIR}/run.bat" ]; then
         if [ -f "$run_bat_template" ]; then
