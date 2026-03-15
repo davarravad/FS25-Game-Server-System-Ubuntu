@@ -661,6 +661,17 @@ if ($route === 'action' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect_route('game_servers');
     }
 
+    if (in_array($action, ['start', 'restart', 'rebuild', 'pull'], true)) {
+        $sync = sync_instance_config_for_server($server);
+        if (!($sync['ok'] ?? false)) {
+            if ($wantsJson) {
+                json_response(['ok' => false, 'error' => 'Config sync failed: ' . ($sync['error'] ?? 'Unknown error')], 500);
+            }
+            flash('Config sync failed: ' . ($sync['error'] ?? 'Unknown error'));
+            redirect_route('game_servers');
+        }
+    }
+
     $agent = agent_post_for_host($server, '/instance/action', [
         'instance_id' => $instanceId,
         'action' => $action,
@@ -707,6 +718,13 @@ if ($route === 'server_command' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
         json_response(['ok' => false, 'error' => 'Managed host for this server is missing or disabled.'], 404);
+    }
+
+    if (in_array($action, ['start', 'restart', 'rebuild', 'pull'], true)) {
+        $sync = sync_instance_config_for_server($server);
+        if (!($sync['ok'] ?? false)) {
+            json_response(['ok' => false, 'error' => 'Config sync failed: ' . ($sync['error'] ?? 'Unknown error')], 500);
+        }
     }
 
     $agent = agent_post_for_host($server, '/instance/action', [

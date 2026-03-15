@@ -564,6 +564,33 @@ function instance_metrics_for_server(array $server): array
     ]);
 }
 
+function sync_instance_config_for_server(array $server): array
+{
+    $instanceId = (string) ($server['instance_id'] ?? '');
+    if ($instanceId === '') {
+        return ['ok' => false, 'error' => 'Missing instance id'];
+    }
+
+    return agent_post_for_host($server, '/instance/sync', [
+        'instance_id' => $instanceId,
+        'server_name' => (string) ($server['server_name'] ?? $instanceId),
+        'image_name' => (string) ($server['image_name'] ?? 'toetje585/arch-fs25server:latest'),
+        'server_port' => (int) ($server['server_port'] ?? 10823),
+        'web_port' => (int) ($server['web_port'] ?? 18000),
+        'vnc_port' => (int) ($server['vnc_port'] ?? 5900),
+        'novnc_port' => (int) ($server['novnc_port'] ?? 6080),
+        'sftp_port' => (int) ($server['sftp_port'] ?? 2222),
+        'sftp_username' => (string) ($server['sftp_username'] ?? 'fs25'),
+        'sftp_password' => (string) ($server['sftp_password'] ?? 'changeme'),
+        'server_players' => (int) ($server['server_players'] ?? 16),
+        'server_region' => (string) ($server['server_region'] ?? 'en'),
+        'server_map' => (string) ($server['server_map'] ?? 'MapUS'),
+        'shared_game_path' => (string) ($server['shared_game_path'] ?? '/opt/fs25/game'),
+        'shared_dlc_path' => (string) ($server['shared_dlc_path'] ?? '/opt/fs25/dlc'),
+        'shared_installer_path' => (string) ($server['shared_installer_path'] ?? '/opt/fs25/installer'),
+    ]);
+}
+
 function format_bytes_human(int $bytes): string
 {
     if ($bytes <= 0) {
