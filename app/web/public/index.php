@@ -1296,6 +1296,25 @@ if ($route === 'server') {
             inlineStatus.style.borderColor = isError ? '#b91c1c' : '#334155';
         }
 
+        function fallbackCopyText(value) {
+            if (!vncPasswordField) {
+                return false;
+            }
+            vncPasswordField.removeAttribute('readonly');
+            vncPasswordField.focus();
+            vncPasswordField.select();
+            vncPasswordField.setSelectionRange(0, value.length);
+            let copied = false;
+            try {
+                copied = document.execCommand('copy');
+            } catch (error) {
+                copied = false;
+            }
+            vncPasswordField.setAttribute('readonly', 'readonly');
+            window.getSelection()?.removeAllRanges?.();
+            return copied;
+        }
+
         function renderContainerStatuses(containers) {
             if (!containerStatusList) {
                 return;
@@ -1423,8 +1442,16 @@ if ($route === 'server') {
         if (copyVncPassword && vncPasswordField) {
             copyVncPassword.addEventListener('click', async () => {
                 try {
-                    await navigator.clipboard.writeText(vncPasswordField.value);
-                    setInlineStatus('VNC password copied.');
+                    if (navigator.clipboard && window.isSecureContext) {
+                        await navigator.clipboard.writeText(vncPasswordField.value);
+                        setInlineStatus('VNC password copied.');
+                        return;
+                    }
+                    if (fallbackCopyText(vncPasswordField.value)) {
+                        setInlineStatus('VNC password copied.');
+                        return;
+                    }
+                    throw new Error('Copy is not available in this browser context.');
                 } catch (error) {
                     setInlineStatus('Unable to copy VNC password.', true);
                 }
