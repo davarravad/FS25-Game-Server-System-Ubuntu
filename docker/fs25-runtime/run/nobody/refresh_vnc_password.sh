@@ -7,9 +7,12 @@ export USER="nobody"
 
 VNC_PASSWD_DIR="/home/nobody/.vnc"
 VNC_PASSWD_PATH="${VNC_PASSWD_DIR}/passwd"
+TARGET_UID="$(stat -c '%u' /home/nobody 2>/dev/null || echo "${PUID:-1000}")"
+TARGET_GID="$(stat -c '%g' /home/nobody 2>/dev/null || echo "${PGID:-1000}")"
 
 mkdir -p "${VNC_PASSWD_DIR}"
 chmod 700 "${VNC_PASSWD_DIR}"
+chown "${TARGET_UID}:${TARGET_GID}" "${VNC_PASSWD_DIR}" 2>/dev/null || true
 
 if [[ -z "${VNC_PASSWORD:-}" ]]; then
     rm -f "${VNC_PASSWD_PATH}"
@@ -30,10 +33,12 @@ fi
 
 printf '%s\n' "${VNC_PASSWORD}" | vncpasswd -f > "${VNC_PASSWD_PATH}"
 chmod 600 "${VNC_PASSWD_PATH}"
+chown "${TARGET_UID}:${TARGET_GID}" "${VNC_PASSWD_PATH}" 2>/dev/null || true
 
 if [[ ! -s "${VNC_PASSWD_PATH}" ]]; then
     echo "[crit] VNC password file was not created at ${VNC_PASSWD_PATH}."
     exit 1
 fi
 
+ls -ld "${VNC_PASSWD_DIR}" "${VNC_PASSWD_PATH}" 2>/dev/null || true
 echo "[info] Refreshed VNC password file at ${VNC_PASSWD_PATH}."
