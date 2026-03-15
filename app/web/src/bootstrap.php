@@ -796,7 +796,17 @@ function instance_access_url(array $server, string $kind): ?string
     }
 
     $scheme = $parts['scheme'] ?? 'http';
-    $host = $parts['host'];
+    $host = (string) $parts['host'];
+    $appUrl = rtrim((string) env_value('APP_URL', 'http://localhost:8080'), '/');
+    $appParts = parse_url($appUrl);
+    $fallbackHost = is_array($appParts) && !empty($appParts['host']) ? (string) $appParts['host'] : null;
+    $fallbackScheme = is_array($appParts) && !empty($appParts['scheme']) ? (string) $appParts['scheme'] : 'http';
+
+    if (in_array(strtolower($host), ['agent', 'localhost', '127.0.0.1', '::1'], true) && $fallbackHost) {
+        $host = $fallbackHost;
+        $scheme = $fallbackScheme;
+    }
+
     $port = match ($kind) {
         'web' => (int) ($server['web_port'] ?? 0),
         'novnc' => (int) ($server['novnc_port'] ?? 0),
@@ -806,6 +816,17 @@ function instance_access_url(array $server, string $kind): ?string
 
     if ($port <= 0) {
         return null;
+    }
+
+    if ($kind === 'novnc') {
+        return sprintf(
+            '%s://%s:%d/vnc.html?resize=remote&host=%s&port=%d&autoconnect=1',
+            $scheme,
+            $host,
+            $port,
+            rawurlencode($host),
+            $port
+        );
     }
 
     return sprintf('%s://%s:%d', $scheme, $host, $port);
