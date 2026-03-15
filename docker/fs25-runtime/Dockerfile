@@ -3,10 +3,10 @@ LABEL org.opencontainers.image.authors="Toetje585"
 LABEL org.opencontainers.image.source="https://github.com/winegameservers/arch-fs25server"
 
 # release tag name from buildx arg
-ARG RELEASETAG
+ARG RELEASETAG=local
 
 # arch from buildx --platform, e.g. amd64
-ARG TARGETARCH
+ARG TARGETARCH=amd64
 
 # add install bash script
 COPY build/root/ /root/
