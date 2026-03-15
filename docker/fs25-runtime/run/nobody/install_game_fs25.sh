@@ -5,20 +5,55 @@ set -euo pipefail
 . /usr/local/bin/runtime_log.sh
 . /usr/local/bin/fs25_common.sh
 
+KEEP_OPEN_DONE=0
+
+keep_terminal_open() {
+    if [ "$KEEP_OPEN_DONE" -eq 1 ]; then
+        return
+    fi
+    KEEP_OPEN_DONE=1
+    echo
+    echo "Install Game finished. Review the messages above."
+    read -r -p "Press Enter to close this window..." _
+}
+
+trap keep_terminal_open EXIT
+
 ensure_runtime_directories
 runtime_log_write "Install Game: checking shared game installation..."
-scan_dlc_installers
-report_installed_dlcs
 
 . /usr/local/bin/wine_init.sh
 . /usr/local/bin/wine_symlinks.sh
 
 if has_shared_game_install; then
     echo -e "${GREEN}INFO: Shared FS25 game files already exist in ${GAME_INSTALL_DIR}. Skipping reinstall.${NOCOLOR}"
+    echo
+    read -r -p "Reinstall the shared game anyway? [y/N]: " reinstall_choice
+    if [[ ! "${reinstall_choice:-}" =~ ^[Yy]$ ]]; then
+        echo -e "${GREEN}INFO: Leaving the existing shared game install untouched.${NOCOLOR}"
+    else
+        if ! resolve_installer_path; then
+            echo -e "${RED}ERROR: No game installer found in ${INSTALL_DIR}. Upload or extract the FS25 installer there first.${NOCOLOR}"
+            exit 1
+        fi
+
+        REQUIRED_SPACE=50
+        AVAILABLE_SPACE=$(df --output=avail /opt/fs25 | tail -1)
+        AVAILABLE_SPACE=$((AVAILABLE_SPACE / 1024 / 1024))
+
+        if [ "$AVAILABLE_SPACE" -lt "$REQUIRED_SPACE" ]; then
+            echo -e "${RED}ERROR: Not enough free space in /opt/fs25. Required: ${REQUIRED_SPACE} GB, Available: ${AVAILABLE_SPACE} GB${NOCOLOR}"
+            exit 1
+        fi
+
+        echo -e "${GREEN}INFO: Using installer at ${INSTALLER_PATH}${NOCOLOR}"
+        echo -e "${GREEN}INFO: Reinstalling shared game files...${NOCOLOR}"
+        runtime_log_write "Install Game: reinstalling shared game installer..."
+        wine "$INSTALLER_PATH" "/SILENT" "/NOCANCEL" "/NOICONS"
+    fi
 else
     if ! resolve_installer_path; then
-        echo -e "${RED}ERROR: No installer found in ${INSTALL_DIR}. Upload or extract the FS25 installer there first.${NOCOLOR}"
-        pause_before_exit
+        echo -e "${RED}ERROR: No game installer found in ${INSTALL_DIR}. Upload or extract the FS25 installer there first.${NOCOLOR}"
         exit 1
     fi
 
@@ -28,7 +63,6 @@ else
 
     if [ "$AVAILABLE_SPACE" -lt "$REQUIRED_SPACE" ]; then
         echo -e "${RED}ERROR: Not enough free space in /opt/fs25. Required: ${REQUIRED_SPACE} GB, Available: ${AVAILABLE_SPACE} GB${NOCOLOR}"
-        pause_before_exit
         exit 1
     fi
 
@@ -37,6 +71,9 @@ else
     runtime_log_write "Install Game: running shared game installer..."
     wine "$INSTALLER_PATH" "/SILENT" "/NOCANCEL" "/NOICONS"
 fi
+
+scan_dlc_installers
+report_installed_dlcs
 
 cleanup_desktop_icons
 ensure_license_files
@@ -52,4 +89,3 @@ runtime_log_write "Install Game: shared game install is ready."
 
 echo -e "${GREEN}INFO: Shared game install is ready at ${GAME_INSTALL_DIR}${NOCOLOR}"
 echo -e "${GREEN}INFO: Next step: click 'Setup Server' to prepare this instance safely.${NOCOLOR}"
-pause_before_exit
