@@ -40,13 +40,13 @@ fi
 
 if [ -n "${CUSTOM_PORT_VALUE}" ] && [ -x "${LAUNCHER_PATH}" ]
 then
-    "${LAUNCHER_PATH}" & sleep 1 && firefox "http://"$CONTAINER_IP":"$WEB_PORT_VALUE"/index.html?lang=en&username="$WEB_USERNAME"&password="$WEB_PASSWORD"&login=Login"
+    "${LAUNCHER_PATH}" &
 elif [ -n "${CUSTOM_PORT_VALUE}" ] && [ -f "${CUSTOM_SERVER_EXE}" ]
 then
-    wine "${CUSTOM_SERVER_EXE}" & sleep 1 && firefox "http://"$CONTAINER_IP":"$WEB_PORT_VALUE"/index.html?lang=en&username="$WEB_USERNAME"&password="$WEB_PASSWORD"&login=Login"
+    wine "${CUSTOM_SERVER_EXE}" &
 elif [ -f ~/.fs25server/drive_c/Program\ Files\ \(x86\)/Farming\ Simulator\ 2025/dedicatedServer.exe ]
 then
-    wine ~/.fs25server/drive_c/Program\ Files\ \(x86\)/Farming\ Simulator\ 2025/dedicatedServer.exe & sleep 1 && firefox "http://"$CONTAINER_IP":7999/index.html?lang=en&username="$WEB_USERNAME"&password="$WEB_PASSWORD"&login=Login"
+    wine ~/.fs25server/drive_c/Program\ Files\ \(x86\)/Farming\ Simulator\ 2025/dedicatedServer.exe &
 else
     echo "Game not installed?" && exit
 fi
