@@ -740,7 +740,19 @@ def restart_dedicated_server_backend(instance_id: str) -> dict:
 
     kill_script = r"""
 set -eu
-matches="$(pgrep -af 'dedicatedServer\.exe' || true)"
+
+find_matches() {
+  ps -eo pid=,args= | awk '
+    $0 ~ /[\/\\]dedicatedServer\.exe([[:space:]]|$)/ &&
+    $0 !~ /sh -lc/ &&
+    $0 !~ /awk / &&
+    $0 !~ /grep / {
+      print
+    }
+  '
+}
+
+matches="$(find_matches)"
 if [ -z "$matches" ]; then
   echo "No dedicatedServer.exe process is running."
   exit 0
@@ -749,8 +761,9 @@ fi
 printf '%s\n' "$matches" >&2
 printf '%s\n' "$matches" | awk '{print $1}' | xargs -r kill -TERM
 sleep 2
-remaining="$(pgrep -af 'dedicatedServer\.exe' || true)"
+remaining="$(find_matches)"
 if [ -n "$remaining" ]; then
+  printf '%s\n' "$remaining" >&2
   printf '%s\n' "$remaining" | awk '{print $1}' | xargs -r kill -KILL
 fi
 echo "dedicatedServer.exe process terminated."
