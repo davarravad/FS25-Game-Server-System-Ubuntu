@@ -1006,6 +1006,7 @@ function instance_access_url(array $server, string $kind): ?string
 
     $port = match ($kind) {
         'web' => (int) ($server['web_port'] ?? 0),
+        'tls' => (int) ($server['tls_port'] ?? 0),
         'vnc' => (int) ($server['vnc_port'] ?? 0),
         'novnc' => (int) ($server['novnc_port'] ?? 0),
         'sftp' => (int) ($server['sftp_port'] ?? 0),
@@ -1033,6 +1034,10 @@ function instance_access_url(array $server, string $kind): ?string
 
     if ($kind === 'sftp') {
         return sprintf('sftp://%s:%d', $host, $port);
+    }
+
+    if ($kind === 'tls') {
+        return sprintf('https://%s:%d', $host, $port);
     }
 
     return sprintf('%s://%s:%d', $scheme, $host, $port);

@@ -315,6 +315,7 @@ def public_port_rules(values: dict | None) -> list[tuple[int, str, str]]:
         ("SERVER_PORT", "tcp", "game"),
         ("SERVER_PORT", "udp", "game"),
         ("WEB_PORT", "tcp", "web"),
+        ("TLS_PORT", "tcp", "tls"),
         ("SFTP_PORT", "tcp", "sftp"),
     ]
 
