@@ -157,11 +157,13 @@ if ($route === 'api_node_servers') {
             'host_name' => (string) ($server['host_name'] ?? ''),
             'server_port' => (int) ($server['server_port'] ?? 0),
             'web_port' => (int) ($server['web_port'] ?? 0),
+            'tls_port' => (int) ($server['tls_port'] ?? 0),
             'vnc_port' => (int) ($server['vnc_port'] ?? 0),
             'novnc_port' => (int) ($server['novnc_port'] ?? 0),
             'sftp_port' => (int) ($server['sftp_port'] ?? 0),
             'sftp_username' => (string) ($server['sftp_username'] ?? ''),
             'web_url' => instance_access_url($server, 'web'),
+            'tls_url' => instance_access_url($server, 'tls'),
             'vnc_url' => instance_access_url($server, 'vnc'),
             'novnc_url' => instance_access_url($server, 'novnc'),
             'sftp_url' => instance_access_url($server, 'sftp'),
@@ -1142,6 +1144,7 @@ if ($route === 'server') {
     $metricsResult = instance_metrics_for_server($server);
     $metrics = ($metricsResult['metrics'] ?? []);
     $webUrl = instance_access_url($server, 'web');
+    $tlsUrl = instance_access_url($server, 'tls');
     $vncUrl = instance_access_url($server, 'vnc');
     $novncUrl = instance_access_url($server, 'novnc');
     $logsAgent = agent_post_for_host($server, '/instance/action', [
@@ -1249,6 +1252,7 @@ if ($route === 'server') {
                             <a class="button-link" href="/?route=logs&amp;instance_id=<?= h($server['instance_id']) ?>">Logs</a>
                             <?php if ($novncUrl): ?><a class="button-link" href="/?route=console&amp;instance_id=<?= h($server['instance_id']) ?>">VNC Viewer</a><?php endif; ?>
                             <?php if ($webUrl): ?><a class="button-link" href="<?= h($webUrl) ?>" target="_blank" rel="noreferrer">Game Webpage</a><?php endif; ?>
+                            <?php if ($tlsUrl): ?><a class="button-link" href="<?= h($tlsUrl) ?>" target="_blank" rel="noreferrer">Game Webpage TLS</a><?php endif; ?>
                             <?php if ($vncUrl): ?><a class="button-link" href="<?= h($vncUrl) ?>">Direct VNC</a><?php endif; ?>
                         </div>
                     </div>
@@ -2461,6 +2465,7 @@ curl -X POST \
                 <?php foreach ($servers as $server): ?>
                     <?php
                         $webUrl = instance_access_url($server, 'web');
+                        $tlsUrl = instance_access_url($server, 'tls');
                         $novncUrl = instance_access_url($server, 'novnc');
                         $detailUrl = '/?route=server&instance_id=' . rawurlencode((string) $server['instance_id']);
                         $metrics = $server['metrics'] ?? [];
@@ -2482,6 +2487,7 @@ curl -X POST \
                         <div class="flex">
                             <div class="stat-chip">Game <?= h((string) $server['server_port']) ?></div>
                             <div class="stat-chip">Web <?= h((string) $server['web_port']) ?></div>
+                            <div class="stat-chip">TLS <?= h((string) ($server['tls_port'] ?? 0)) ?></div>
                             <div class="stat-chip">SFTP <?= h((string) $server['sftp_port']) ?></div>
                         </div>
                         <div class="health-grid">
@@ -2502,6 +2508,7 @@ curl -X POST \
                             <a class="button-link gray" href="<?= h($detailUrl) ?>">view details</a>
                             <?php if ($novncUrl): ?><a class="button-link" href="/?route=console&amp;instance_id=<?= h($server['instance_id']) ?>">vnc</a><?php endif; ?>
                             <?php if ($webUrl): ?><a class="button-link" href="<?= h($webUrl) ?>" target="_blank" rel="noreferrer">web</a><?php endif; ?>
+                            <?php if ($tlsUrl): ?><a class="button-link" href="<?= h($tlsUrl) ?>" target="_blank" rel="noreferrer">tls</a><?php endif; ?>
                             <a class="button-link" href="/?route=logs&amp;instance_id=<?= h($server['instance_id']) ?>">logs</a>
                         </div>
                     </div>
