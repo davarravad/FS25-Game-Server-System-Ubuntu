@@ -594,15 +594,8 @@ function internal_host_name(string $host): bool
 
 function novnc_query_host(string $host): string
 {
-    if ($host === '' || filter_var($host, FILTER_VALIDATE_IP) !== false) {
-        return $host;
-    }
-
-    $resolved = gethostbyname($host);
-    if ($resolved !== '' && $resolved !== $host && filter_var($resolved, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false) {
-        return $resolved;
-    }
-
+    // Keep DNS hostnames intact for browser-side noVNC websocket connections.
+    // Replacing domains with an IP can break TLS/SNI and reverse-proxy routing.
     return $host;
 }
 
