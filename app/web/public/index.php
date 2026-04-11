@@ -841,6 +841,15 @@ if ($route === 'server_live') {
         'instance_id' => $instanceId,
         'action' => 'logs',
     ]);
+    $includeDockerLogs = (string) ($_GET['include_docker_logs'] ?? '0') === '1';
+    $dockerLogsAgent = ['ok' => false, 'result' => ['stdout' => 'Docker logs disabled.']];
+    if ($includeDockerLogs) {
+        $dockerLogsAgent = agent_post_for_host($server, '/instance/action', [
+            'instance_id' => $instanceId,
+            'action' => 'docker_logs',
+            'log_lines' => 400,
+        ]);
+    }
     $metrics = ($metricsResult['metrics'] ?? []);
 
     json_response([
@@ -880,6 +889,10 @@ if ($route === 'server_live') {
             'Metrics query: ' . (($metricsResult['ok'] ?? false) ? 'ok' : 'failed'),
         ]),
         'log_output' => (string) ($logsAgent['result']['stdout'] ?? ($logsAgent['result']['stderr'] ?? 'No runtime logs returned')),
+        'docker_log_output' => $includeDockerLogs
+            ? (string) ($dockerLogsAgent['result']['stdout'] ?? ($dockerLogsAgent['result']['stderr'] ?? 'No Docker logs returned'))
+            : 'Docker logs disabled.',
+        'docker_logs_enabled' => $includeDockerLogs,
     ]);
 }
 
@@ -900,6 +913,16 @@ if ($route === 'logs') {
     ]);
     $metricsResult = instance_metrics_for_server($server);
     $metrics = ($metricsResult['metrics'] ?? []);
+    $includeDockerLogs = isset($_GET['docker_live']) && $_GET['docker_live'] === '1';
+    $dockerLogOutput = 'Docker logs disabled.';
+    if ($includeDockerLogs) {
+        $dockerAgent = agent_post_for_host($server, '/instance/action', [
+            'instance_id' => $instanceId,
+            'action' => 'docker_logs',
+            'log_lines' => 400,
+        ]);
+        $dockerLogOutput = (string) ($dockerAgent['result']['stdout'] ?? ($dockerAgent['result']['stderr'] ?? 'No Docker logs returned'));
+    }
 
     $logOutput = $agent['result']['stdout'] ?? ($agent['result']['stderr'] ?? 'No logs returned');
     $runtimeStatus = ($metrics['running'] ?? false) ? 'running' : 'stopped';
@@ -934,6 +957,8 @@ if ($route === 'logs') {
             .status-tile { background: #0b1020; border: 1px solid #243041; border-radius: 10px; padding: 12px; }
             .status-label { color: #a8b3c7; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
             .status-value { margin-top: 6px; font-size: 18px; font-weight: 700; }
+            .toggle-row { margin-top: 14px; display: flex; align-items: center; gap: 10px; }
+            .toggle-row input { width: 16px; height: 16px; }
         </style>
     </head>
     <body>
@@ -945,7 +970,7 @@ if ($route === 'logs') {
             </div>
             <div class="actions">
                 <a class="button-link" href="/?route=game_servers">Back to Game Servers</a>
-                <a class="button-link primary" href="/?route=logs&amp;instance_id=<?= h($server['instance_id']) ?>">Refresh Logs</a>
+                <a class="button-link primary" href="/?route=logs&amp;instance_id=<?= h($server['instance_id']) ?>&amp;docker_live=<?= $includeDockerLogs ? '1' : '0' ?>">Refresh Logs</a>
             </div>
         </div>
         <div class="content">
@@ -973,15 +998,70 @@ if ($route === 'logs') {
                         <div><?= h($line) ?></div>
                     <?php endforeach; ?>
                 </div>
+                <label class="toggle-row muted">
+                    <input id="docker-live-toggle" type="checkbox" <?= $includeDockerLogs ? 'checked' : '' ?>>
+                    Live Docker logs (refreshes every 3 seconds)
+                </label>
             </div>
             <div class="grid">
                 <div class="card">
                     <div class="muted" style="margin-bottom:10px;">Runtime lifecycle log</div>
-                    <pre><?= h($logOutput) ?></pre>
+                    <pre id="lifecycle-log-view"><?= h($logOutput) ?></pre>
+                </div>
+                <div class="card">
+                    <div class="muted" style="margin-bottom:10px;">Docker container log (fs25)</div>
+                    <pre id="docker-log-view"><?= h($dockerLogOutput) ?></pre>
                 </div>
             </div>
         </div>
     </div>
+    <script>
+        const instanceId = <?= json_encode($instanceId) ?>;
+        const lifecycleLogView = document.getElementById('lifecycle-log-view');
+        const dockerLogView = document.getElementById('docker-log-view');
+        const dockerToggle = document.getElementById('docker-live-toggle');
+
+        if (dockerToggle) {
+            dockerToggle.addEventListener('change', () => {
+                const url = new URL(window.location.href);
+                url.searchParams.set('docker_live', dockerToggle.checked ? '1' : '0');
+                window.location.href = url.toString();
+            });
+        }
+
+        const renderLogText = (target, text) => {
+            if (!target) {
+                return;
+            }
+            target.textContent = text || '';
+            target.scrollTop = target.scrollHeight;
+        };
+
+        const refreshLiveLogs = async () => {
+            const url = new URL('/?route=server_live', window.location.origin);
+            url.searchParams.set('instance_id', instanceId);
+            url.searchParams.set('include_docker_logs', dockerToggle && dockerToggle.checked ? '1' : '0');
+            try {
+                const response = await fetch(url.toString(), {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json' }
+                });
+                if (!response.ok) {
+                    return;
+                }
+                const payload = await response.json();
+                if (!payload || payload.ok !== true) {
+                    return;
+                }
+                renderLogText(lifecycleLogView, payload.log_output || 'No runtime logs returned');
+                renderLogText(dockerLogView, payload.docker_log_output || 'No Docker logs returned');
+            } catch (error) {
+                console.error('Failed to refresh logs', error);
+            }
+        };
+
+        setInterval(refreshLiveLogs, 3000);
+    </script>
     </body>
     </html>
     <?php

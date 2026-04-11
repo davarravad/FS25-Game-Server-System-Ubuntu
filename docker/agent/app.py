@@ -1005,6 +1005,7 @@ def instance_action():
     payload = request.get_json(force=True)
     instance_id = payload.get("instance_id", "").strip()
     action = payload.get("action", "").strip().lower()
+    log_lines_raw = payload.get("log_lines", 200)
 
     if not safe_instance_id(instance_id):
         return jsonify({"ok": False, "error": "invalid instance id"}), 400
@@ -1057,8 +1058,26 @@ def instance_action():
         "status": compose_cmd("-f", str(compose_file), "ps", "-a"),
     }
 
+    try:
+        log_lines = max(20, min(2000, int(log_lines_raw)))
+    except (TypeError, ValueError):
+        log_lines = 200
+
     if action == "logs":
         return jsonify({"ok": True, "result": {"stdout": read_runtime_log(instance_id)}})
+
+    if action == "docker_logs":
+        docker_logs_result = run_command(
+            compose_cmd("-f", str(compose_file), "logs", "--no-color", "--tail", str(log_lines), "fs25"),
+            cwd=str(instance_dir),
+        )
+        response = {
+            "ok": docker_logs_result["code"] == 0,
+            "result": docker_logs_result,
+        }
+        if docker_logs_result["code"] != 0:
+            response["error"] = (docker_logs_result.get("stderr") or docker_logs_result.get("stdout") or "Command failed").strip()
+        return jsonify(response), (200 if docker_logs_result["code"] == 0 else 500)
 
     if action not in action_map:
         return jsonify({"ok": False, "error": "unsupported action"}), 400
