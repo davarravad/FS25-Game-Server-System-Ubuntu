@@ -592,6 +592,20 @@ function internal_host_name(string $host): bool
     return in_array(strtolower($host), ['agent', 'localhost', '127.0.0.1', '::1'], true);
 }
 
+function novnc_query_host(string $host): string
+{
+    if ($host === '' || filter_var($host, FILTER_VALIDATE_IP) !== false) {
+        return $host;
+    }
+
+    $resolved = gethostbyname($host);
+    if ($resolved !== '' && $resolved !== $host && filter_var($resolved, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false) {
+        return $resolved;
+    }
+
+    return $host;
+}
+
 function default_access_endpoint(): array
 {
     $appUrl = rtrim((string) env_value('APP_URL', 'http://localhost:8080'), '/');
@@ -1018,12 +1032,14 @@ function instance_access_url(array $server, string $kind): ?string
     }
 
     if ($kind === 'novnc') {
+        $novncHost = novnc_query_host($host);
+
         return sprintf(
             '%s://%s:%d/vnc.html?resize=remote&host=%s&port=%d&autoconnect=1',
             $scheme,
             $host,
             $port,
-            rawurlencode($host),
+            rawurlencode($novncHost),
             $port
         );
     }
