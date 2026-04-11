@@ -1026,10 +1026,11 @@ function instance_access_url(array $server, string $kind): ?string
 
     if ($kind === 'novnc') {
         $novncHost = novnc_query_host($host);
+        $novncScheme = 'http';
 
         return sprintf(
             '%s://%s:%d/vnc.html?resize=remote&host=%s&port=%d&autoconnect=1',
-            $scheme,
+            $novncScheme,
             $host,
             $port,
             rawurlencode($novncHost),
