@@ -1986,8 +1986,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                 ORDER BY si.server_name ASC, si.instance_id ASC
             ')->fetchAll();
             foreach ($servers as &$serverRow) {
-                $metricsResult = instance_metrics_for_server($serverRow);
-                $serverRow['metrics'] = $metricsResult['metrics'] ?? [
+                $serverRow['metrics'] = [
                     'cpu_percent' => 0,
                     'memory_used_bytes' => 0,
                     'memory_limit_bytes' => 0,
@@ -1996,7 +1995,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                     'disk_percent' => 0,
                     'running' => false,
                 ];
-                $serverRow['metrics_ok'] = (bool) ($metricsResult['ok'] ?? false);
+                $serverRow['metrics_ok'] = false;
             }
             unset($serverRow);
             $hosts = all_hosts();
