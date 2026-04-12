@@ -262,6 +262,21 @@ def render_instance_files(instance_dir: Path, values: dict, write_env: bool = Fa
     apply_permissions(instance_dir, recursive=True)
 
 
+def create_instance_data_dirs(instance_dir: Path):
+    for sub in ["data/config", "data/mods", "data/logs", "data/saves"]:
+        (instance_dir / sub).mkdir(parents=True, exist_ok=True)
+
+
+def wipe_instance_dir(instance_dir: Path):
+    if not instance_dir.exists():
+        return
+    for root, dirs, files in os.walk(instance_dir, topdown=False):
+        for file in files:
+            Path(root, file).unlink(missing_ok=True)
+        for d in dirs:
+            Path(root, d).rmdir()
+
+
 def runtime_log_path(instance_id: str) -> Path:
     return INSTANCE_BASE_PATH / instance_id / "data" / "logs" / "panel-runtime.log"
 
@@ -930,8 +945,7 @@ def create_instance():
 
     ensure_shared_storage(payload)
 
-    for sub in ["data/config", "data/mods", "data/logs", "data/saves"]:
-        (instance_dir / sub).mkdir(parents=True, exist_ok=True)
+    create_instance_data_dirs(instance_dir)
     apply_permissions(instance_dir, recursive=True)
 
     render_instance_files(instance_dir, values, write_env=True)
@@ -1018,7 +1032,7 @@ def instance_action():
 
     image_name = image_name_from_compose(compose_file)
 
-    if action in {"start", "restart", "rebuild"}:
+    if action in {"start", "restart", "rebuild", "reinstall"}:
         append_runtime_log(instance_id, "Console: Server marked as starting...")
     elif action in {"stop", "down"}:
         append_runtime_log(instance_id, "Console: Server marked as stopping...")
@@ -1033,6 +1047,50 @@ def instance_action():
             return jsonify(image_result), 500
         if action == "rebuild":
             append_runtime_log(instance_id, "Version mismatch detected. Rebuilding server files.")
+
+    if action == "reinstall":
+        existing_env = read_env_file(instance_dir / ".env")
+        values = build_instance_values(instance_id, {}, existing_env)
+        ensure_shared_storage(values)
+
+        append_runtime_log(instance_id, "Console: Reinstall requested. Stopping and wiping existing instance files...")
+        run_command(compose_cmd("-f", str(compose_file), "down"), cwd=str(instance_dir))
+        wipe_instance_dir(instance_dir)
+        create_instance_data_dirs(instance_dir)
+
+        render_instance_files(instance_dir, values, write_env=True)
+        apply_permissions(instance_dir, recursive=True)
+        append_runtime_log(instance_id, "Console: Instance files rebuilt from panel settings.")
+
+        firewall = sync_public_port_access(instance_id, next_values=values, current_values=existing_env)
+        try:
+            port_server_sync = sync_port_server_xml(values, existing_env)
+        except Exception as exc:
+            port_server_sync = {
+                "ok": False,
+                "status": "error",
+                "message": f"Custom server file sync failed: {exc}",
+            }
+
+        start_result = run_command(compose_cmd("-f", str(compose_file), "up", "-d", "--force-recreate"), cwd=str(instance_dir))
+        if start_result["code"] != 0:
+            append_runtime_log(instance_id, "Console: Reinstall failed to start the rebuilt instance.")
+            return jsonify({
+                "ok": False,
+                "error": (start_result.get("stderr") or start_result.get("stdout") or "Reinstall failed").strip(),
+                "result": start_result,
+                "firewall": firewall,
+                "port_server_sync": port_server_sync,
+            }), 500
+
+        write_instance_state(instance_id, True)
+        append_runtime_log(instance_id, "Console: Reinstall complete. Fresh instance is now running.")
+        return jsonify({
+            "ok": True,
+            "result": start_result,
+            "firewall": firewall,
+            "port_server_sync": port_server_sync,
+        })
 
     if action == "pull" and image_name == FS25_RUNTIME_IMAGE:
         image_result = ensure_runtime_image(image_name, force_rebuild=True)
@@ -1085,7 +1143,7 @@ def instance_action():
     result = run_command(action_map[action], cwd=str(instance_dir))
 
     if result["code"] == 0:
-        if action in {"start", "restart", "rebuild"}:
+        if action in {"start", "restart", "rebuild", "reinstall"}:
             write_instance_state(instance_id, True)
         elif action in {"stop", "down"}:
             write_instance_state(instance_id, False)
@@ -1121,11 +1179,7 @@ def delete_instance():
     firewall = sync_public_port_access(instance_id, next_values={}, current_values=existing_env)
 
     if instance_dir.exists():
-        for root, dirs, files in os.walk(instance_dir, topdown=False):
-            for file in files:
-                Path(root, file).unlink(missing_ok=True)
-            for d in dirs:
-                Path(root, d).rmdir()
+        wipe_instance_dir(instance_dir)
         instance_dir.rmdir()
 
     with suppress(FileNotFoundError):
