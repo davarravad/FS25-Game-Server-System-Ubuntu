@@ -687,7 +687,7 @@ if ($route === 'create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect_route('create_server');
     }
 
-    $portConflicts = find_port_conflicts($payload);
+    $portConflicts = find_port_conflicts($payload, null, $hostId);
     if ($portConflicts) {
         flash('Create failed: ' . implode('; ', $portConflicts));
         redirect_route('create_server');
@@ -1148,7 +1148,7 @@ if ($route === 'server_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
-    $portConflicts = find_port_conflicts($payload, $instanceId);
+    $portConflicts = find_port_conflicts($payload, $instanceId, (int) ($server['host_id'] ?? 0));
     if ($portConflicts) {
         flash('Update failed: ' . implode('; ', $portConflicts));
         header('Location: /?route=server&instance_id=' . rawurlencode($instanceId));
