@@ -346,7 +346,7 @@ function suggested_create_defaults(): array
     ];
 }
 
-function find_port_conflicts(array $ports, ?string $excludeInstanceId = null): array
+function find_port_conflicts(array $ports, ?string $excludeInstanceId = null, ?int $hostId = null): array
 {
     $fields = [
         'server_port' => 'Game Port',
@@ -358,35 +358,68 @@ function find_port_conflicts(array $ports, ?string $excludeInstanceId = null): a
     ];
 
     $conflicts = [];
+    $requestedPorts = [];
+    foreach ($fields as $field => $label) {
+        $port = (int) ($ports[$field] ?? 0);
+        if ($port <= 0) {
+            $conflicts[] = sprintf('%s must be a valid port number.', $label);
+            continue;
+        }
+
+        if (isset($requestedPorts[$port])) {
+            $conflicts[] = sprintf(
+                '%s %d duplicates %s (ports must be unique per server).',
+                $label,
+                $port,
+                $requestedPorts[$port]
+            );
+            continue;
+        }
+
+        $requestedPorts[$port] = $label;
+    }
+
     $sql = '
-        SELECT instance_id, server_name, server_port, web_port, tls_port, vnc_port, novnc_port, sftp_port
+        SELECT instance_id, server_name, host_id, server_port, web_port, tls_port, vnc_port, novnc_port, sftp_port
         FROM server_instances
-        WHERE (server_port = ? OR web_port = ? OR tls_port = ? OR vnc_port = ? OR novnc_port = ? OR sftp_port = ?)
+        WHERE 1=1
     ';
-    $params = [
-        (int) ($ports['server_port'] ?? 0),
-        (int) ($ports['web_port'] ?? 0),
-        (int) ($ports['tls_port'] ?? 0),
-        (int) ($ports['vnc_port'] ?? 0),
-        (int) ($ports['novnc_port'] ?? 0),
-        (int) ($ports['sftp_port'] ?? 0),
-    ];
+    $params = [];
 
     if ($excludeInstanceId !== null && $excludeInstanceId !== '') {
         $sql .= ' AND instance_id <> ?';
         $params[] = $excludeInstanceId;
+    }
+    if ($hostId !== null && $hostId > 0) {
+        $sql .= ' AND host_id = ?';
+        $params[] = $hostId;
     }
 
     $stmt = db()->prepare($sql);
     $stmt->execute($params);
 
     foreach ($stmt->fetchAll() as $server) {
-        foreach ($fields as $field => $label) {
-            if ((int) ($server[$field] ?? 0) === (int) ($ports[$field] ?? -1)) {
+        foreach ($fields as $existingField => $existingLabel) {
+            $existingPort = (int) ($server[$existingField] ?? 0);
+            if ($existingPort <= 0 || !isset($requestedPorts[$existingPort])) {
+                continue;
+            }
+
+            $requestedLabel = $requestedPorts[$existingPort];
+            if ($requestedLabel === $existingLabel) {
                 $conflicts[] = sprintf(
                     '%s %d is already used by %s (%s)',
-                    $label,
-                    (int) $ports[$field],
+                    $requestedLabel,
+                    $existingPort,
+                    (string) ($server['server_name'] ?? 'existing server'),
+                    (string) ($server['instance_id'] ?? 'unknown')
+                );
+            } else {
+                $conflicts[] = sprintf(
+                    '%s %d conflicts with %s used by %s (%s)',
+                    $requestedLabel,
+                    $existingPort,
+                    $existingLabel,
                     (string) ($server['server_name'] ?? 'existing server'),
                     (string) ($server['instance_id'] ?? 'unknown')
                 );
