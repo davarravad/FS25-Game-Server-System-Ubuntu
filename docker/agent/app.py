@@ -41,20 +41,42 @@ def safe_instance_id(instance_id: str) -> bool:
     return re.fullmatch(r"[a-zA-Z0-9_-]+", instance_id or "") is not None
 
 
-def run_command(cmd, cwd=None):
-    result = subprocess.run(
-        cmd,
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return {
-        "code": result.returncode,
-        "stdout": result.stdout,
-        "stderr": result.stderr,
-        "command": cmd,
-    }
+def run_command(cmd, cwd=None, timeout=None):
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+        return {
+            "code": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "command": cmd,
+            "timed_out": False,
+        }
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        timeout_error = (
+            f"Command timed out after {timeout} seconds"
+            if timeout is not None
+            else "Command timed out"
+        )
+        if stderr:
+            stderr = f"{stderr.rstrip()}\n{timeout_error}"
+        else:
+            stderr = timeout_error
+        return {
+            "code": 124,
+            "stdout": stdout,
+            "stderr": stderr,
+            "command": cmd,
+            "timed_out": True,
+        }
 
 
 def compose_command():
@@ -1173,8 +1195,14 @@ def delete_instance():
     compose_file = instance_dir / "compose.yml"
     existing_env = read_env_file(instance_dir / ".env")
 
+    compose_down_result = None
     if compose_file.exists():
-        run_command(compose_cmd("-f", str(compose_file), "down"), cwd=str(instance_dir))
+        # Delete should return promptly even if Docker hangs while shutting down services.
+        compose_down_result = run_command(
+            compose_cmd("-f", str(compose_file), "down"),
+            cwd=str(instance_dir),
+            timeout=30,
+        )
 
     firewall = sync_public_port_access(instance_id, next_values={}, current_values=existing_env)
 
@@ -1185,7 +1213,12 @@ def delete_instance():
     with suppress(FileNotFoundError):
         instance_state_path(instance_id).unlink()
 
-    return jsonify({"ok": True, "firewall": firewall})
+    response = {"ok": True, "firewall": firewall}
+    if compose_down_result and compose_down_result.get("timed_out"):
+        response["warning"] = "docker compose down timed out during delete; continuing with forced cleanup"
+        response["compose_down"] = compose_down_result
+
+    return jsonify(response)
 
 
 @app.post("/instance/metrics")
