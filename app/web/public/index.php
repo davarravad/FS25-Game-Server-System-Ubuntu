@@ -20,7 +20,7 @@ function json_response(array $payload, int $status = 200): void
 
 function allowed_node_api_server_actions(): array
 {
-    return ['start', 'stop', 'restart', 'backend_reboot', 'logs'];
+    return ['start', 'stop', 'restart', 'backend_reboot', 'reinstall', 'logs'];
 }
 
 function perform_server_lifecycle_action(array $server, string $action, bool $syncBeforeAction = true): array
@@ -34,7 +34,7 @@ function perform_server_lifecycle_action(array $server, string $action, bool $sy
         return ['ok' => false, 'error' => 'Managed host for this server is missing or disabled.'];
     }
 
-    if ($syncBeforeAction && in_array($action, ['start', 'restart'], true)) {
+    if ($syncBeforeAction && in_array($action, ['start', 'restart', 'reinstall'], true)) {
         $sync = sync_instance_config_for_server($server);
         if (!($sync['ok'] ?? false)) {
             return ['ok' => false, 'error' => 'Config sync failed: ' . ($sync['error'] ?? 'Unknown error')];
@@ -785,6 +785,16 @@ if ($route === 'server_command' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         json_response(['ok' => false, 'error' => 'Managed host for this server is missing or disabled.'], 404);
     }
 
+    if ($action === 'reinstall') {
+        $reinstallCode = trim((string) ($_POST['reinstall_code'] ?? ''));
+        if ($reinstallCode !== $instanceId) {
+            json_response([
+                'ok' => false,
+                'error' => 'Reinstall confirmation mismatch. Type the exact instance ID to confirm reinstall.',
+            ], 422);
+        }
+    }
+
     $result = perform_server_lifecycle_action($server, $action, true);
     json_response($result, ($result['ok'] ?? false) ? 200 : 500);
 }
@@ -1310,10 +1320,11 @@ if ($route === 'server') {
                     <div class="toolbar-group">
                         <div class="toolbar-label">Server Controls</div>
                         <div class="toolbar-actions compact">
-                            <?php foreach (['start', 'stop', 'restart', 'backend_reboot'] as $act): ?>
+                            <?php foreach (['start', 'stop', 'restart', 'backend_reboot', 'reinstall'] as $act): ?>
                                 <form method="post" action="/?route=server_command" class="server-action-form">
                                     <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
                                     <input type="hidden" name="action" value="<?= h($act) ?>">
+                                    <input type="hidden" name="reinstall_code" value="">
                                     <button
                                         type="submit"
                                         data-server-action="<?= h($act) ?>"
@@ -1645,9 +1656,22 @@ if ($route === 'server') {
         actionForms.forEach((form) => {
             form.addEventListener('submit', async (event) => {
                 event.preventDefault();
+                const actionField = form.querySelector('input[name="action"]');
+                const actionName = actionField ? actionField.value : '';
+                if (actionName === 'reinstall') {
+                    const confirmation = window.prompt(`Reinstall will wipe ${instanceId} and rebuild it from panel settings.\nType ${instanceId} to confirm.`);
+                    if ((confirmation || '').trim() !== instanceId) {
+                        setInlineStatus(`Reinstall cancelled. Type ${instanceId} exactly to confirm.`, true);
+                        return;
+                    }
+                    const reinstallCodeField = form.querySelector('input[name="reinstall_code"]');
+                    if (reinstallCodeField) {
+                        reinstallCodeField.value = confirmation.trim();
+                    }
+                }
                 const button = form.querySelector('button[type="submit"]');
                 if (button) button.disabled = true;
-                setInlineStatus(`Running ${form.querySelector('input[name="action"]').value}...`);
+                setInlineStatus(`Running ${actionName}...`);
                 try {
                     const submitUrl = form.getAttribute('action') || '/?route=server_command';
                     const response = await fetch(submitUrl, {
@@ -2267,6 +2291,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                 <div><strong>stop</strong>: stops the instance containers.</div>
                 <div><strong>restart</strong>: restarts the instance containers.</div>
                 <div><strong>backend reboot</strong>: kills `dedicatedServer.exe` inside the runtime container so the launcher/watchdog can start it again.</div>
+                <div><strong>reinstall</strong>: asks for confirmation, wipes the instance directory, regenerates settings, and recreates the server containers.</div>
                 <div><strong>Delete Server</strong>: removes the panel record and instance files after the exact instance ID is typed in the confirmation field.</div>
             </div>
         </div>
@@ -2315,11 +2340,12 @@ curl -X POST \
   -d '{"instance_id":"fs25-0001","action":"restart"}' \
   "<?= h(rtrim($node['app_url'], '/')) ?>/?route=api_node_server_action"</pre>
             <div class="stack muted">
-                <div><strong>POST `/?route=api_node_server_action`</strong> accepts only the actions `start`, `stop`, `restart`, `backend_reboot`, and `logs`.</div>
+                <div><strong>POST `/?route=api_node_server_action`</strong> accepts only the actions `start`, `stop`, `restart`, `backend_reboot`, `reinstall`, and `logs`.</div>
                 <div><strong>`start`</strong>: syncs panel-managed runtime config to the instance and starts the server stack.</div>
                 <div><strong>`stop`</strong>: stops the server stack.</div>
                 <div><strong>`restart`</strong>: restarts the server stack.</div>
                 <div><strong>`backend_reboot`</strong>: kills `dedicatedServer.exe` so the watchdog can bring it back online without fully rebuilding the stack.</div>
+                <div><strong>`reinstall`</strong>: wipes and rebuilds the instance files from panel settings, then recreates the server containers.</div>
                 <div><strong>`logs`</strong>: returns the structured lifecycle log content.</div>
                 <div>Because the action route is allowlisted, attempts to send config-changing commands are rejected.</div>
             </div>
