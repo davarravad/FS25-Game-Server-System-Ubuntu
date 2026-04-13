@@ -1080,7 +1080,11 @@ function instance_access_url(array $server, string $kind): ?string
     }
 
     if ($kind === 'tls') {
-        return sprintf('https://%s:%d', $host, $port);
+        return sprintf('http://%s:%d', $host, $port);
+    }
+
+    if ($kind === 'web') {
+        return sprintf('http://%s:%d', $host, $port);
     }
 
     return sprintf('%s://%s:%d', $scheme, $host, $port);
