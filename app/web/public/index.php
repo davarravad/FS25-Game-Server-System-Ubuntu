@@ -212,116 +212,6 @@ if ($route === 'api_node_server_action' && $_SERVER['REQUEST_METHOD'] === 'POST'
     json_response($result, ($result['ok'] ?? false) ? 200 : 500);
 }
 
-if ($route === 'export_servers_excel') {
-    require_login();
-
-    $servers = db()->query('
-        SELECT
-            si.*,
-            mh.name AS host_name,
-            mh.access_host
-        FROM server_instances si
-        LEFT JOIN managed_hosts mh ON mh.id = si.host_id
-        ORDER BY si.server_name ASC, si.instance_id ASC
-    ')->fetchAll();
-
-    $timestamp = gmdate('Ymd_His');
-    $filename = 'fs25-server-settings-' . $timestamp . '.xls';
-
-    header('Content-Type: application/vnd.ms-excel; charset=UTF-8');
-    header('Content-Disposition: attachment; filename="' . $filename . '"');
-    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
-    header('Pragma: no-cache');
-
-    $xmlEscape = static function ($value): string {
-        return htmlspecialchars((string) $value, ENT_XML1 | ENT_QUOTES, 'UTF-8');
-    };
-
-    $headers = [
-        'Host Name',
-        'Instance ID',
-        'Server Name',
-        'Status',
-        'Image',
-        'Players',
-        'Region',
-        'Map',
-        'Game Port',
-        'Web Port',
-        'TLS Port',
-        'VNC Port',
-        'noVNC Port',
-        'SFTP Port',
-        'SFTP Username',
-        'SFTP Password',
-        'Web Username',
-        'Web Password',
-        'Web URL',
-        'TLS URL',
-        'VNC URL',
-        'noVNC URL',
-        'SFTP URL',
-        'Created At',
-        'Updated At',
-    ];
-
-    echo "<?xml version=\"1.0\"?>\n";
-    echo "<?mso-application progid=\"Excel.Sheet\"?>\n";
-    echo "<Workbook xmlns=\"urn:schemas-microsoft-com:office:spreadsheet\"\n";
-    echo " xmlns:o=\"urn:schemas-microsoft-com:office:office\"\n";
-    echo " xmlns:x=\"urn:schemas-microsoft-com:office:excel\"\n";
-    echo " xmlns:ss=\"urn:schemas-microsoft-com:office:spreadsheet\"\n";
-    echo " xmlns:html=\"http://www.w3.org/TR/REC-html40\">\n";
-    echo " <Worksheet ss:Name=\"FS25 Servers\">\n";
-    echo "  <Table>\n";
-    echo "   <Row>\n";
-    foreach ($headers as $headerLabel) {
-        echo '    <Cell><Data ss:Type="String">' . $xmlEscape($headerLabel) . "</Data></Cell>\n";
-    }
-    echo "   </Row>\n";
-
-    foreach ($servers as $serverRow) {
-        $rowValues = [
-            $serverRow['host_name'] ?? '',
-            $serverRow['instance_id'] ?? '',
-            $serverRow['server_name'] ?? '',
-            $serverRow['status'] ?? '',
-            $serverRow['image_name'] ?? '',
-            (string) ($serverRow['server_players'] ?? ''),
-            $serverRow['server_region'] ?? '',
-            $serverRow['server_map'] ?? '',
-            (string) ($serverRow['server_port'] ?? ''),
-            (string) ($serverRow['web_port'] ?? ''),
-            (string) ($serverRow['tls_port'] ?? ''),
-            (string) ($serverRow['vnc_port'] ?? ''),
-            (string) ($serverRow['novnc_port'] ?? ''),
-            (string) ($serverRow['sftp_port'] ?? ''),
-            $serverRow['sftp_username'] ?? '',
-            $serverRow['sftp_password'] ?? '',
-            $serverRow['web_username'] ?? '',
-            $serverRow['web_password'] ?? '',
-            instance_access_url($serverRow, 'web') ?? '',
-            instance_access_url($serverRow, 'tls') ?? '',
-            instance_access_url($serverRow, 'vnc') ?? '',
-            instance_access_url($serverRow, 'novnc') ?? '',
-            instance_access_url($serverRow, 'sftp') ?? '',
-            $serverRow['created_at'] ?? '',
-            $serverRow['updated_at'] ?? '',
-        ];
-
-        echo "   <Row>\n";
-        foreach ($rowValues as $cellValue) {
-            echo '    <Cell><Data ss:Type="String">' . $xmlEscape((string) $cellValue) . "</Data></Cell>\n";
-        }
-        echo "   </Row>\n";
-    }
-
-    echo "  </Table>\n";
-    echo " </Worksheet>\n";
-    echo "</Workbook>\n";
-    exit;
-}
-
 if ($route === 'host_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     require_login();
 
@@ -2676,9 +2566,6 @@ curl -X POST \
         </div>
         <div class="card">
             <h2>Server Instances</h2>
-            <div class="flex" style="margin-bottom: 14px;">
-                <a class="button-link" href="/?route=export_servers_excel">Export all settings to Excel</a>
-            </div>
             <div class="server-grid">
                 <?php foreach ($servers as $server): ?>
                     <?php
