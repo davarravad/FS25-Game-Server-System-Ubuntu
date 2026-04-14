@@ -212,6 +212,101 @@ if ($route === 'api_node_server_action' && $_SERVER['REQUEST_METHOD'] === 'POST'
     json_response($result, ($result['ok'] ?? false) ? 200 : 500);
 }
 
+if ($route === 'export_servers_excel' && $_SERVER['REQUEST_METHOD'] === 'GET') {
+    require_login();
+
+    $servers = db()->query('
+        SELECT
+            si.*,
+            mh.name AS host_name,
+            mh.access_host
+        FROM server_instances si
+        LEFT JOIN managed_hosts mh ON mh.id = si.host_id
+        ORDER BY si.server_name ASC, si.instance_id ASC
+    ')->fetchAll();
+
+    $timestamp = gmdate('Ymd_His');
+    $filename = 'fs25-server-settings-' . $timestamp . '.csv';
+
+    header('Content-Type: text/csv; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
+
+    $headers = [
+        'Host Name',
+        'Instance ID',
+        'Server Name',
+        'Status',
+        'Image',
+        'Players',
+        'Region',
+        'Map',
+        'Game Port',
+        'Web Port',
+        'TLS Port',
+        'VNC Port',
+        'noVNC Port',
+        'SFTP Port',
+        'SFTP Username',
+        'SFTP Password',
+        'Web Username',
+        'Web Password',
+        'Web URL',
+        'TLS URL',
+        'VNC URL',
+        'noVNC URL',
+        'SFTP URL',
+        'Created At',
+        'Updated At',
+    ];
+
+    $output = fopen('php://output', 'wb');
+    if ($output === false) {
+        http_response_code(500);
+        echo 'Failed to open output stream.';
+        exit;
+    }
+
+    fwrite($output, "\xEF\xBB\xBF");
+    fputcsv($output, $headers);
+
+    foreach ($servers as $serverRow) {
+        $rowValues = [
+            $serverRow['host_name'] ?? '',
+            $serverRow['instance_id'] ?? '',
+            $serverRow['server_name'] ?? '',
+            $serverRow['status'] ?? '',
+            $serverRow['image_name'] ?? '',
+            (string) ($serverRow['server_players'] ?? ''),
+            $serverRow['server_region'] ?? '',
+            $serverRow['server_map'] ?? '',
+            (string) ($serverRow['server_port'] ?? ''),
+            (string) ($serverRow['web_port'] ?? ''),
+            (string) ($serverRow['tls_port'] ?? ''),
+            (string) ($serverRow['vnc_port'] ?? ''),
+            (string) ($serverRow['novnc_port'] ?? ''),
+            (string) ($serverRow['sftp_port'] ?? ''),
+            $serverRow['sftp_username'] ?? '',
+            $serverRow['sftp_password'] ?? '',
+            $serverRow['web_username'] ?? '',
+            $serverRow['web_password'] ?? '',
+            instance_access_url($serverRow, 'web') ?? '',
+            instance_access_url($serverRow, 'tls') ?? '',
+            instance_access_url($serverRow, 'vnc') ?? '',
+            instance_access_url($serverRow, 'novnc') ?? '',
+            instance_access_url($serverRow, 'sftp') ?? '',
+            $serverRow['created_at'] ?? '',
+            $serverRow['updated_at'] ?? '',
+        ];
+
+        fputcsv($output, array_map(static fn($value): string => (string) $value, $rowValues));
+    }
+
+    fclose($output);
+    exit;
+}
+
 if ($route === 'host_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     require_login();
 
@@ -2566,6 +2661,9 @@ curl -X POST \
         </div>
         <div class="card">
             <h2>Server Instances</h2>
+            <div class="flex" style="margin-bottom: 14px;">
+                <a class="button-link" href="/?route=export_servers_excel">Export all settings to Excel</a>
+            </div>
             <div class="server-grid">
                 <?php foreach ($servers as $server): ?>
                     <?php
