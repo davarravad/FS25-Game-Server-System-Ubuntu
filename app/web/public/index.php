@@ -212,7 +212,7 @@ if ($route === 'api_node_server_action' && $_SERVER['REQUEST_METHOD'] === 'POST'
     json_response($result, ($result['ok'] ?? false) ? 200 : 500);
 }
 
-if ($route === 'export_servers_excel') {
+if ($route === 'export_servers_excel' && $_SERVER['REQUEST_METHOD'] === 'GET') {
     require_login();
 
     $servers = db()->query('
@@ -226,16 +226,12 @@ if ($route === 'export_servers_excel') {
     ')->fetchAll();
 
     $timestamp = gmdate('Ymd_His');
-    $filename = 'fs25-server-settings-' . $timestamp . '.xls';
+    $filename = 'fs25-server-settings-' . $timestamp . '.csv';
 
-    header('Content-Type: application/vnd.ms-excel; charset=UTF-8');
+    header('Content-Type: text/csv; charset=UTF-8');
     header('Content-Disposition: attachment; filename="' . $filename . '"');
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
     header('Pragma: no-cache');
-
-    $xmlEscape = static function ($value): string {
-        return htmlspecialchars((string) $value, ENT_XML1 | ENT_QUOTES, 'UTF-8');
-    };
 
     $headers = [
         'Host Name',
@@ -265,20 +261,15 @@ if ($route === 'export_servers_excel') {
         'Updated At',
     ];
 
-    echo "<?xml version=\"1.0\"?>\n";
-    echo "<?mso-application progid=\"Excel.Sheet\"?>\n";
-    echo "<Workbook xmlns=\"urn:schemas-microsoft-com:office:spreadsheet\"\n";
-    echo " xmlns:o=\"urn:schemas-microsoft-com:office:office\"\n";
-    echo " xmlns:x=\"urn:schemas-microsoft-com:office:excel\"\n";
-    echo " xmlns:ss=\"urn:schemas-microsoft-com:office:spreadsheet\"\n";
-    echo " xmlns:html=\"http://www.w3.org/TR/REC-html40\">\n";
-    echo " <Worksheet ss:Name=\"FS25 Servers\">\n";
-    echo "  <Table>\n";
-    echo "   <Row>\n";
-    foreach ($headers as $headerLabel) {
-        echo '    <Cell><Data ss:Type="String">' . $xmlEscape($headerLabel) . "</Data></Cell>\n";
+    $output = fopen('php://output', 'wb');
+    if ($output === false) {
+        http_response_code(500);
+        echo 'Failed to open output stream.';
+        exit;
     }
-    echo "   </Row>\n";
+
+    fwrite($output, "\xEF\xBB\xBF");
+    fputcsv($output, $headers);
 
     foreach ($servers as $serverRow) {
         $rowValues = [
@@ -309,16 +300,10 @@ if ($route === 'export_servers_excel') {
             $serverRow['updated_at'] ?? '',
         ];
 
-        echo "   <Row>\n";
-        foreach ($rowValues as $cellValue) {
-            echo '    <Cell><Data ss:Type="String">' . $xmlEscape((string) $cellValue) . "</Data></Cell>\n";
-        }
-        echo "   </Row>\n";
+        fputcsv($output, array_map(static fn($value): string => (string) $value, $rowValues));
     }
 
-    echo "  </Table>\n";
-    echo " </Worksheet>\n";
-    echo "</Workbook>\n";
+    fclose($output);
     exit;
 }
 
