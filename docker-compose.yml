@@ -1,3 +1,9 @@
+x-json-log-rotation: &json-log-rotation
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "3"
+
 services:
   web:
     build:
@@ -5,6 +11,7 @@ services:
       dockerfile: docker/php/Dockerfile
     container_name: fsg-panel-web
     restart: unless-stopped
+    logging: *json-log-rotation
     environment:
       APP_NAME: ${APP_NAME}
       APP_ENV: ${APP_ENV}
@@ -41,6 +48,7 @@ services:
     image: nginx:1.27-alpine
     container_name: fsg-panel-nginx
     restart: unless-stopped
+    logging: *json-log-rotation
     ports:
       - "${PANEL_PORT}:80"
     volumes:
@@ -55,6 +63,7 @@ services:
     image: mariadb:11.8
     container_name: fsg-panel-db
     restart: unless-stopped
+    logging: *json-log-rotation
     environment:
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
       MYSQL_DATABASE: ${DB_NAME}
@@ -73,6 +82,7 @@ services:
       dockerfile: docker/agent/Dockerfile
     container_name: fsg-panel-agent
     restart: unless-stopped
+    logging: *json-log-rotation
     environment:
       AGENT_SHARED_TOKEN: ${AGENT_SHARED_TOKEN}
       INSTANCE_BASE_PATH: ${INSTANCE_BASE_PATH}
@@ -105,6 +115,7 @@ services:
     image: atmoz/sftp:alpine
     container_name: fsg-panel-admin-sftp
     restart: unless-stopped
+    logging: *json-log-rotation
     command: "${ADMIN_SFTP_USERNAME}:${ADMIN_SFTP_PASSWORD}:1000:1000:panel"
     ports:
       - "${ADMIN_SFTP_PORT}:22"
