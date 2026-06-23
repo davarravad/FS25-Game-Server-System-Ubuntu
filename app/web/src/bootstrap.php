@@ -446,7 +446,7 @@ function flash(?string $message = null): ?string
     return $value;
 }
 
-function agent_post_for_host(array $host, string $path, array $payload): array
+function agent_post_for_host(array $host, string $path, array $payload, int $timeoutSeconds = 20): array
 {
     $baseUrl = trim((string) ($host['agent_url'] ?? ''));
     if ($baseUrl === '') {
@@ -463,7 +463,7 @@ function agent_post_for_host(array $host, string $path, array $payload): array
         CURLOPT_POST => true,
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_CONNECTTIMEOUT => 5,
-        CURLOPT_TIMEOUT => 20,
+        CURLOPT_TIMEOUT => $timeoutSeconds,
         CURLOPT_HTTPHEADER => [
             'Content-Type: application/json',
             'X-Agent-Token: ' . (string) ($host['agent_token'] ?? ''),

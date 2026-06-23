@@ -23,6 +23,16 @@ function allowed_node_api_server_actions(): array
     return ['start', 'stop', 'restart', 'backend_reboot', 'logs'];
 }
 
+function server_command_actions(): array
+{
+    return ['start', 'stop', 'restart', 'backend_reboot', 'logs'];
+}
+
+function server_reinstall_actions(): array
+{
+    return ['reinstall_game', 'reinstall_sftp'];
+}
+
 function perform_server_lifecycle_action(array $server, string $action, bool $syncBeforeAction = true): array
 {
     $instanceId = (string) ($server['instance_id'] ?? '');
@@ -34,7 +44,7 @@ function perform_server_lifecycle_action(array $server, string $action, bool $sy
         return ['ok' => false, 'error' => 'Managed host for this server is missing or disabled.'];
     }
 
-    if ($syncBeforeAction && in_array($action, ['start', 'restart'], true)) {
+    if ($syncBeforeAction && in_array($action, ['start', 'restart', 'reinstall_game', 'reinstall_sftp'], true)) {
         $sync = sync_instance_config_for_server($server);
         if (!($sync['ok'] ?? false)) {
             return ['ok' => false, 'error' => 'Config sync failed: ' . ($sync['error'] ?? 'Unknown error')];
@@ -753,6 +763,14 @@ if ($route === 'action' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect_route('game_servers');
     }
 
+    if (!in_array($action, server_command_actions(), true)) {
+        if ($wantsJson) {
+            json_response(['ok' => false, 'error' => 'Unsupported action.'], 422);
+        }
+        flash('Unsupported action.');
+        redirect_route('game_servers');
+    }
+
     $result = perform_server_lifecycle_action($server, $action, true);
 
     if ($wantsJson) {
@@ -785,6 +803,37 @@ if ($route === 'server_command' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         json_response(['ok' => false, 'error' => 'Managed host for this server is missing or disabled.'], 404);
     }
 
+    if (!in_array($action, server_command_actions(), true)) {
+        json_response(['ok' => false, 'error' => 'Unsupported action.'], 422);
+    }
+
+    $result = perform_server_lifecycle_action($server, $action, true);
+    json_response($result, ($result['ok'] ?? false) ? 200 : 500);
+}
+
+if ($route === 'server_reinstall' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    require_login();
+
+    $instanceId = (string) ($_POST['instance_id'] ?? '');
+    $action = (string) ($_POST['action'] ?? '');
+    $reinstallCode = trim((string) ($_POST['reinstall_code'] ?? ''));
+    $server = find_instance_with_host($instanceId);
+
+    if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
+        json_response(['ok' => false, 'error' => 'Managed host for this server is missing or disabled.'], 404);
+    }
+
+    if (!in_array($action, server_reinstall_actions(), true)) {
+        json_response(['ok' => false, 'error' => 'Unsupported reinstall action.'], 422);
+    }
+
+    if ($reinstallCode !== $instanceId) {
+        json_response([
+            'ok' => false,
+            'error' => 'Reinstall confirmation code mismatch. Type the exact instance ID to confirm reinstallation.',
+        ], 422);
+    }
+
     $result = perform_server_lifecycle_action($server, $action, true);
     json_response($result, ($result['ok'] ?? false) ? 200 : 500);
 }
@@ -809,7 +858,7 @@ if ($route === 'server_delete' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $agent = agent_post_for_host($server, '/instance/delete', [
         'instance_id' => $instanceId,
-    ]);
+    ], 120);
 
     if (($agent['ok'] ?? false)) {
         $stmt = db()->prepare('DELETE FROM server_instances WHERE instance_id = ?');
@@ -992,6 +1041,7 @@ if ($route === 'delete' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     require_login();
 
     $instanceId = (string)($_POST['instance_id'] ?? '');
+    $deleteCode = trim((string) ($_POST['delete_code'] ?? ''));
     $server = find_instance_with_host($instanceId);
 
     if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
@@ -999,9 +1049,15 @@ if ($route === 'delete' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect_route('game_servers');
     }
 
+    if ($deleteCode !== $instanceId) {
+        flash('Delete confirmation code mismatch. Type the exact instance ID to confirm deletion.');
+        header('Location: /?route=server&instance_id=' . rawurlencode($instanceId));
+        exit;
+    }
+
     $agent = agent_post_for_host($server, '/instance/delete', [
         'instance_id' => $instanceId,
-    ]);
+    ], 120);
 
     if (($agent['ok'] ?? false)) {
         $stmt = db()->prepare('DELETE FROM server_instances WHERE instance_id = ?');
@@ -1186,12 +1242,18 @@ if ($route === 'server') {
             .toolbar-actions form { margin: 0; }
             .toolbar-actions.compact button,
             .toolbar-actions.compact .button-link { min-width: 132px; justify-content: center; text-align: center; }
+            .maintenance-card { border-color: #92400e; background: linear-gradient(180deg, #20170d, #171c25); }
+            .maintenance-title { color: #fed7aa; margin-top: 0; }
+            .maintenance-copy { color: #fdba74; }
             .danger-card { border-color: #7f1d1d; background: linear-gradient(180deg, #221217, #171c25); }
             .danger-title { color: #fecaca; margin-top: 0; }
             .danger-copy { color: #fca5a5; }
             .danger-row { display: grid; gap: 12px; grid-template-columns: minmax(220px, 320px) auto; align-items: end; }
+            .danger-status { display:none; margin-top:12px; padding:10px 12px; border-radius:8px; background:#450a0a; border:1px solid #991b1b; color:#fecaca; }
+            .maintenance-row { display: grid; gap: 12px; grid-template-columns: minmax(220px, 320px) auto auto; align-items: end; }
             .button-link, button { display: inline-block; padding: 10px 14px; border-radius: 8px; border: 0; background: #2563eb; color: #fff; text-decoration: none; cursor: pointer; }
             .button-link.gray, button.gray { background: #475569; }
+            button.warning { background: #b45309; }
             button.danger { background: #b91c1c; }
             button:disabled { opacity: 0.45; cursor: not-allowed; }
             input { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #fff; }
@@ -1213,7 +1275,7 @@ if ($route === 'server') {
             .inline-status { padding: 12px; background: #1e293b; border: 1px solid #334155; border-radius: 10px; margin-bottom: 16px; display: none; }
             .secret-row { display: flex; gap: 10px; align-items: end; }
             .secret-row input { flex: 1; }
-            @media (max-width: 900px) { .grid.two, .grid.form, .server-toolbar, .danger-row { grid-template-columns: 1fr; } }
+            @media (max-width: 900px) { .grid.two, .grid.form, .server-toolbar, .danger-row, .maintenance-row { grid-template-columns: 1fr; } }
         </style>
     </head>
     <body>
@@ -1353,6 +1415,27 @@ if ($route === 'server') {
                 </div>
             </div>
         </div>
+        <div class="card maintenance-card">
+            <h2 class="maintenance-title">Maintenance Reinstall</h2>
+            <div class="maintenance-copy">Reinstall recreates the selected container from the current runtime config. Type the exact instance ID to confirm before running either reinstall.</div>
+            <form method="post" action="/?route=server_reinstall" class="server-reinstall-form" style="margin-top:16px;">
+                <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
+                <input type="hidden" name="action" value="">
+                <div class="maintenance-row">
+                    <div>
+                        <label>Confirmation Code</label>
+                        <input type="text" name="reinstall_code" placeholder="Type <?= h($server['instance_id']) ?>" autocomplete="off" spellcheck="false">
+                    </div>
+                    <div>
+                        <button class="warning" type="submit" data-reinstall-action="reinstall_game">Reinstall Game Server</button>
+                    </div>
+                    <div>
+                        <button class="warning" type="submit" data-reinstall-action="reinstall_sftp">Reinstall SFTP</button>
+                    </div>
+                </div>
+                <div class="danger-status" id="server-delete-status"></div>
+            </form>
+        </div>
         <div class="card danger-card">
             <h2 class="danger-title">Danger Zone</h2>
             <div class="danger-copy">Deleting a server removes the panel record and the instance files on the managed host. Type the exact instance ID to confirm.</div>
@@ -1389,7 +1472,9 @@ if ($route === 'server') {
         const copyVncPassword = document.getElementById('copy-vnc-password');
         const actionForms = document.querySelectorAll('.server-action-form');
         const actionButtons = document.querySelectorAll('[data-server-action]');
+        const reinstallForm = document.querySelector('.server-reinstall-form');
         const deleteForm = document.querySelector('.server-delete-form');
+        const deleteStatus = document.getElementById('server-delete-status');
 
         function scrollToBottom(element) {
             if (element) {
@@ -1463,6 +1548,17 @@ if ($route === 'server') {
             inlineStatus.textContent = message;
             inlineStatus.style.background = isError ? '#7f1d1d' : '#1e293b';
             inlineStatus.style.borderColor = isError ? '#b91c1c' : '#334155';
+        }
+
+        function setDeleteStatus(message, isError = false) {
+            if (!deleteStatus) {
+                return;
+            }
+            deleteStatus.style.display = 'block';
+            deleteStatus.textContent = message;
+            deleteStatus.style.background = isError ? '#450a0a' : '#1e293b';
+            deleteStatus.style.borderColor = isError ? '#991b1b' : '#334155';
+            deleteStatus.style.color = isError ? '#fecaca' : '#f2f4f8';
         }
 
         function fallbackCopyText(value) {
@@ -1590,17 +1686,63 @@ if ($route === 'server') {
             });
         });
 
+        if (reinstallForm) {
+            reinstallForm.addEventListener('submit', async (event) => {
+                event.preventDefault();
+                const submitter = event.submitter || document.activeElement;
+                const action = submitter && submitter.getAttribute('data-reinstall-action');
+                const reinstallCodeField = reinstallForm.querySelector('input[name="reinstall_code"]');
+                const actionField = reinstallForm.querySelector('input[name="action"]');
+
+                if (!action || !actionField) {
+                    setInlineStatus('Select a reinstall action.', true);
+                    return;
+                }
+
+                if (!reinstallCodeField || reinstallCodeField.value.trim() !== instanceId) {
+                    setInlineStatus(`Type ${instanceId} exactly to reinstall this instance.`, true);
+                    return;
+                }
+
+                actionField.value = action;
+                const buttons = reinstallForm.querySelectorAll('button[type="submit"]');
+                buttons.forEach((button) => { button.disabled = true; });
+                setInlineStatus(`Running ${action === 'reinstall_game' ? 'game server reinstall' : 'SFTP reinstall'}...`);
+
+                try {
+                    const response = await fetch(reinstallForm.getAttribute('action') || '/?route=server_reinstall', {
+                        method: 'POST',
+                        body: new FormData(reinstallForm),
+                        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                        credentials: 'same-origin',
+                    });
+                    const payload = await response.json();
+                    if (!response.ok || !payload.ok) {
+                        throw new Error(payload.error || payload.message || `Reinstall failed (${response.status})`);
+                    }
+                    setInlineStatus(payload.message || 'Reinstall completed.');
+                    await refreshLiveView();
+                } catch (error) {
+                    setInlineStatus(error.message, true);
+                } finally {
+                    buttons.forEach((button) => { button.disabled = false; });
+                }
+            });
+        }
+
         if (deleteForm) {
             deleteForm.addEventListener('submit', async (event) => {
                 event.preventDefault();
                 const deleteCodeField = deleteForm.querySelector('input[name="delete_code"]');
                 if (!deleteCodeField || deleteCodeField.value.trim() !== instanceId) {
+                    setDeleteStatus(`Type ${instanceId} exactly to delete this server.`, true);
                     setInlineStatus(`Type ${instanceId} exactly to delete this server.`, true);
                     return;
                 }
 
                 const button = deleteForm.querySelector('button[type="submit"]');
                 if (button) button.disabled = true;
+                setDeleteStatus('Deleting server...');
                 setInlineStatus('Deleting server...');
 
                 try {
@@ -1616,6 +1758,7 @@ if ($route === 'server') {
                     }
                     window.location.href = payload.redirect || '/?route=game_servers';
                 } catch (error) {
+                    setDeleteStatus(error.message, true);
                     setInlineStatus(error.message, true);
                     if (button) button.disabled = false;
                 }
@@ -2188,6 +2331,8 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                 <div><strong>stop</strong>: stops the instance containers.</div>
                 <div><strong>restart</strong>: restarts the instance containers.</div>
                 <div><strong>backend reboot</strong>: kills `dedicatedServer.exe` inside the runtime container so the launcher/watchdog can start it again.</div>
+                <div><strong>Reinstall Game Server</strong>: recreates only the FS25 runtime container from the current compose config after the exact instance ID is typed.</div>
+                <div><strong>Reinstall SFTP</strong>: recreates only the instance SFTP container from the current compose config after the exact instance ID is typed.</div>
                 <div><strong>Delete Server</strong>: removes the panel record and instance files after the exact instance ID is typed in the confirmation field.</div>
             </div>
         </div>
