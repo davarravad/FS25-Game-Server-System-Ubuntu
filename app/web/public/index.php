@@ -20,7 +20,7 @@ function json_response(array $payload, int $status = 200): void
 
 function allowed_node_api_server_actions(): array
 {
-    return ['start', 'stop', 'restart', 'backend_reboot', 'reinstall', 'logs'];
+    return ['start', 'stop', 'restart', 'backend_reboot', 'logs'];
 }
 
 function server_command_actions(): array
@@ -44,7 +44,7 @@ function perform_server_lifecycle_action(array $server, string $action, bool $sy
         return ['ok' => false, 'error' => 'Managed host for this server is missing or disabled.'];
     }
 
-    if ($syncBeforeAction && in_array($action, ['start', 'restart', 'reinstall'], true)) {
+    if ($syncBeforeAction && in_array($action, ['start', 'restart', 'reinstall_game', 'reinstall_sftp'], true)) {
         $sync = sync_instance_config_for_server($server);
         if (!($sync['ok'] ?? false)) {
             return ['ok' => false, 'error' => 'Config sync failed: ' . ($sync['error'] ?? 'Unknown error')];
@@ -913,14 +913,8 @@ if ($route === 'server_command' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         json_response(['ok' => false, 'error' => 'Managed host for this server is missing or disabled.'], 404);
     }
 
-    if ($action === 'reinstall') {
-        $reinstallCode = trim((string) ($_POST['reinstall_code'] ?? ''));
-        if ($reinstallCode !== $instanceId) {
-            json_response([
-                'ok' => false,
-                'error' => 'Reinstall confirmation mismatch. Type the exact instance ID to confirm reinstall.',
-            ], 422);
-        }
+    if (!in_array($action, server_command_actions(), true)) {
+        json_response(['ok' => false, 'error' => 'Unsupported action.'], 422);
     }
 
     $result = perform_server_lifecycle_action($server, $action, true);
@@ -1411,18 +1405,13 @@ if ($route === 'server') {
             .toolbar-actions form { margin: 0; }
             .toolbar-actions.compact button,
             .toolbar-actions.compact .button-link { min-width: 132px; justify-content: center; text-align: center; }
-            .maintenance-card { border-color: #92400e; background: linear-gradient(180deg, #20170d, #171c25); }
-            .maintenance-title { color: #fed7aa; margin-top: 0; }
-            .maintenance-copy { color: #fdba74; }
             .danger-card { border-color: #7f1d1d; background: linear-gradient(180deg, #221217, #171c25); }
             .danger-title { color: #fecaca; margin-top: 0; }
             .danger-copy { color: #fca5a5; }
             .danger-row { display: grid; gap: 12px; grid-template-columns: minmax(220px, 320px) auto; align-items: end; }
             .danger-status { display:none; margin-top:12px; padding:10px 12px; border-radius:8px; background:#450a0a; border:1px solid #991b1b; color:#fecaca; }
-            .maintenance-row { display: grid; gap: 12px; grid-template-columns: minmax(220px, 320px) auto auto; align-items: end; }
             .button-link, button { display: inline-block; padding: 10px 14px; border-radius: 8px; border: 0; background: #2563eb; color: #fff; text-decoration: none; cursor: pointer; }
             .button-link.gray, button.gray { background: #475569; }
-            button.warning { background: #b45309; }
             button.danger { background: #b91c1c; }
             button:disabled { opacity: 0.45; cursor: not-allowed; }
             input { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #fff; }
@@ -1438,13 +1427,16 @@ if ($route === 'server') {
             .status-chip.offline { background:#334155; color:#e2e8f0; }
             .container-status-list { display:grid; gap:10px; margin-top:16px; }
             .container-status-item { background:#0f172a; border:1px solid #243041; border-radius:10px; padding:12px; }
+            .container-status-header { display:flex; justify-content:space-between; gap:10px; align-items:start; }
+            .container-status-actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+            .container-action-button { padding:7px 10px; font-size:12px; background:#b45309; }
             .log-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); align-items: stretch; }
             .log-block { display: grid; gap: 10px; grid-template-rows: auto minmax(0, 1fr); }
             .log-view { margin: 0; white-space: pre-wrap; word-break: break-word; background: #050814; border: 1px solid #243041; border-radius: 12px; padding: 16px; height: 500px; overflow: auto; }
             .inline-status { padding: 12px; background: #1e293b; border: 1px solid #334155; border-radius: 10px; margin-bottom: 16px; display: none; }
             .secret-row { display: flex; gap: 10px; align-items: end; }
             .secret-row input { flex: 1; }
-            @media (max-width: 900px) { .grid.two, .grid.form, .server-toolbar, .danger-row, .maintenance-row { grid-template-columns: 1fr; } }
+            @media (max-width: 900px) { .grid.two, .grid.form, .server-toolbar, .danger-row { grid-template-columns: 1fr; } }
         </style>
     </head>
     <body>
@@ -1461,11 +1453,10 @@ if ($route === 'server') {
                     <div class="toolbar-group">
                         <div class="toolbar-label">Server Controls</div>
                         <div class="toolbar-actions compact">
-                            <?php foreach (['start', 'stop', 'restart', 'backend_reboot', 'reinstall'] as $act): ?>
+                            <?php foreach (['start', 'stop', 'restart', 'backend_reboot'] as $act): ?>
                                 <form method="post" action="/?route=server_command" class="server-action-form">
                                     <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
                                     <input type="hidden" name="action" value="<?= h($act) ?>">
-                                    <input type="hidden" name="reinstall_code" value="">
                                     <button
                                         type="submit"
                                         data-server-action="<?= h($act) ?>"
@@ -1550,9 +1541,33 @@ if ($route === 'server') {
                 <div class="muted" style="margin-top:8px;" id="runtime-status">Desired: <?= h((bool) ($metrics['desired_running'] ?? false) ? 'start' : 'stop') ?></div>
                 <div class="container-status-list" id="container-status-list">
                     <?php foreach (($metrics['containers'] ?? []) as $container): ?>
+                        <?php
+                            $containerService = (string) ($container['service'] ?? '');
+                            $containerRunning = (bool) ($container['running'] ?? false);
+                            $reinstallAction = $containerService === 'fs25'
+                                ? 'reinstall_game'
+                                : ($containerService === 'sftp' ? 'reinstall_sftp' : '');
+                            $reinstallLabel = $containerService === 'fs25'
+                                ? ($containerRunning ? 'Reinstall FS25' : 'Install FS25')
+                                : ($containerService === 'sftp' ? ($containerRunning ? 'Reinstall SFTP' : 'Install SFTP') : '');
+                        ?>
                         <div class="container-status-item">
-                            <div><strong><?= h((string) ($container['service'] ?? 'container')) ?></strong> <span class="muted">(<?= h((string) ($container['name'] ?? '')) ?>)</span></div>
-                            <div class="muted">Status: <?= h((string) ($container['status'] ?? 'unknown')) ?><?php if (isset($container['exit_code']) && $container['exit_code'] !== null): ?> | Exit: <?= h((string) $container['exit_code']) ?><?php endif; ?><?php if (!empty($container['health'])): ?> | Health: <?= h((string) $container['health']) ?><?php endif; ?></div>
+                            <div class="container-status-header">
+                                <div>
+                                    <div><strong><?= h($containerService !== '' ? $containerService : 'container') ?></strong> <span class="muted">(<?= h((string) ($container['name'] ?? '')) ?>)</span></div>
+                                    <div class="muted">Status: <?= h((string) ($container['status'] ?? 'unknown')) ?><?php if (isset($container['exit_code']) && $container['exit_code'] !== null): ?> | Exit: <?= h((string) $container['exit_code']) ?><?php endif; ?><?php if (!empty($container['health'])): ?> | Health: <?= h((string) $container['health']) ?><?php endif; ?></div>
+                                </div>
+                                <?php if ($reinstallAction !== ''): ?>
+                                    <div class="container-status-actions">
+                                        <button
+                                            class="container-action-button"
+                                            type="button"
+                                            data-container-reinstall-action="<?= h($reinstallAction) ?>"
+                                            data-container-reinstall-label="<?= h($reinstallLabel) ?>"
+                                        ><?= h($reinstallLabel) ?></button>
+                                    </div>
+                                <?php endif; ?>
+                            </div>
                         </div>
                     <?php endforeach; ?>
                 </div>
@@ -1585,27 +1600,6 @@ if ($route === 'server') {
                 </div>
             </div>
         </div>
-        <div class="card maintenance-card">
-            <h2 class="maintenance-title">Maintenance Reinstall</h2>
-            <div class="maintenance-copy">Reinstall recreates the selected container from the current runtime config. Type the exact instance ID to confirm before running either reinstall.</div>
-            <form method="post" action="/?route=server_reinstall" class="server-reinstall-form" style="margin-top:16px;">
-                <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
-                <input type="hidden" name="action" value="">
-                <div class="maintenance-row">
-                    <div>
-                        <label>Confirmation Code</label>
-                        <input type="text" name="reinstall_code" placeholder="Type <?= h($server['instance_id']) ?>" autocomplete="off" spellcheck="false">
-                    </div>
-                    <div>
-                        <button class="warning" type="submit" data-reinstall-action="reinstall_game">Reinstall Game Server</button>
-                    </div>
-                    <div>
-                        <button class="warning" type="submit" data-reinstall-action="reinstall_sftp">Reinstall SFTP</button>
-                    </div>
-                </div>
-                <div class="danger-status" id="server-delete-status"></div>
-            </form>
-        </div>
         <div class="card danger-card">
             <h2 class="danger-title">Danger Zone</h2>
             <div class="danger-copy">Deleting a server removes the panel record and the instance files on the managed host. Type the exact instance ID to confirm.</div>
@@ -1620,6 +1614,7 @@ if ($route === 'server') {
                         <button class="danger" type="submit">Delete Server</button>
                     </div>
                 </div>
+                <div class="danger-status" id="server-delete-status"></div>
             </form>
         </div>
     </div>
@@ -1642,7 +1637,6 @@ if ($route === 'server') {
         const copyVncPassword = document.getElementById('copy-vnc-password');
         const actionForms = document.querySelectorAll('.server-action-form');
         const actionButtons = document.querySelectorAll('[data-server-action]');
-        const reinstallForm = document.querySelector('.server-reinstall-form');
         const deleteForm = document.querySelector('.server-delete-form');
         const deleteStatus = document.getElementById('server-delete-status');
 
@@ -1710,6 +1704,16 @@ if ($route === 'server') {
             return `${size.toFixed(size >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
         }
 
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, (character) => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;',
+            }[character]));
+        }
+
         function setInlineStatus(message, isError = false) {
             if (!inlineStatus) {
                 return;
@@ -1758,7 +1762,15 @@ if ($route === 'server') {
             containerStatusList.innerHTML = items.map((container) => {
                 const exitText = container.exit_code === null || container.exit_code === undefined ? '' : ` | Exit: ${container.exit_code}`;
                 const healthText = container.health ? ` | Health: ${container.health}` : '';
-                return `<div class="container-status-item"><div><strong>${container.service || 'container'}</strong> <span class="muted">(${container.name || ''})</span></div><div class="muted">Status: ${container.status || 'unknown'}${exitText}${healthText}</div></div>`;
+                const service = String(container.service || 'container');
+                const action = service === 'fs25' ? 'reinstall_game' : (service === 'sftp' ? 'reinstall_sftp' : '');
+                const label = service === 'fs25'
+                    ? (container.running ? 'Reinstall FS25' : 'Install FS25')
+                    : (service === 'sftp' ? (container.running ? 'Reinstall SFTP' : 'Install SFTP') : '');
+                const actionButton = action
+                    ? `<div class="container-status-actions"><button class="container-action-button" type="button" data-container-reinstall-action="${escapeHtml(action)}" data-container-reinstall-label="${escapeHtml(label)}">${escapeHtml(label)}</button></div>`
+                    : '';
+                return `<div class="container-status-item"><div class="container-status-header"><div><div><strong>${escapeHtml(service)}</strong> <span class="muted">(${escapeHtml(container.name || '')})</span></div><div class="muted">Status: ${escapeHtml(container.status || 'unknown')}${escapeHtml(exitText)}${escapeHtml(healthText)}</div></div>${actionButton}</div></div>`;
             }).join('');
         }
 
@@ -1833,17 +1845,6 @@ if ($route === 'server') {
                 event.preventDefault();
                 const actionField = form.querySelector('input[name="action"]');
                 const actionName = actionField ? actionField.value : '';
-                if (actionName === 'reinstall') {
-                    const confirmation = window.prompt(`Reinstall will wipe ${instanceId} and rebuild it from panel settings.\nType ${instanceId} to confirm.`);
-                    if ((confirmation || '').trim() !== instanceId) {
-                        setInlineStatus(`Reinstall cancelled. Type ${instanceId} exactly to confirm.`, true);
-                        return;
-                    }
-                    const reinstallCodeField = form.querySelector('input[name="reinstall_code"]');
-                    if (reinstallCodeField) {
-                        reinstallCodeField.value = confirmation.trim();
-                    }
-                }
                 const button = form.querySelector('button[type="submit"]');
                 if (button) button.disabled = true;
                 setInlineStatus(`Running ${actionName}...`);
@@ -1869,47 +1870,57 @@ if ($route === 'server') {
             });
         });
 
-        if (reinstallForm) {
-            reinstallForm.addEventListener('submit', async (event) => {
-                event.preventDefault();
-                const submitter = event.submitter || document.activeElement;
-                const action = submitter && submitter.getAttribute('data-reinstall-action');
-                const reinstallCodeField = reinstallForm.querySelector('input[name="reinstall_code"]');
-                const actionField = reinstallForm.querySelector('input[name="action"]');
+        async function runContainerReinstall(action, label, button) {
+            if (!['reinstall_game', 'reinstall_sftp'].includes(action)) {
+                setInlineStatus('Unsupported container action.', true);
+                return;
+            }
 
-                if (!action || !actionField) {
-                    setInlineStatus('Select a reinstall action.', true);
+            const confirmation = window.prompt(`${label} will recreate this container for ${instanceId}.\nType ${instanceId} to confirm.`);
+            if ((confirmation || '').trim() !== instanceId) {
+                setInlineStatus(`${label} cancelled. Type ${instanceId} exactly to confirm.`, true);
+                return;
+            }
+
+            const body = new FormData();
+            body.set('instance_id', instanceId);
+            body.set('action', action);
+            body.set('reinstall_code', confirmation.trim());
+
+            if (button) button.disabled = true;
+            setInlineStatus(`Running ${label.toLowerCase()}...`);
+
+            try {
+                const response = await fetch('/?route=server_reinstall', {
+                    method: 'POST',
+                    body,
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                    credentials: 'same-origin',
+                });
+                const payload = await response.json();
+                if (!response.ok || !payload.ok) {
+                    throw new Error(payload.error || payload.message || `Container action failed (${response.status})`);
+                }
+                setInlineStatus(payload.message || `${label} completed.`);
+                await refreshLiveView();
+            } catch (error) {
+                setInlineStatus(error.message, true);
+            } finally {
+                if (button) button.disabled = false;
+            }
+        }
+
+        if (containerStatusList) {
+            containerStatusList.addEventListener('click', (event) => {
+                const button = event.target.closest('[data-container-reinstall-action]');
+                if (!button) {
                     return;
                 }
-
-                if (!reinstallCodeField || reinstallCodeField.value.trim() !== instanceId) {
-                    setInlineStatus(`Type ${instanceId} exactly to reinstall this instance.`, true);
-                    return;
-                }
-
-                actionField.value = action;
-                const buttons = reinstallForm.querySelectorAll('button[type="submit"]');
-                buttons.forEach((button) => { button.disabled = true; });
-                setInlineStatus(`Running ${action === 'reinstall_game' ? 'game server reinstall' : 'SFTP reinstall'}...`);
-
-                try {
-                    const response = await fetch(reinstallForm.getAttribute('action') || '/?route=server_reinstall', {
-                        method: 'POST',
-                        body: new FormData(reinstallForm),
-                        headers: { 'X-Requested-With': 'XMLHttpRequest' },
-                        credentials: 'same-origin',
-                    });
-                    const payload = await response.json();
-                    if (!response.ok || !payload.ok) {
-                        throw new Error(payload.error || payload.message || `Reinstall failed (${response.status})`);
-                    }
-                    setInlineStatus(payload.message || 'Reinstall completed.');
-                    await refreshLiveView();
-                } catch (error) {
-                    setInlineStatus(error.message, true);
-                } finally {
-                    buttons.forEach((button) => { button.disabled = false; });
-                }
+                runContainerReinstall(
+                    button.getAttribute('data-container-reinstall-action') || '',
+                    button.getAttribute('data-container-reinstall-label') || 'Container reinstall',
+                    button
+                );
             });
         }
 
@@ -2513,7 +2524,8 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                 <div><strong>stop</strong>: stops the instance containers.</div>
                 <div><strong>restart</strong>: restarts the instance containers.</div>
                 <div><strong>backend reboot</strong>: kills `dedicatedServer.exe` inside the runtime container so the launcher/watchdog can start it again.</div>
-                <div><strong>reinstall</strong>: asks for confirmation, wipes the instance directory, regenerates settings, and recreates the server containers.</div>
+                <div><strong>Install/Reinstall FS25</strong>: recreates only the FS25 runtime container from Runtime Health after the exact instance ID is typed.</div>
+                <div><strong>Install/Reinstall SFTP</strong>: recreates only the instance SFTP container from Runtime Health after the exact instance ID is typed.</div>
                 <div><strong>Delete Server</strong>: removes the panel record and instance files after the exact instance ID is typed in the confirmation field.</div>
             </div>
         </div>
@@ -2562,12 +2574,11 @@ curl -X POST \
   -d '{"instance_id":"fs25-0001","action":"restart"}' \
   "<?= h(rtrim($node['app_url'], '/')) ?>/?route=api_node_server_action"</pre>
             <div class="stack muted">
-                <div><strong>POST `/?route=api_node_server_action`</strong> accepts only the actions `start`, `stop`, `restart`, `backend_reboot`, `reinstall`, and `logs`.</div>
+                <div><strong>POST `/?route=api_node_server_action`</strong> accepts only the actions `start`, `stop`, `restart`, `backend_reboot`, and `logs`.</div>
                 <div><strong>`start`</strong>: syncs panel-managed runtime config to the instance and starts the server stack.</div>
                 <div><strong>`stop`</strong>: stops the server stack.</div>
                 <div><strong>`restart`</strong>: restarts the server stack.</div>
                 <div><strong>`backend_reboot`</strong>: kills `dedicatedServer.exe` so the watchdog can bring it back online without fully rebuilding the stack.</div>
-                <div><strong>`reinstall`</strong>: wipes and rebuilds the instance files from panel settings, then recreates the server containers.</div>
                 <div><strong>`logs`</strong>: returns the structured lifecycle log content.</div>
                 <div>Because the action route is allowlisted, attempts to send config-changing commands are rejected.</div>
             </div>

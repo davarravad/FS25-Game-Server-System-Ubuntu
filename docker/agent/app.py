@@ -1083,7 +1083,7 @@ def instance_action():
 
     image_name = image_name_from_compose(compose_file)
 
-    if action in {"start", "restart", "rebuild", "reinstall"}:
+    if action in {"start", "restart", "rebuild", "reinstall_game"}:
         append_runtime_log(instance_id, "Console: Server marked as starting...")
     elif action in {"stop", "down"}:
         append_runtime_log(instance_id, "Console: Server marked as stopping...")
@@ -1102,50 +1102,6 @@ def instance_action():
             append_runtime_log(instance_id, "Version mismatch detected. Rebuilding server files.")
         elif action == "reinstall_game":
             append_runtime_log(instance_id, "Console: Game server reinstall requested. Recreating game server container...")
-
-    if action == "reinstall":
-        existing_env = read_env_file(instance_dir / ".env")
-        values = build_instance_values(instance_id, {}, existing_env)
-        ensure_shared_storage(values)
-
-        append_runtime_log(instance_id, "Console: Reinstall requested. Stopping and wiping existing instance files...")
-        run_command(compose_cmd("-f", str(compose_file), "down"), cwd=str(instance_dir))
-        wipe_instance_dir(instance_dir)
-        create_instance_data_dirs(instance_dir)
-
-        render_instance_files(instance_dir, values, write_env=True)
-        apply_permissions(instance_dir, recursive=True)
-        append_runtime_log(instance_id, "Console: Instance files rebuilt from panel settings.")
-
-        firewall = sync_public_port_access(instance_id, next_values=values, current_values=existing_env)
-        try:
-            port_server_sync = sync_port_server_xml(values, existing_env)
-        except Exception as exc:
-            port_server_sync = {
-                "ok": False,
-                "status": "error",
-                "message": f"Custom server file sync failed: {exc}",
-            }
-
-        start_result = run_command(compose_cmd("-f", str(compose_file), "up", "-d", "--force-recreate"), cwd=str(instance_dir))
-        if start_result["code"] != 0:
-            append_runtime_log(instance_id, "Console: Reinstall failed to start the rebuilt instance.")
-            return jsonify({
-                "ok": False,
-                "error": (start_result.get("stderr") or start_result.get("stdout") or "Reinstall failed").strip(),
-                "result": start_result,
-                "firewall": firewall,
-                "port_server_sync": port_server_sync,
-            }), 500
-
-        write_instance_state(instance_id, True)
-        append_runtime_log(instance_id, "Console: Reinstall complete. Fresh instance is now running.")
-        return jsonify({
-            "ok": True,
-            "result": start_result,
-            "firewall": firewall,
-            "port_server_sync": port_server_sync,
-        })
 
     if action == "pull" and image_name == FS25_RUNTIME_IMAGE:
         image_result = ensure_runtime_image(image_name, force_rebuild=True)
@@ -1200,7 +1156,7 @@ def instance_action():
     result = run_command(action_map[action], cwd=str(instance_dir))
 
     if result["code"] == 0:
-        if action in {"start", "restart", "rebuild", "reinstall"}:
+        if action in {"start", "restart", "rebuild", "reinstall_game"}:
             write_instance_state(instance_id, True)
             if action == "reinstall_game":
                 append_runtime_log(instance_id, "Console: Game server container recreated.")
@@ -1239,22 +1195,42 @@ def delete_instance():
     if compose_file.exists():
         # Delete should return promptly even if Docker hangs while shutting down services.
         compose_down_result = run_command(
-            compose_cmd("-f", str(compose_file), "down"),
+            compose_cmd("-f", str(compose_file), "down", "--remove-orphans", "--volumes"),
             cwd=str(instance_dir),
             timeout=30,
         )
+        if compose_down_result["code"] != 0 and not compose_down_result.get("timed_out"):
+            return jsonify({
+                "ok": False,
+                "error": (compose_down_result.get("stderr") or compose_down_result.get("stdout") or "Failed to stop instance containers").strip(),
+                "result": {"compose_down": compose_down_result},
+            }), 500
 
     firewall = sync_public_port_access(instance_id, next_values={}, current_values=existing_env)
     cleanup = remove_path_tree(instance_dir)
 
-    if instance_dir.exists():
-        wipe_instance_dir(instance_dir)
-        instance_dir.rmdir()
+    if not cleanup.get("ok"):
+        return jsonify({
+            "ok": False,
+            "error": cleanup.get("error", "Failed to remove instance files"),
+            "result": {
+                "compose_down": compose_down_result,
+                "cleanup": cleanup,
+                "firewall": firewall,
+            },
+        }), 500
 
     with suppress(FileNotFoundError):
         instance_state_path(instance_id).unlink()
 
-    response = {"ok": True, "firewall": firewall}
+    response = {
+        "ok": True,
+        "firewall": firewall,
+        "result": {
+            "compose_down": compose_down_result,
+            "cleanup": cleanup,
+        },
+    }
     if compose_down_result and compose_down_result.get("timed_out"):
         response["warning"] = "docker compose down timed out during delete; continuing with forced cleanup"
         response["compose_down"] = compose_down_result
