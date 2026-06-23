@@ -199,6 +199,35 @@ def apply_permissions(path: Path, recursive: bool = True):
                 set_perms(root_path / name)
 
 
+def remove_path_tree(path: Path) -> dict:
+    if not path.exists():
+        return {"ok": True, "removed": False}
+
+    errors = []
+
+    def retry_with_write_permission(func, failed_path, exc_info):
+        failed = Path(failed_path)
+        try:
+            os.chmod(failed, 0o775 if failed.is_dir() else 0o664)
+            func(failed_path)
+        except Exception as exc:
+            errors.append(f"{failed_path}: {exc}")
+
+    try:
+        shutil.rmtree(path, onerror=retry_with_write_permission)
+    except Exception as exc:
+        errors.append(f"{path}: {exc}")
+
+    if errors or path.exists():
+        return {
+            "ok": False,
+            "removed": False,
+            "error": "; ".join(errors) or f"{path} still exists after delete",
+        }
+
+    return {"ok": True, "removed": True}
+
+
 def render_template(content: str, values: dict) -> str:
     out = content
     for key, value in values.items():
@@ -1062,13 +1091,17 @@ def instance_action():
         append_runtime_log(instance_id, "[FSG Daemon]: Pulling Docker container image, this could take a few minutes to complete...")
     elif action == "backend_reboot":
         append_runtime_log(instance_id, "Console: Backend reboot requested. Killing dedicatedServer.exe so the watchdog can restart it...")
+    elif action == "reinstall_sftp":
+        append_runtime_log(instance_id, "Console: SFTP reinstall requested. Recreating SFTP container...")
 
-    if action in {"start", "restart", "rebuild"}:
+    if action in {"start", "restart", "rebuild", "reinstall_game"}:
         image_result = ensure_runtime_image(image_name, force_rebuild=(action == "rebuild"))
         if not image_result.get("ok"):
             return jsonify(image_result), 500
         if action == "rebuild":
             append_runtime_log(instance_id, "Version mismatch detected. Rebuilding server files.")
+        elif action == "reinstall_game":
+            append_runtime_log(instance_id, "Console: Game server reinstall requested. Recreating game server container...")
 
     if action == "reinstall":
         existing_env = read_env_file(instance_dir / ".env")
@@ -1134,6 +1167,8 @@ def instance_action():
         "restart": compose_cmd("-f", str(compose_file), "restart"),
         "pull": compose_cmd("-f", str(compose_file), "pull"),
         "rebuild": compose_cmd("-f", str(compose_file), "up", "-d", "--force-recreate"),
+        "reinstall_game": compose_cmd("-f", str(compose_file), "up", "-d", "--force-recreate", "--no-deps", "fs25"),
+        "reinstall_sftp": compose_cmd("-f", str(compose_file), "up", "-d", "--force-recreate", "--no-deps", "sftp"),
         "down": compose_cmd("-f", str(compose_file), "down"),
         "status": compose_cmd("-f", str(compose_file), "ps", "-a"),
     }
@@ -1167,11 +1202,15 @@ def instance_action():
     if result["code"] == 0:
         if action in {"start", "restart", "rebuild", "reinstall"}:
             write_instance_state(instance_id, True)
+            if action == "reinstall_game":
+                append_runtime_log(instance_id, "Console: Game server container recreated.")
         elif action in {"stop", "down"}:
             write_instance_state(instance_id, False)
             append_runtime_log(instance_id, "Console: Server marked as offline...")
         elif action == "pull":
             append_runtime_log(instance_id, "[FSG Daemon]: Finished pulling Docker container image")
+        elif action == "reinstall_sftp":
+            append_runtime_log(instance_id, "Console: SFTP container recreated.")
 
     response = {
         "ok": result["code"] == 0,
@@ -1194,6 +1233,7 @@ def delete_instance():
     instance_dir = INSTANCE_BASE_PATH / instance_id
     compose_file = instance_dir / "compose.yml"
     existing_env = read_env_file(instance_dir / ".env")
+    down_result = None
 
     compose_down_result = None
     if compose_file.exists():
@@ -1205,6 +1245,7 @@ def delete_instance():
         )
 
     firewall = sync_public_port_access(instance_id, next_values={}, current_values=existing_env)
+    cleanup = remove_path_tree(instance_dir)
 
     if instance_dir.exists():
         wipe_instance_dir(instance_dir)
