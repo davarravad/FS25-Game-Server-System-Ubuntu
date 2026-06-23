@@ -51,10 +51,11 @@ function perform_server_lifecycle_action(array $server, string $action, bool $sy
         }
     }
 
+    $agentTimeout = in_array($action, server_reinstall_actions(), true) ? 120 : 20;
     $agent = agent_post_for_host($server, '/instance/action', [
         'instance_id' => $instanceId,
         'action' => $action,
-    ]);
+    ], $agentTimeout);
 
     if (($agent['ok'] ?? false) && $action !== 'logs') {
         $stmt = db()->prepare('UPDATE server_instances SET status = ? WHERE instance_id = ?');
@@ -915,6 +916,33 @@ if ($route === 'server_command' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (!in_array($action, server_command_actions(), true)) {
         json_response(['ok' => false, 'error' => 'Unsupported action.'], 422);
+    }
+
+    $result = perform_server_lifecycle_action($server, $action, true);
+    json_response($result, ($result['ok'] ?? false) ? 200 : 500);
+}
+
+if ($route === 'server_reinstall' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    require_login();
+
+    $instanceId = (string) ($_POST['instance_id'] ?? '');
+    $action = (string) ($_POST['action'] ?? '');
+    $reinstallCode = trim((string) ($_POST['reinstall_code'] ?? ''));
+    $server = find_instance_with_host($instanceId);
+
+    if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
+        json_response(['ok' => false, 'error' => 'Managed host for this server is missing or disabled.'], 404);
+    }
+
+    if (!in_array($action, server_reinstall_actions(), true)) {
+        json_response(['ok' => false, 'error' => 'Unsupported container install action.'], 422);
+    }
+
+    if ($reinstallCode !== $instanceId) {
+        json_response([
+            'ok' => false,
+            'error' => 'Container install confirmation mismatch. Type the exact instance ID to confirm.',
+        ], 422);
     }
 
     $result = perform_server_lifecycle_action($server, $action, true);
