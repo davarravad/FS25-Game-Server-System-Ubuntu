@@ -246,6 +246,7 @@ But this repo adds:
 - Use this when you want to upload very large installer or DLC files over SFTP instead of the website.
 - Server actions in the panel include `start`, `stop`, and `restart`.
 - Instances are generated with Docker `restart: unless-stopped`, and the panel now exposes the image's `AUTOSTART_SERVER` mode as `Auto start server`, `Web panel only`, or `Manual start`.
+- All panel and generated instance containers set Docker `json-file` log rotation to `max-size=50m` and `max-file=3` so `/var/lib/docker/containers/*/*-json.log` cannot grow without bound. Recreate existing containers after updating so Docker applies the new logging options.
 
 ### Recommended next upgrades
 - Discord auth

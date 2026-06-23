@@ -102,7 +102,7 @@ copy_tree_contents() {
 }
 
 escape_sed_replacement() {
-    printf '%s' "$1" | sed 's/[\/&]/\\&/g'
+    printf '%s' "$1" | sed 's/[\\\/&#]/\\&/g'
 }
 
 xml_escape() {

@@ -23,6 +23,11 @@ services:
     cap_add:
       - SYS_NICE
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
 
   sftp:
     image: atmoz/sftp:alpine
@@ -33,3 +38,8 @@ services:
     ports:
       - "{{SFTP_PORT}}:22/tcp"
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"

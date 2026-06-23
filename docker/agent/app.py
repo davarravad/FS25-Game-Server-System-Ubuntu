@@ -41,20 +41,42 @@ def safe_instance_id(instance_id: str) -> bool:
     return re.fullmatch(r"[a-zA-Z0-9_-]+", instance_id or "") is not None
 
 
-def run_command(cmd, cwd=None):
-    result = subprocess.run(
-        cmd,
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return {
-        "code": result.returncode,
-        "stdout": result.stdout,
-        "stderr": result.stderr,
-        "command": cmd,
-    }
+def run_command(cmd, cwd=None, timeout=None):
+    try:
+        result = subprocess.run(
+            cmd,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+        return {
+            "code": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "command": cmd,
+            "timed_out": False,
+        }
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        timeout_error = (
+            f"Command timed out after {timeout} seconds"
+            if timeout is not None
+            else "Command timed out"
+        )
+        if stderr:
+            stderr = f"{stderr.rstrip()}\n{timeout_error}"
+        else:
+            stderr = timeout_error
+        return {
+            "code": 124,
+            "stdout": stdout,
+            "stderr": stderr,
+            "command": cmd,
+            "timed_out": True,
+        }
 
 
 def compose_command():
@@ -289,6 +311,21 @@ def render_instance_files(instance_dir: Path, values: dict, write_env: bool = Fa
         write_file(instance_dir / ".env", render_template(env_tpl, values))
 
     apply_permissions(instance_dir, recursive=True)
+
+
+def create_instance_data_dirs(instance_dir: Path):
+    for sub in ["data/config", "data/mods", "data/logs", "data/saves"]:
+        (instance_dir / sub).mkdir(parents=True, exist_ok=True)
+
+
+def wipe_instance_dir(instance_dir: Path):
+    if not instance_dir.exists():
+        return
+    for root, dirs, files in os.walk(instance_dir, topdown=False):
+        for file in files:
+            Path(root, file).unlink(missing_ok=True)
+        for d in dirs:
+            Path(root, d).rmdir()
 
 
 def runtime_log_path(instance_id: str) -> Path:
@@ -959,8 +996,7 @@ def create_instance():
 
     ensure_shared_storage(payload)
 
-    for sub in ["data/config", "data/mods", "data/logs", "data/saves"]:
-        (instance_dir / sub).mkdir(parents=True, exist_ok=True)
+    create_instance_data_dirs(instance_dir)
     apply_permissions(instance_dir, recursive=True)
 
     render_instance_files(instance_dir, values, write_env=True)
@@ -1034,6 +1070,7 @@ def instance_action():
     payload = request.get_json(force=True)
     instance_id = payload.get("instance_id", "").strip()
     action = payload.get("action", "").strip().lower()
+    log_lines_raw = payload.get("log_lines", 200)
 
     if not safe_instance_id(instance_id):
         return jsonify({"ok": False, "error": "invalid instance id"}), 400
@@ -1046,7 +1083,7 @@ def instance_action():
 
     image_name = image_name_from_compose(compose_file)
 
-    if action in {"start", "restart", "rebuild", "reinstall_game"}:
+    if action in {"start", "restart", "rebuild", "reinstall"}:
         append_runtime_log(instance_id, "Console: Server marked as starting...")
     elif action in {"stop", "down"}:
         append_runtime_log(instance_id, "Console: Server marked as stopping...")
@@ -1065,6 +1102,50 @@ def instance_action():
             append_runtime_log(instance_id, "Version mismatch detected. Rebuilding server files.")
         elif action == "reinstall_game":
             append_runtime_log(instance_id, "Console: Game server reinstall requested. Recreating game server container...")
+
+    if action == "reinstall":
+        existing_env = read_env_file(instance_dir / ".env")
+        values = build_instance_values(instance_id, {}, existing_env)
+        ensure_shared_storage(values)
+
+        append_runtime_log(instance_id, "Console: Reinstall requested. Stopping and wiping existing instance files...")
+        run_command(compose_cmd("-f", str(compose_file), "down"), cwd=str(instance_dir))
+        wipe_instance_dir(instance_dir)
+        create_instance_data_dirs(instance_dir)
+
+        render_instance_files(instance_dir, values, write_env=True)
+        apply_permissions(instance_dir, recursive=True)
+        append_runtime_log(instance_id, "Console: Instance files rebuilt from panel settings.")
+
+        firewall = sync_public_port_access(instance_id, next_values=values, current_values=existing_env)
+        try:
+            port_server_sync = sync_port_server_xml(values, existing_env)
+        except Exception as exc:
+            port_server_sync = {
+                "ok": False,
+                "status": "error",
+                "message": f"Custom server file sync failed: {exc}",
+            }
+
+        start_result = run_command(compose_cmd("-f", str(compose_file), "up", "-d", "--force-recreate"), cwd=str(instance_dir))
+        if start_result["code"] != 0:
+            append_runtime_log(instance_id, "Console: Reinstall failed to start the rebuilt instance.")
+            return jsonify({
+                "ok": False,
+                "error": (start_result.get("stderr") or start_result.get("stdout") or "Reinstall failed").strip(),
+                "result": start_result,
+                "firewall": firewall,
+                "port_server_sync": port_server_sync,
+            }), 500
+
+        write_instance_state(instance_id, True)
+        append_runtime_log(instance_id, "Console: Reinstall complete. Fresh instance is now running.")
+        return jsonify({
+            "ok": True,
+            "result": start_result,
+            "firewall": firewall,
+            "port_server_sync": port_server_sync,
+        })
 
     if action == "pull" and image_name == FS25_RUNTIME_IMAGE:
         image_result = ensure_runtime_image(image_name, force_rebuild=True)
@@ -1092,8 +1173,26 @@ def instance_action():
         "status": compose_cmd("-f", str(compose_file), "ps", "-a"),
     }
 
+    try:
+        log_lines = max(20, min(2000, int(log_lines_raw)))
+    except (TypeError, ValueError):
+        log_lines = 200
+
     if action == "logs":
         return jsonify({"ok": True, "result": {"stdout": read_runtime_log(instance_id)}})
+
+    if action == "docker_logs":
+        docker_logs_result = run_command(
+            compose_cmd("-f", str(compose_file), "logs", "--no-color", "--tail", str(log_lines), "fs25"),
+            cwd=str(instance_dir),
+        )
+        response = {
+            "ok": docker_logs_result["code"] == 0,
+            "result": docker_logs_result,
+        }
+        if docker_logs_result["code"] != 0:
+            response["error"] = (docker_logs_result.get("stderr") or docker_logs_result.get("stdout") or "Command failed").strip()
+        return jsonify(response), (200 if docker_logs_result["code"] == 0 else 500)
 
     if action not in action_map:
         return jsonify({"ok": False, "error": "unsupported action"}), 400
@@ -1101,7 +1200,7 @@ def instance_action():
     result = run_command(action_map[action], cwd=str(instance_dir))
 
     if result["code"] == 0:
-        if action in {"start", "restart", "rebuild", "reinstall_game"}:
+        if action in {"start", "restart", "rebuild", "reinstall"}:
             write_instance_state(instance_id, True)
             if action == "reinstall_game":
                 append_runtime_log(instance_id, "Console: Game server container recreated.")
@@ -1136,43 +1235,31 @@ def delete_instance():
     existing_env = read_env_file(instance_dir / ".env")
     down_result = None
 
+    compose_down_result = None
     if compose_file.exists():
-        down_result = run_command(
-            compose_cmd("-f", str(compose_file), "down", "--remove-orphans", "--volumes"),
+        # Delete should return promptly even if Docker hangs while shutting down services.
+        compose_down_result = run_command(
+            compose_cmd("-f", str(compose_file), "down"),
             cwd=str(instance_dir),
+            timeout=30,
         )
-        if down_result["code"] != 0:
-            return jsonify({
-                "ok": False,
-                "error": (down_result.get("stderr") or down_result.get("stdout") or "Failed to stop instance containers").strip(),
-                "result": {"compose_down": down_result},
-            }), 500
 
     firewall = sync_public_port_access(instance_id, next_values={}, current_values=existing_env)
     cleanup = remove_path_tree(instance_dir)
 
-    if not cleanup.get("ok"):
-        return jsonify({
-            "ok": False,
-            "error": cleanup.get("error", "Failed to remove instance files"),
-            "result": {
-                "compose_down": down_result,
-                "cleanup": cleanup,
-                "firewall": firewall,
-            },
-        }), 500
+    if instance_dir.exists():
+        wipe_instance_dir(instance_dir)
+        instance_dir.rmdir()
 
     with suppress(FileNotFoundError):
         instance_state_path(instance_id).unlink()
 
-    return jsonify({
-        "ok": True,
-        "firewall": firewall,
-        "result": {
-            "compose_down": down_result,
-            "cleanup": cleanup,
-        },
-    })
+    response = {"ok": True, "firewall": firewall}
+    if compose_down_result and compose_down_result.get("timed_out"):
+        response["warning"] = "docker compose down timed out during delete; continuing with forced cleanup"
+        response["compose_down"] = compose_down_result
+
+    return jsonify(response)
 
 
 @app.post("/instance/metrics")

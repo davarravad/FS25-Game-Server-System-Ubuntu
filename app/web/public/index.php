@@ -20,7 +20,7 @@ function json_response(array $payload, int $status = 200): void
 
 function allowed_node_api_server_actions(): array
 {
-    return ['start', 'stop', 'restart', 'backend_reboot', 'logs'];
+    return ['start', 'stop', 'restart', 'backend_reboot', 'reinstall', 'logs'];
 }
 
 function server_command_actions(): array
@@ -44,7 +44,7 @@ function perform_server_lifecycle_action(array $server, string $action, bool $sy
         return ['ok' => false, 'error' => 'Managed host for this server is missing or disabled.'];
     }
 
-    if ($syncBeforeAction && in_array($action, ['start', 'restart', 'reinstall_game', 'reinstall_sftp'], true)) {
+    if ($syncBeforeAction && in_array($action, ['start', 'restart', 'reinstall'], true)) {
         $sync = sync_instance_config_for_server($server);
         if (!($sync['ok'] ?? false)) {
             return ['ok' => false, 'error' => 'Config sync failed: ' . ($sync['error'] ?? 'Unknown error')];
@@ -220,6 +220,116 @@ if ($route === 'api_node_server_action' && $_SERVER['REQUEST_METHOD'] === 'POST'
 
     $result = perform_server_lifecycle_action($server, $action, true);
     json_response($result, ($result['ok'] ?? false) ? 200 : 500);
+}
+
+if ($route === 'export_servers_excel') {
+    require_login();
+
+    $servers = db()->query('
+        SELECT
+            si.*,
+            mh.name AS host_name,
+            mh.access_host
+        FROM server_instances si
+        LEFT JOIN managed_hosts mh ON mh.id = si.host_id
+        ORDER BY si.server_name ASC, si.instance_id ASC
+    ')->fetchAll();
+
+    $timestamp = gmdate('Ymd_His');
+    $filename = 'fs25-server-settings-' . $timestamp . '.xls';
+
+    header('Content-Type: application/vnd.ms-excel; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
+
+    $xmlEscape = static function ($value): string {
+        return htmlspecialchars((string) $value, ENT_XML1 | ENT_QUOTES, 'UTF-8');
+    };
+
+    $headers = [
+        'Host Name',
+        'Instance ID',
+        'Server Name',
+        'Status',
+        'Image',
+        'Players',
+        'Region',
+        'Map',
+        'Game Port',
+        'Web Port',
+        'TLS Port',
+        'VNC Port',
+        'noVNC Port',
+        'SFTP Port',
+        'SFTP Username',
+        'SFTP Password',
+        'Web Username',
+        'Web Password',
+        'Web URL',
+        'TLS URL',
+        'VNC URL',
+        'noVNC URL',
+        'SFTP URL',
+        'Created At',
+        'Updated At',
+    ];
+
+    echo "<?xml version=\"1.0\"?>\n";
+    echo "<?mso-application progid=\"Excel.Sheet\"?>\n";
+    echo "<Workbook xmlns=\"urn:schemas-microsoft-com:office:spreadsheet\"\n";
+    echo " xmlns:o=\"urn:schemas-microsoft-com:office:office\"\n";
+    echo " xmlns:x=\"urn:schemas-microsoft-com:office:excel\"\n";
+    echo " xmlns:ss=\"urn:schemas-microsoft-com:office:spreadsheet\"\n";
+    echo " xmlns:html=\"http://www.w3.org/TR/REC-html40\">\n";
+    echo " <Worksheet ss:Name=\"FS25 Servers\">\n";
+    echo "  <Table>\n";
+    echo "   <Row>\n";
+    foreach ($headers as $headerLabel) {
+        echo '    <Cell><Data ss:Type="String">' . $xmlEscape($headerLabel) . "</Data></Cell>\n";
+    }
+    echo "   </Row>\n";
+
+    foreach ($servers as $serverRow) {
+        $rowValues = [
+            $serverRow['host_name'] ?? '',
+            $serverRow['instance_id'] ?? '',
+            $serverRow['server_name'] ?? '',
+            $serverRow['status'] ?? '',
+            $serverRow['image_name'] ?? '',
+            (string) ($serverRow['server_players'] ?? ''),
+            $serverRow['server_region'] ?? '',
+            $serverRow['server_map'] ?? '',
+            (string) ($serverRow['server_port'] ?? ''),
+            (string) ($serverRow['web_port'] ?? ''),
+            (string) ($serverRow['tls_port'] ?? ''),
+            (string) ($serverRow['vnc_port'] ?? ''),
+            (string) ($serverRow['novnc_port'] ?? ''),
+            (string) ($serverRow['sftp_port'] ?? ''),
+            $serverRow['sftp_username'] ?? '',
+            $serverRow['sftp_password'] ?? '',
+            $serverRow['web_username'] ?? '',
+            $serverRow['web_password'] ?? '',
+            instance_access_url($serverRow, 'web') ?? '',
+            instance_access_url($serverRow, 'tls') ?? '',
+            instance_access_url($serverRow, 'vnc') ?? '',
+            instance_access_url($serverRow, 'novnc') ?? '',
+            instance_access_url($serverRow, 'sftp') ?? '',
+            $serverRow['created_at'] ?? '',
+            $serverRow['updated_at'] ?? '',
+        ];
+
+        echo "   <Row>\n";
+        foreach ($rowValues as $cellValue) {
+            echo '    <Cell><Data ss:Type="String">' . $xmlEscape((string) $cellValue) . "</Data></Cell>\n";
+        }
+        echo "   </Row>\n";
+    }
+
+    echo "  </Table>\n";
+    echo " </Worksheet>\n";
+    echo "</Workbook>\n";
+    exit;
 }
 
 if ($route === 'host_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -697,7 +807,7 @@ if ($route === 'create' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         redirect_route('create_server');
     }
 
-    $portConflicts = find_port_conflicts($payload);
+    $portConflicts = find_port_conflicts($payload, null, $hostId);
     if ($portConflicts) {
         flash('Create failed: ' . implode('; ', $portConflicts));
         redirect_route('create_server');
@@ -803,35 +913,14 @@ if ($route === 'server_command' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         json_response(['ok' => false, 'error' => 'Managed host for this server is missing or disabled.'], 404);
     }
 
-    if (!in_array($action, server_command_actions(), true)) {
-        json_response(['ok' => false, 'error' => 'Unsupported action.'], 422);
-    }
-
-    $result = perform_server_lifecycle_action($server, $action, true);
-    json_response($result, ($result['ok'] ?? false) ? 200 : 500);
-}
-
-if ($route === 'server_reinstall' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    require_login();
-
-    $instanceId = (string) ($_POST['instance_id'] ?? '');
-    $action = (string) ($_POST['action'] ?? '');
-    $reinstallCode = trim((string) ($_POST['reinstall_code'] ?? ''));
-    $server = find_instance_with_host($instanceId);
-
-    if (!$server || !(int) ($server['is_enabled'] ?? 0)) {
-        json_response(['ok' => false, 'error' => 'Managed host for this server is missing or disabled.'], 404);
-    }
-
-    if (!in_array($action, server_reinstall_actions(), true)) {
-        json_response(['ok' => false, 'error' => 'Unsupported reinstall action.'], 422);
-    }
-
-    if ($reinstallCode !== $instanceId) {
-        json_response([
-            'ok' => false,
-            'error' => 'Reinstall confirmation code mismatch. Type the exact instance ID to confirm reinstallation.',
-        ], 422);
+    if ($action === 'reinstall') {
+        $reinstallCode = trim((string) ($_POST['reinstall_code'] ?? ''));
+        if ($reinstallCode !== $instanceId) {
+            json_response([
+                'ok' => false,
+                'error' => 'Reinstall confirmation mismatch. Type the exact instance ID to confirm reinstall.',
+            ], 422);
+        }
     }
 
     $result = perform_server_lifecycle_action($server, $action, true);
@@ -890,6 +979,15 @@ if ($route === 'server_live') {
         'instance_id' => $instanceId,
         'action' => 'logs',
     ]);
+    $includeDockerLogs = (string) ($_GET['include_docker_logs'] ?? '0') === '1';
+    $dockerLogsAgent = ['ok' => false, 'result' => ['stdout' => 'Docker logs disabled.']];
+    if ($includeDockerLogs) {
+        $dockerLogsAgent = agent_post_for_host($server, '/instance/action', [
+            'instance_id' => $instanceId,
+            'action' => 'docker_logs',
+            'log_lines' => 400,
+        ]);
+    }
     $metrics = ($metricsResult['metrics'] ?? []);
 
     json_response([
@@ -929,6 +1027,10 @@ if ($route === 'server_live') {
             'Metrics query: ' . (($metricsResult['ok'] ?? false) ? 'ok' : 'failed'),
         ]),
         'log_output' => (string) ($logsAgent['result']['stdout'] ?? ($logsAgent['result']['stderr'] ?? 'No runtime logs returned')),
+        'docker_log_output' => $includeDockerLogs
+            ? (string) ($dockerLogsAgent['result']['stdout'] ?? ($dockerLogsAgent['result']['stderr'] ?? 'No Docker logs returned'))
+            : 'Docker logs disabled.',
+        'docker_logs_enabled' => $includeDockerLogs,
     ]);
 }
 
@@ -949,6 +1051,16 @@ if ($route === 'logs') {
     ]);
     $metricsResult = instance_metrics_for_server($server);
     $metrics = ($metricsResult['metrics'] ?? []);
+    $includeDockerLogs = isset($_GET['docker_live']) && $_GET['docker_live'] === '1';
+    $dockerLogOutput = 'Docker logs disabled.';
+    if ($includeDockerLogs) {
+        $dockerAgent = agent_post_for_host($server, '/instance/action', [
+            'instance_id' => $instanceId,
+            'action' => 'docker_logs',
+            'log_lines' => 400,
+        ]);
+        $dockerLogOutput = (string) ($dockerAgent['result']['stdout'] ?? ($dockerAgent['result']['stderr'] ?? 'No Docker logs returned'));
+    }
 
     $logOutput = $agent['result']['stdout'] ?? ($agent['result']['stderr'] ?? 'No logs returned');
     $runtimeStatus = ($metrics['running'] ?? false) ? 'running' : 'stopped';
@@ -983,6 +1095,8 @@ if ($route === 'logs') {
             .status-tile { background: #0b1020; border: 1px solid #243041; border-radius: 10px; padding: 12px; }
             .status-label { color: #a8b3c7; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
             .status-value { margin-top: 6px; font-size: 18px; font-weight: 700; }
+            .toggle-row { margin-top: 14px; display: flex; align-items: center; gap: 10px; }
+            .toggle-row input { width: 16px; height: 16px; }
         </style>
     </head>
     <body>
@@ -994,7 +1108,7 @@ if ($route === 'logs') {
             </div>
             <div class="actions">
                 <a class="button-link" href="/?route=game_servers">Back to Game Servers</a>
-                <a class="button-link primary" href="/?route=logs&amp;instance_id=<?= h($server['instance_id']) ?>">Refresh Logs</a>
+                <a class="button-link primary" href="/?route=logs&amp;instance_id=<?= h($server['instance_id']) ?>&amp;docker_live=<?= $includeDockerLogs ? '1' : '0' ?>">Refresh Logs</a>
             </div>
         </div>
         <div class="content">
@@ -1022,15 +1136,70 @@ if ($route === 'logs') {
                         <div><?= h($line) ?></div>
                     <?php endforeach; ?>
                 </div>
+                <label class="toggle-row muted">
+                    <input id="docker-live-toggle" type="checkbox" <?= $includeDockerLogs ? 'checked' : '' ?>>
+                    Live Docker logs (refreshes every 3 seconds)
+                </label>
             </div>
             <div class="grid">
                 <div class="card">
                     <div class="muted" style="margin-bottom:10px;">Runtime lifecycle log</div>
-                    <pre><?= h($logOutput) ?></pre>
+                    <pre id="lifecycle-log-view"><?= h($logOutput) ?></pre>
+                </div>
+                <div class="card">
+                    <div class="muted" style="margin-bottom:10px;">Docker container log (fs25)</div>
+                    <pre id="docker-log-view"><?= h($dockerLogOutput) ?></pre>
                 </div>
             </div>
         </div>
     </div>
+    <script>
+        const instanceId = <?= json_encode($instanceId) ?>;
+        const lifecycleLogView = document.getElementById('lifecycle-log-view');
+        const dockerLogView = document.getElementById('docker-log-view');
+        const dockerToggle = document.getElementById('docker-live-toggle');
+
+        if (dockerToggle) {
+            dockerToggle.addEventListener('change', () => {
+                const url = new URL(window.location.href);
+                url.searchParams.set('docker_live', dockerToggle.checked ? '1' : '0');
+                window.location.href = url.toString();
+            });
+        }
+
+        const renderLogText = (target, text) => {
+            if (!target) {
+                return;
+            }
+            target.textContent = text || '';
+            target.scrollTop = target.scrollHeight;
+        };
+
+        const refreshLiveLogs = async () => {
+            const url = new URL('/?route=server_live', window.location.origin);
+            url.searchParams.set('instance_id', instanceId);
+            url.searchParams.set('include_docker_logs', dockerToggle && dockerToggle.checked ? '1' : '0');
+            try {
+                const response = await fetch(url.toString(), {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json' }
+                });
+                if (!response.ok) {
+                    return;
+                }
+                const payload = await response.json();
+                if (!payload || payload.ok !== true) {
+                    return;
+                }
+                renderLogText(lifecycleLogView, payload.log_output || 'No runtime logs returned');
+                renderLogText(dockerLogView, payload.docker_log_output || 'No Docker logs returned');
+            } catch (error) {
+                console.error('Failed to refresh logs', error);
+            }
+        };
+
+        setInterval(refreshLiveLogs, 3000);
+    </script>
     </body>
     </html>
     <?php
@@ -1114,7 +1283,7 @@ if ($route === 'server_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
-    $portConflicts = find_port_conflicts($payload, $instanceId);
+    $portConflicts = find_port_conflicts($payload, $instanceId, (int) ($server['host_id'] ?? 0));
     if ($portConflicts) {
         flash('Update failed: ' . implode('; ', $portConflicts));
         header('Location: /?route=server&instance_id=' . rawurlencode($instanceId));
@@ -1292,10 +1461,11 @@ if ($route === 'server') {
                     <div class="toolbar-group">
                         <div class="toolbar-label">Server Controls</div>
                         <div class="toolbar-actions compact">
-                            <?php foreach (['start', 'stop', 'restart', 'backend_reboot'] as $act): ?>
+                            <?php foreach (['start', 'stop', 'restart', 'backend_reboot', 'reinstall'] as $act): ?>
                                 <form method="post" action="/?route=server_command" class="server-action-form">
                                     <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
                                     <input type="hidden" name="action" value="<?= h($act) ?>">
+                                    <input type="hidden" name="reinstall_code" value="">
                                     <button
                                         type="submit"
                                         data-server-action="<?= h($act) ?>"
@@ -1661,9 +1831,22 @@ if ($route === 'server') {
         actionForms.forEach((form) => {
             form.addEventListener('submit', async (event) => {
                 event.preventDefault();
+                const actionField = form.querySelector('input[name="action"]');
+                const actionName = actionField ? actionField.value : '';
+                if (actionName === 'reinstall') {
+                    const confirmation = window.prompt(`Reinstall will wipe ${instanceId} and rebuild it from panel settings.\nType ${instanceId} to confirm.`);
+                    if ((confirmation || '').trim() !== instanceId) {
+                        setInlineStatus(`Reinstall cancelled. Type ${instanceId} exactly to confirm.`, true);
+                        return;
+                    }
+                    const reinstallCodeField = form.querySelector('input[name="reinstall_code"]');
+                    if (reinstallCodeField) {
+                        reinstallCodeField.value = confirmation.trim();
+                    }
+                }
                 const button = form.querySelector('button[type="submit"]');
                 if (button) button.disabled = true;
-                setInlineStatus(`Running ${form.querySelector('input[name="action"]').value}...`);
+                setInlineStatus(`Running ${actionName}...`);
                 try {
                     const submitUrl = form.getAttribute('action') || '/?route=server_command';
                     const response = await fetch(submitUrl, {
@@ -2049,8 +2232,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                 ORDER BY si.server_name ASC, si.instance_id ASC
             ')->fetchAll();
             foreach ($servers as &$serverRow) {
-                $metricsResult = instance_metrics_for_server($serverRow);
-                $serverRow['metrics'] = $metricsResult['metrics'] ?? [
+                $serverRow['metrics'] = [
                     'cpu_percent' => 0,
                     'memory_used_bytes' => 0,
                     'memory_limit_bytes' => 0,
@@ -2059,7 +2241,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                     'disk_percent' => 0,
                     'running' => false,
                 ];
-                $serverRow['metrics_ok'] = (bool) ($metricsResult['ok'] ?? false);
+                $serverRow['metrics_ok'] = false;
             }
             unset($serverRow);
             $hosts = all_hosts();
@@ -2331,8 +2513,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                 <div><strong>stop</strong>: stops the instance containers.</div>
                 <div><strong>restart</strong>: restarts the instance containers.</div>
                 <div><strong>backend reboot</strong>: kills `dedicatedServer.exe` inside the runtime container so the launcher/watchdog can start it again.</div>
-                <div><strong>Reinstall Game Server</strong>: recreates only the FS25 runtime container from the current compose config after the exact instance ID is typed.</div>
-                <div><strong>Reinstall SFTP</strong>: recreates only the instance SFTP container from the current compose config after the exact instance ID is typed.</div>
+                <div><strong>reinstall</strong>: asks for confirmation, wipes the instance directory, regenerates settings, and recreates the server containers.</div>
                 <div><strong>Delete Server</strong>: removes the panel record and instance files after the exact instance ID is typed in the confirmation field.</div>
             </div>
         </div>
@@ -2381,11 +2562,12 @@ curl -X POST \
   -d '{"instance_id":"fs25-0001","action":"restart"}' \
   "<?= h(rtrim($node['app_url'], '/')) ?>/?route=api_node_server_action"</pre>
             <div class="stack muted">
-                <div><strong>POST `/?route=api_node_server_action`</strong> accepts only the actions `start`, `stop`, `restart`, `backend_reboot`, and `logs`.</div>
+                <div><strong>POST `/?route=api_node_server_action`</strong> accepts only the actions `start`, `stop`, `restart`, `backend_reboot`, `reinstall`, and `logs`.</div>
                 <div><strong>`start`</strong>: syncs panel-managed runtime config to the instance and starts the server stack.</div>
                 <div><strong>`stop`</strong>: stops the server stack.</div>
                 <div><strong>`restart`</strong>: restarts the server stack.</div>
                 <div><strong>`backend_reboot`</strong>: kills `dedicatedServer.exe` so the watchdog can bring it back online without fully rebuilding the stack.</div>
+                <div><strong>`reinstall`</strong>: wipes and rebuilds the instance files from panel settings, then recreates the server containers.</div>
                 <div><strong>`logs`</strong>: returns the structured lifecycle log content.</div>
                 <div>Because the action route is allowlisted, attempts to send config-changing commands are rejected.</div>
             </div>
@@ -2606,6 +2788,9 @@ curl -X POST \
         </div>
         <div class="card">
             <h2>Server Instances</h2>
+            <div class="flex" style="margin-bottom: 14px;">
+                <a class="button-link" href="/?route=export_servers_excel">Export all settings to Excel</a>
+            </div>
             <div class="server-grid">
                 <?php foreach ($servers as $server): ?>
                     <?php
