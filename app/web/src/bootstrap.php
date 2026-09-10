@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 session_start();
+require_once __DIR__ . '/central.php';
 
 function env_value(string $key, ?string $default = null): ?string
 {
@@ -165,6 +166,9 @@ function request_header_value(string $key): ?string
 
 function node_api_request_authorized(): bool
 {
+    if (central_gateway_user() !== null) {
+        return true;
+    }
     $expected = node_api_token();
     if ($expected === '') {
         return false;
@@ -456,6 +460,10 @@ function installer_directory_listing_for_host(array $host): array
 
 function current_user(): ?array
 {
+    $central = central_gateway_user();
+    if ($central !== null) {
+        return $central;
+    }
     return $_SESSION['user'] ?? null;
 }
 
@@ -518,7 +526,31 @@ function agent_post_for_host(array $host, string $path, array $payload, int $tim
         return ['ok' => false, 'error' => 'Invalid agent response', 'raw' => $response, 'status' => $status];
     }
 
+    $decoded['agent_http_status'] = (int) $status;
     return $decoded;
+}
+
+function telemetry_for_host(array $host, string $scope, int $hours): array
+{
+    $result = agent_post_for_host($host, '/telemetry', ['scope' => $scope, 'hours' => $hours], 10);
+    $status = (int) ($result['agent_http_status'] ?? $result['status'] ?? 0);
+    if ($status === 404) {
+        return ['ok' => false, 'error' => 'This host is running an agent without telemetry support. Rebuild and recreate its agent container.'];
+    }
+    if ($status === 401 || $status === 403) {
+        return ['ok' => false, 'error' => 'The agent rejected authentication. Check the token for this host in Managed Hosts.'];
+    }
+    if ($status === 0 && !($result['ok'] ?? false)) {
+        return ['ok' => false, 'error' => 'Cannot reach the host agent. Check that it is running and that its URL in Managed Hosts is reachable from the panel.'];
+    }
+    // Never forward raw HTML error pages or transport details to the browser.
+    if (!($result['ok'] ?? false)) {
+        return ['ok' => false, 'error' => ($result['error'] ?? '') === 'Invalid agent response'
+            ? 'The agent could not read telemetry. Check its container logs for the error.'
+            : (string) ($result['error'] ?? 'The agent could not read telemetry. Check its container logs.')];
+    }
+    unset($result['raw'], $result['agent_http_status']);
+    return $result;
 }
 
 function agent_health_for_host(array $host): array

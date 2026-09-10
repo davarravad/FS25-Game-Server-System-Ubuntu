@@ -34,7 +34,7 @@ COMPOSE_COMMAND = None
 
 def require_auth():
     token = request.headers.get("X-Agent-Token", "")
-    return token == AGENT_SHARED_TOKEN
+    return bool(AGENT_SHARED_TOKEN) and hmac.compare_digest(token, AGENT_SHARED_TOKEN)
 
 
 def safe_instance_id(instance_id: str) -> bool:
@@ -265,6 +265,9 @@ def build_instance_values(instance_id: str, payload: dict, existing_env: dict | 
 
     return {
         "INSTANCE_ID": instance_id,
+        "ADMIN_BIND": "127.0.0.1:" if os.getenv("CENTRAL_MODE", "0") == "1" else "",
+        "MANAGEMENT_SERVICE_NETWORK": "    networks: [default, management]" if os.getenv("CENTRAL_MODE", "0") == "1" else "",
+        "MANAGEMENT_NETWORK": "networks:\n  management:\n    external: true\n    name: fsg-management" if os.getenv("CENTRAL_MODE", "0") == "1" else "",
         "SERVER_NAME": current("SERVER_NAME", instance_id),
         "SERVER_PASSWORD": current("SERVER_PASSWORD", ""),
         "SERVER_ADMIN": current("SERVER_ADMIN", ""),

@@ -14,14 +14,15 @@ services:
       - ./data/logs:/opt/fs25/logs
       - ./data/saves:/opt/fs25/saves
     ports:
-      - "{{VNC_PORT}}:5900/tcp"
-      - "{{NOVNC_PORT}}:6080/tcp"
-      - "{{WEB_PORT}}:{{WEB_PORT}}/tcp"
-      - "{{TLS_PORT}}:{{TLS_PORT}}/tcp"
+      - "{{ADMIN_BIND}}{{VNC_PORT}}:5900/tcp"
+      - "{{ADMIN_BIND}}{{NOVNC_PORT}}:6080/tcp"
+      - "{{ADMIN_BIND}}{{WEB_PORT}}:{{WEB_PORT}}/tcp"
+      - "{{ADMIN_BIND}}{{TLS_PORT}}:{{TLS_PORT}}/tcp"
       - "{{SERVER_PORT}}:10823/tcp"
       - "{{SERVER_PORT}}:10823/udp"
     cap_add:
       - SYS_NICE
+{{MANAGEMENT_SERVICE_NETWORK}}
     restart: unless-stopped
     logging:
       driver: json-file
@@ -36,10 +37,12 @@ services:
       - ./users.conf:/etc/sftp/users.conf:ro
       - ./data/config:/home/{{SFTP_USERNAME}}/FarmingSimulator2025
     ports:
-      - "{{SFTP_PORT}}:22/tcp"
+      - "{{ADMIN_BIND}}{{SFTP_PORT}}:22/tcp"
     restart: unless-stopped
     logging:
       driver: json-file
       options:
         max-size: "50m"
         max-file: "3"
+
+{{MANAGEMENT_NETWORK}}

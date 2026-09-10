@@ -1,0 +1,10 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {allowed,cookieValue,digest,randomToken,readJson,safeMetrics,validId} from '../src/security';
+import worker from '../src/index';
+test('roles fail closed',()=>{for(const role of ['unknown','pending','viewer'])assert.equal(allowed(role,'operator'),false);assert.equal(allowed('operator','admin'),false);assert.equal(allowed('admin','operator'),true);});
+test('256-bit tokens are hashed',async()=>{const t=randomToken();assert.match(t,/^[a-f0-9]{64}$/);assert.notEqual(t,randomToken());assert.notEqual(await digest(t),t);});
+test('duplicate cookies and invalid identifiers are rejected',()=>{assert.equal(cookieValue(new Request('https://example.test',{headers:{Cookie:'sid=one; sid=two'}}),'sid'),'');for(const id of ['../host','a/b','', 'a'.repeat(64)])assert.equal(validId(id),false);});
+test('metrics cannot include secrets or invalid numbers',()=>{const m=safeMetrics({cpu_percent:12,memory_used_bytes:-1,disk_used_bytes:Infinity,password:'secret'});assert.equal(m.cpu_percent,12);assert.equal(m.memory_used_bytes,null);assert.equal(m.disk_used_bytes,null);assert.equal('password' in m,false);});
+test('streamed JSON enforces size and object schema',async()=>{await assert.rejects(readJson(new Request('https://example.test',{method:'POST',body:JSON.stringify({text:'x'.repeat(100)})}),16),/too large/);await assert.rejects(readJson(new Request('https://example.test',{method:'POST',body:'[]'})),/Expected object/);});
+test('anonymous requests and unknown hosts fail closed',async()=>{const env={APP_ORIGIN:'https://farmservers.sargentweb.com',DB:{prepare:()=>({bind:()=>({first:async()=>null})})}} as never;for(const path of ['/api/nodes','/api/users','/api/history'])assert.equal((await worker.fetch(new Request('https://farmservers.sargentweb.com'+path),env)).status,401);assert.equal((await worker.fetch(new Request('https://attacker.test/api/nodes'),env)).status,404);});

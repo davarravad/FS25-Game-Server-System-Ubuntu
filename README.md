@@ -2,6 +2,8 @@
 
 Self-hosted Docker node for provisioning and managing Farming Simulator 25 dedicated servers on Ubuntu. Each node includes its own website and a token-protected node API so it can later report into a main website if you decide to centralize multiple nodes.
 
+The optional Cloudflare control plane in `central/` brings multiple nodes into **farmservers.sargentweb.com** with Discord approval, historical metrics, server actions and isolated console gateways. Follow [the central setup, new-node installation and private release update guide](docs/CENTRAL-SETUP.md). Account configuration and an Ubuntu pilot are required before rollout.
+
 This repo is designed to be:
 - **modular**
 - **host-portable**
@@ -324,7 +326,17 @@ Local checks:
 python -B -m unittest discover -s tests -p 'test_*.py' -v
 php -l app/web/public/index.php
 php -l app/web/src/telemetry-view.php
+php -d output_buffering=0 -d display_errors=1 tests/test_response_output.php
 node --check app/web/public/assets/telemetry.js
+node --check app/web/public/assets/sidebar.js
 # Optional standalone visual fixture (synthetic data, no database needed):
 php -S 127.0.0.1:8765 tests/preview.php
 ```
+
+### Metrics response fix and sidebar navigation
+
+The panel uses a shared left sidebar on desktop and a collapsible Menu on screens up to 800px wide. The current page is highlighted; server details, logs, and viewers keep Game Servers selected. The menu supports keyboard access and Escape to dismiss on mobile.
+
+If the agent logs show `POST /telemetry` returning 200 while the charts report a refresh failure, the previous telemetry view helper emitted a blank line during `require`. With PHP output buffering disabled, later response headers produced warnings that could corrupt JSON responses. The helper now emits nothing until explicitly rendered. The regression check above runs with buffering disabled, and the preview now loads the real view helpers before returning JSON so it covers this failure mode.
+
+This fix and the sidebar are panel-source changes only. Once the updated commit is available, run `git pull --ff-only` in the Ubuntu checkout, then hard-refresh the browser. The standard stack bind-mounts `app/web`, so no agent rebuild or game-server restart is required for this update. Metrics errors now distinguish authentication, an outdated/unreachable agent, and invalid panel responses. If an error remains, inspect `sudo docker compose logs --tail=60 web` as well as the agent logs.

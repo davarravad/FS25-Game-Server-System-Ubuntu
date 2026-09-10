@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/../src/bootstrap.php';
 require __DIR__ . '/../src/telemetry-view.php';
+require __DIR__ . '/../src/sidebar.php';
 
 function redirect_route(string $route): void
 {
@@ -79,6 +80,38 @@ function perform_server_lifecycle_action(array $server, string $action, bool $sy
 }
 
 $route = $_GET['route'] ?? 'dashboard';
+
+if ($route === 'central_view_auth') {
+    if (!central_gateway_user()) {
+        http_response_code(403);
+        exit;
+    }
+    $instance = (string) ($_GET['instance'] ?? '');
+    $kind = (string) ($_GET['kind'] ?? '');
+    $server = preg_match('/^[a-zA-Z0-9_-]+$/D', $instance) ? find_instance_with_host($instance) : null;
+    $local = local_host_record();
+    if (!$server || !$local || (int) $server['host_id'] !== (int) $local['id'] || !(int) $server['is_enabled'] || !in_array($kind, ['vnc', 'web'], true)) {
+        http_response_code(403);
+        exit;
+    }
+    $port = $kind === 'vnc' ? 6080 : (int) $server['web_port'];
+    if ($port < 1 || $port > 65535) {
+        http_response_code(403);
+        exit;
+    }
+    header('X-Viewer-Upstream: ' . $instance . ':' . $port);
+    http_response_code(204);
+    exit;
+}
+
+if ($route === 'api_node_snapshot') {
+    if ($_SERVER['REQUEST_METHOD'] !== 'GET' || !node_api_request_authorized()) {
+        json_response(['ok' => false, 'error' => 'Unauthorized'], 401);
+    }
+    session_write_close();
+    header('Cache-Control: no-store');
+    json_response(central_snapshot());
+}
 
 if ($route === 'login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $username = trim($_POST['username'] ?? '');
@@ -233,7 +266,7 @@ if ($route === 'telemetry') {
     }
     session_write_close();
     header('Cache-Control: no-store');
-    $result = agent_post_for_host($host, '/telemetry', ['scope' => $instanceId !== '' ? $instanceId : 'host', 'hours' => (int) ($_GET['hours'] ?? 1)], 10);
+    $result = telemetry_for_host($host, $instanceId !== '' ? $instanceId : 'host', (int) ($_GET['hours'] ?? 1));
     json_response($result, ($result['ok'] ?? false) ? 200 : 503);
 }
 
@@ -607,11 +640,14 @@ if ($route === 'upload_large' || $route === 'installer_upload') {
             .error { color: #fca5a5; }
             .ok { color: #86efac; }
         </style>
-    <link rel="stylesheet" href="/assets/telemetry.css?v=1">
-<script defer src="/assets/telemetry.js?v=1"></script>
+    <link rel="stylesheet" href="/assets/telemetry.css?v=2">
+<script defer src="/assets/telemetry.js?v=2"></script>
+<link rel="stylesheet" href="/assets/sidebar.css?v=1">
+<script defer src="/assets/sidebar.js?v=1"></script>
 </head>
-    <body>
-    <div class="page">
+    <body class="<?= in_array($route, ['server', 'logs'], true) ? 'panel-layout' : '' ?>">
+    <?php if (in_array($route, ['server', 'logs'], true)) render_sidebar($route, (string) current_user()['username']); ?>
+    <div class="page" id="panel-content" tabindex="-1">
         <div class="card">
             <h1><?= h($context['label']) ?> Upload</h1>
             <p class="muted">Upload large files directly to <strong><?= h((string) $context['path']) ?></strong> on <?= h((string) ($server['server_name'] ?? $host['name'])) ?>.</p>
@@ -1141,11 +1177,14 @@ if ($route === 'logs') {
             .toggle-row { margin-top: 14px; display: flex; align-items: center; gap: 10px; }
             .toggle-row input { width: 16px; height: 16px; }
         </style>
-    <link rel="stylesheet" href="/assets/telemetry.css?v=1">
-<script defer src="/assets/telemetry.js?v=1"></script>
+    <link rel="stylesheet" href="/assets/telemetry.css?v=2">
+<script defer src="/assets/telemetry.js?v=2"></script>
+<link rel="stylesheet" href="/assets/sidebar.css?v=1">
+<script defer src="/assets/sidebar.js?v=1"></script>
 </head>
-    <body>
-    <div class="page">
+    <body class="<?= in_array($route, ['server', 'logs'], true) ? 'panel-layout' : '' ?>">
+    <?php if (in_array($route, ['server', 'logs'], true)) render_sidebar($route, (string) current_user()['username']); ?>
+    <div class="page" id="panel-content" tabindex="-1">
         <div class="topbar">
             <div class="meta">
                 <strong><?= h($server['server_name']) ?></strong>
@@ -1493,11 +1532,14 @@ if ($route === 'server') {
             .secret-row input { flex: 1; }
             @media (max-width: 900px) { .grid.two, .grid.form, .server-toolbar, .danger-row { grid-template-columns: 1fr; } }
         </style>
-    <link rel="stylesheet" href="/assets/telemetry.css?v=1">
-<script defer src="/assets/telemetry.js?v=1"></script>
+    <link rel="stylesheet" href="/assets/telemetry.css?v=2">
+<script defer src="/assets/telemetry.js?v=2"></script>
+<link rel="stylesheet" href="/assets/sidebar.css?v=1">
+<script defer src="/assets/sidebar.js?v=1"></script>
 </head>
-    <body>
-    <div class="page">
+    <body class="<?= in_array($route, ['server', 'logs'], true) ? 'panel-layout' : '' ?>">
+    <?php if (in_array($route, ['server', 'logs'], true)) render_sidebar($route, (string) current_user()['username']); ?>
+    <div class="page" id="panel-content" tabindex="-1">
         <?php if ($flash): ?><div class="flash"><?= h($flash) ?></div><?php endif; ?>
         <div class="inline-status" id="server-inline-status"></div>
         <div class="card">
@@ -2090,11 +2132,14 @@ if ($route === 'console') {
             .flash { margin: 12px 20px 0; padding: 12px; background: #1d4ed8; border-radius: 10px; }
             iframe { width: 100%; height: calc(100vh - 81px); border: 0; background: #050814; }
         </style>
-    <link rel="stylesheet" href="/assets/telemetry.css?v=1">
-<script defer src="/assets/telemetry.js?v=1"></script>
+    <link rel="stylesheet" href="/assets/telemetry.css?v=2">
+<script defer src="/assets/telemetry.js?v=2"></script>
+<link rel="stylesheet" href="/assets/sidebar.css?v=1">
+<script defer src="/assets/sidebar.js?v=1"></script>
 </head>
-    <body>
-    <div class="console-shell">
+    <body class="panel-layout">
+    <?php render_sidebar($route, (string) current_user()['username']); ?>
+    <div class="console-shell" id="panel-content" tabindex="-1">
         <div>
             <?php if ($flash): ?><div class="flash"><?= h($flash) ?></div><?php endif; ?>
             <div class="console-bar">
@@ -2160,11 +2205,14 @@ if ($route === 'web_admin') {
             .flash { margin: 12px 20px 0; padding: 12px; background: #1d4ed8; border-radius: 10px; }
             iframe { width: 100%; height: calc(100vh - 81px); border: 0; background: #fff; }
         </style>
-    <link rel="stylesheet" href="/assets/telemetry.css?v=1">
-<script defer src="/assets/telemetry.js?v=1"></script>
+    <link rel="stylesheet" href="/assets/telemetry.css?v=2">
+<script defer src="/assets/telemetry.js?v=2"></script>
+<link rel="stylesheet" href="/assets/sidebar.css?v=1">
+<script defer src="/assets/sidebar.js?v=1"></script>
 </head>
-    <body>
-    <div class="console-shell">
+    <body class="panel-layout">
+    <?php render_sidebar($route, (string) current_user()['username']); ?>
+    <div class="console-shell" id="panel-content" tabindex="-1">
         <div>
             <?php if ($flash): ?><div class="flash"><?= h($flash) ?></div><?php endif; ?>
             <div class="console-bar">
@@ -2270,10 +2318,12 @@ $pageRoute = in_array($route, ['dashboard', 'managed_hosts', 'file_management', 
             .topbar-inner { align-items: start; flex-direction: column; }
         }
     </style>
-<link rel="stylesheet" href="/assets/telemetry.css?v=1">
-<script defer src="/assets/telemetry.js?v=1"></script>
+<link rel="stylesheet" href="/assets/telemetry.css?v=2">
+<script defer src="/assets/telemetry.js?v=2"></script>
+<link rel="stylesheet" href="/assets/sidebar.css?v=1">
+<script defer src="/assets/sidebar.js?v=1"></script>
 </head>
-<body>
+<body class="<?= $route !== 'login' ? 'panel-layout' : '' ?>">
 <div class="shell">
     <?php if ($route === 'login'): ?>
         <div class="wrap" style="display:grid;place-items:center;">
@@ -2341,24 +2391,8 @@ $pageRoute = in_array($route, ['dashboard', 'managed_hosts', 'file_management', 
             $fileAccess = $pageRoute === 'file_management' && $fileContext ? file_access_status_for_context($fileContext) : ['ok' => false];
             $fileListing = $pageRoute === 'file_management' && $fileContext ? directory_listing_for_context($fileContext, $fileSubpath) : ['ok' => false, 'files' => []];
         ?>
-        <header class="topbar">
-            <div class="topbar-inner">
-                <div class="brand">
-                    <div class="brand-title">FSG FS25 Node</div>
-                    <div class="brand-copy">Logged in as <?= h(current_user()['username']) ?>. Run this node locally now, and connect it to a main site later if needed.</div>
-                </div>
-                <nav class="nav">
-                    <a class="nav-link <?= $pageRoute === 'dashboard' ? 'active' : '' ?>" href="/?route=dashboard">Overview</a>
-                    <a class="nav-link <?= $pageRoute === 'managed_hosts' ? 'active' : '' ?>" href="/?route=managed_hosts">Managed Hosts</a>
-                    <a class="nav-link <?= $pageRoute === 'file_management' ? 'active' : '' ?>" href="/?route=file_management">File Management</a>
-                    <a class="nav-link <?= $pageRoute === 'game_servers' ? 'active' : '' ?>" href="/?route=game_servers">Game Servers</a>
-                    <a class="nav-link <?= $pageRoute === 'create_server' ? 'active' : '' ?>" href="/?route=create_server">Create Server</a>
-                    <a class="nav-link <?= $pageRoute === 'docs' ? 'active' : '' ?>" href="/?route=docs">Docs</a>
-                    <a class="nav-link" href="/?route=logout">Logout</a>
-                </nav>
-            </div>
-        </header>
-        <main class="wrap">
+        <?php render_sidebar($pageRoute, (string) current_user()['username']); ?>
+        <main class="wrap" id="panel-content" tabindex="-1">
         <?php if ($flash): ?><div class="flash"><?= h($flash) ?></div><?php endif; ?>
 
         <?php if ($pageRoute === 'dashboard'): ?>
