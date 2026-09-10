@@ -1,6 +1,7 @@
 import {allowed, cookie, cookieValue, digest, randomToken, readJson, roles, safeMetrics, validId, validScope, type Role} from './security';
 import {gameUrl, rewriteGameHtml} from './game-proxy';
 import {distribution} from './releases';
+import {loginPage} from './login';
 
 type Bindings = Env & { DISCORD_CLIENT_SECRET: string; NODE_GATEWAYS: string; RELEASE_PUBLIC_KEY: string };
 type Session = {hash: string; user_id: string; name: string; role: Role; csrf: string; expires: number};
@@ -210,7 +211,7 @@ async function api(request: Request, env: Bindings, url: URL) {
     await env.DB.prepare('DELETE FROM sessions WHERE hash=?').bind(user.hash).run();
     return new Response(null,{status:204,headers:{'Set-Cookie':cookie('__Host-farmservers','',0),'Cache-Control':'no-store'}});
   }
-  need(allowed(user.role,'viewer'),403,'An administrator must approve your account');
+  need(allowed(user.role,'operator'),403,'Administrator or staff access required');
   if (url.pathname === '/api/nodes' && request.method === 'GET') {
     const {results} = await env.DB.prepare('SELECT id,name,enabled,last_seen,snapshot FROM nodes ORDER BY name').all<{id:string;name:string;enabled:number;last_seen:number|null;snapshot:string|null}>();
     return reply({nodes:results.map(n => ({...n,snapshot:n.snapshot ? JSON.parse(n.snapshot) : null,online:!!n.enabled && n.last_seen !== null && now()-n.last_seen < 120}))});
@@ -274,7 +275,22 @@ export default {
       let response: Response;
       if (url.pathname.startsWith('/auth/')) response = await oauth(request,env,url);
       else if (url.pathname.startsWith('/api/')) response = await api(request,env,url);
-      else { need(['GET','HEAD'].includes(request.method),405,'Method not allowed'); response = await env.ASSETS.fetch(request); }
+      else {
+        need(['GET','HEAD'].includes(request.method),405,'Method not allowed');
+        // The bootstrap must remain reachable by fresh Ubuntu hosts. Everything
+        // else except sign-in assets requires a current approved staff session.
+        if (['/style.css','/login.js','/install.py'].includes(url.pathname)) response=await env.ASSETS.fetch(request);
+        else {
+          const user=await session(env,await digest(cookieValue(request,'__Host-farmservers')));
+          if (!user || !allowed(user.role,'operator')) response=loginPage(!!user);
+          else {
+            response=await env.ASSETS.fetch(request);
+            response=new Response(response.body,{status:response.status,headers:response.headers});
+            response.headers.set('Cache-Control','no-store');
+            response.headers.set('Vary','Cookie');
+          }
+        }
+      }
       const headers = new Headers(response.headers);
       headers.set('X-Content-Type-Options','nosniff');
       headers.set('Referrer-Policy','no-referrer');
