@@ -16,3 +16,6 @@ secrets/
 *.key
 *.sqlite3*
 .update-state/
+central/public/install.py
+central/public/node-distribution.txt
+central/public/central-setup.txt

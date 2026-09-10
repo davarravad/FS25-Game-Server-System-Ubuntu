@@ -2,6 +2,13 @@
 [ -n "${BASH_VERSION:-}" ] || exec /usr/bin/env bash "$0" "$@"
 
 set -euo pipefail
+umask 077
+CENTRAL_INSTALL=0
+if [[ "${1:-}" == '--central' ]]; then
+  CENTRAL_INSTALL=1
+  export COMPOSE_PROJECT_NAME=farmservers
+  : "${CENTRAL_NODE_ID:?Node ID required}" "${CENTRAL_NODE_TOKEN:?Node token required}"
+fi
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
@@ -54,6 +61,11 @@ prompt_value() {
   local default_value="${3:-}"
   local current_value=""
 
+  if [[ "$CENTRAL_INSTALL" == 1 ]]; then
+    printf -v "${var_name}" '%s' "${default_value}"
+    return
+  fi
+
   if [ -n "${default_value}" ]; then
     read -r -p "${prompt_label} [${default_value}]: " current_value
     current_value="${current_value:-$default_value}"
@@ -71,6 +83,11 @@ prompt_secret() {
   local prompt_label="$2"
   local generated_default="$3"
   local current_value=""
+
+  if [[ "$CENTRAL_INSTALL" == 1 ]]; then
+    printf -v "${var_name}" '%s' "${generated_default}"
+    return
+  fi
 
   read -r -s -p "${prompt_label} [press Enter to auto-generate]: " current_value
   echo
@@ -188,6 +205,18 @@ BACKUP_BASE_PATH=${BACKUP_BASE_PATH}
 
 TZ=${TZ}
 EOF
+  if [[ "$CENTRAL_INSTALL" == 1 ]]; then
+    cat >>"${ENV_FILE}" <<EOF
+COMPOSE_PROJECT_NAME=farmservers
+CENTRAL_URL=https://farmservers.sargentweb.com
+CENTRAL_NODE_ID=${CENTRAL_NODE_ID}
+CENTRAL_NODE_TOKEN=${CENTRAL_NODE_TOKEN}
+CENTRAL_GATEWAY_TOKEN=$(openssl rand -hex 32)
+CENTRAL_MODE=1
+PANEL_BIND_ADDRESS=127.0.0.1
+EOF
+  fi
+  chmod 600 "${ENV_FILE}"
 }
 
 prepare_directories() {
@@ -203,7 +232,11 @@ prepare_directories() {
 
 start_stack() {
   echo "[6/7] Starting panel stack..."
-  docker compose -f "${REPO_DIR}/docker-compose.yml" up -d --build
+  if [[ "$CENTRAL_INSTALL" == 1 ]]; then
+    docker compose -f "${REPO_DIR}/docker-compose.yml" --profile central up -d --build
+  else
+    docker compose -f "${REPO_DIR}/docker-compose.yml" up -d --build
+  fi
 }
 
 verify_stack() {
@@ -265,6 +298,7 @@ print_summary() {
 
 main() {
   require_root
+  [[ ! -e "$ENV_FILE" ]] || { echo 'Existing .env found; use the updater to preserve credentials and data.' >&2; exit 1; }
 
   if [ ! -f "${ENV_EXAMPLE}" ]; then
     echo "Missing ${ENV_EXAMPLE}. Run this script from the cloned repo."

@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "node prepare-assets.mjs",
+    "prebuild": "node prepare-assets.mjs",
+    "predeploy": "node prepare-assets.mjs",
     "dev": "wrangler dev",
     "types": "wrangler types",
     "check": "tsc --noEmit",

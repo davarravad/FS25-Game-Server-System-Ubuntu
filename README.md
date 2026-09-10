@@ -2,7 +2,7 @@
 
 Self-hosted Docker node for provisioning and managing Farming Simulator 25 dedicated servers on Ubuntu. Each node includes its own website and a token-protected node API so it can later report into a main website if you decide to centralize multiple nodes.
 
-The optional Cloudflare control plane in `central/` brings multiple nodes into **farmservers.sargentweb.com** with Discord approval, historical metrics, server actions and isolated console gateways. Follow [the central setup, new-node installation and private release update guide](docs/CENTRAL-SETUP.md). Account configuration and an Ubuntu pilot are required before rollout.
+The optional Cloudflare control plane in `central/` brings multiple nodes into **farmservers.sargentweb.com** with Discord approval, historical metrics, server actions and isolated console gateways. Follow [the central setup, new-node installation and private release update guide](docs/CENTRAL-SETUP.md). For the final public GitHub update and migration to site-hosted installs and remote updates, follow [Node distribution](docs/NODE-DISTRIBUTION.md). The main site includes these instructions under **Setup & update guide**. Account configuration and an Ubuntu pilot are required before rollout; keep GitHub public until every node completes a site update.
 
 This repo is designed to be:
 - **modular**

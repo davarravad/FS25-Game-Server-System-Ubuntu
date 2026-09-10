@@ -1,7 +1,8 @@
 import {allowed, cookie, cookieValue, digest, randomToken, readJson, roles, safeMetrics, validId, validScope, type Role} from './security';
 import {gameUrl, rewriteGameHtml} from './game-proxy';
+import {distribution} from './releases';
 
-type Bindings = Env & { DISCORD_CLIENT_SECRET: string; NODE_GATEWAYS: string };
+type Bindings = Env & { DISCORD_CLIENT_SECRET: string; NODE_GATEWAYS: string; RELEASE_PUBLIC_KEY: string };
 type Session = {hash: string; user_id: string; name: string; role: Role; csrf: string; expires: number};
 type Gateway = {origin: string; token: string; accessClientId: string; accessClientSecret: string};
 const now = () => Math.floor(Date.now() / 1000);
@@ -191,6 +192,16 @@ async function viewer(request: Request, env: Bindings, url: URL): Promise<Respon
   return response;
 }
 async function api(request: Request, env: Bindings, url: URL) {
+  if (url.pathname.startsWith('/api/distribution/')) {
+    if (url.pathname === '/api/distribution/key' || request.headers.has('Authorization')) return distribution(request,env,false);
+    const administrator = await auth(request,env,'admin');
+    const response = await distribution(request,env,true);
+    if (request.method === 'POST' && response.ok) {
+      const result=await response.clone().json<{id?:string;node?:string;version?:string}>();
+      await audit(env,administrator.user_id,'distribution.'+url.pathname.split('/').pop(),[result.node,result.version,result.id].filter(Boolean).join('/') || url.pathname);
+    }
+    return response;
+  }
   if (url.pathname === '/api/launch') return launch(request,env,url);
   if (url.pathname.startsWith('/api/heartbeat/')) return heartbeat(request,env,url.pathname.slice(15));
   const user = await auth(request,env,'pending');

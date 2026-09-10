@@ -12,16 +12,9 @@ Roles: pending users cannot see fleet data; viewers can read it; operators can c
 
 Interactive access runs through a Cloudflare Tunnel and Access **Service Auth** policy. The Worker holds that service token and a separate node gateway secret. It creates single-use 60-second viewer tickets, then a 15-minute session on a separate hostname for each node/resource. Viewer sessions depend on a valid central session and current operator approval. Active WebSocket traffic checks revocation at most every 15 seconds and stops forwarding after viewer expiry. Open a new console after expiry. Cookies for the central panel are host-only and never sent to a node or game server.
 
-## 1. Make GitHub private
+## 1. Prepare the transition before making GitHub private
 
-Open the repository's **Settings → General → Danger Zone → Change repository visibility → Make private**. Verify GitHub displays Private. The current browser session must be signed in as an administrator. Making it private does not remove existing public clones or forks; rotate any secrets that were previously committed. `.env`, `.dev.vars`, private keys, build output and node state are ignored by this repository.
-
-Before changing existing servers' Git remotes, create a distinct **read-only SSH deploy key** on each node. Never share your personal GitHub token across nodes. Add each public key under repository Settings → Deploy keys, leaving write access disabled. Set its remote to:
-
-```bash
-git remote set-url origin git@github.com:davarravad/FS25-Game-Server-System-Ubuntu.git
-git ls-remote origin HEAD
-```
+Follow [Site-hosted node installation and updates](NODE-DISTRIBUTION.md) first. Publish the final bridge release, configure the main-site release bucket and signing key, and migrate every existing node to the site updater. Keep GitHub public until every node has completed a successful site update. Migrated nodes do not need GitHub deploy keys or tokens.
 
 ## 2. Configure Discord
 
@@ -151,31 +144,9 @@ References: [nginx proxy headers](https://nginx.org/en/docs/http/ngx_http_proxy_
 - Test panel file uploads/downloads. Cloudflare plan request-size and duration limits still apply; use SSH/SFTP for large installers and multi-GB transfers.
 - Reboot the pilot host and check Tunnel, publisher, panel and game recovery before enrolling the remaining nodes.
 
-## New Ubuntu servers
+## New Ubuntu servers, remote updates and rollback
 
-1. Install a supported Ubuntu LTS, Docker Engine and Compose plugin; configure SSH keys and system time synchronization.
-2. Generate a node-specific read-only GitHub deploy key and verify GitHub's SSH host key using GitHub's published fingerprints.
-3. Clone the private repository with SSH. Check out a tested release tag.
-4. Run `sudo bash scripts/install-ubuntu.sh` and provide unique local administrator credentials and installation paths. Install licensed FS25 game content using the existing panel process.
-5. Follow enrollment, private-port, Tunnel and Access steps above. Keep a tested SSH recovery route.
-6. Create a test game instance, verify all acceptance checks, then create production servers.
-
-## Updates and rollback
-
-Release control-plane changes as reviewed, tested, **signed annotated tags**, e.g. `v1.0.0`. Import only the release maintainer's verified signing key on each node; verify its fingerprint out of band. The updater calls `git verify-tag` and rejects unsigned releases. For SSH signatures configure Git's allowed signers file with the pinned maintainer identity/key. Do not configure an arbitrary wildcard of unverified signers.
-
-After publishing a tested tag, update one node:
-
-```bash
-cd ~/FS25-Game-Server-System-Ubuntu
-sudo bash scripts/update-node.sh v1.0.0
-```
-
-The updater refuses local changes, locks concurrent runs, backs up `.env` and MariaDB under `/var/backups/farmservers`, verifies the tag, builds control services, and updates web/agent/nginx plus an already-running publisher. It does not restart game instances. Run under the account that owns the checkout and has Docker access, or configure root's read-only deploy key/Git safe-directory explicitly if using sudo. Keep schema changes backward compatible through a release cycle.
-
-After the pilot passes telemetry and console checks, update other nodes one at a time. Deploy the Worker separately using the checks above. Heartbeat schema version 1 must remain supported while nodes roll forward. There are no automatic game restarts or unattended update deployments.
-
-If a build fails, the updater restores the previous source revision before stopping. A failure after services begin updating requires operator recovery: inspect logs, check out the recorded previous commit, then run `docker compose up -d --build web agent nginx` and rebuild the publisher if enabled. Restore the database backup only when required by an incompatible migration, with services stopped and after preserving current data. Keep an off-host backup of saves and database; the updater's local backup is not disaster recovery.
+Use the [site distribution guide](NODE-DISTRIBUTION.md), also available on the main site under **Setup & update guide**. It covers the two-command Ubuntu installation, adoption of existing nodes, signed release publishing, dashboard-triggered updates, backup/recovery and the acceptance gate before making GitHub private. The previous Git-tag updater is retained only as a legacy bridge path; migrated nodes use the root-owned systemd updater and authenticated site downloads.
 
 ## Reference documentation
 
