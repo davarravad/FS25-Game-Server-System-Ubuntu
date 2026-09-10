@@ -11,7 +11,7 @@ test('signed release distribution, authorization, immutable versions and job lif
   const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:'releases-test',modules:true,scriptPath:'dist/index.js',compatibilityDate:'2026-09-09',compatibilityFlags:['nodejs_compat'],d1Databases:['DB'],r2Buckets:['RELEASES'],bindings:{APP_ORIGIN:origin,RELEASE_PUBLIC_KEY:publicKey.export({type:'spki',format:'der'}).toString('base64')}}]}));
   try {
     const db=await mf.getD1Database('DB');
-    for(const file of ['0001_control_plane.sql','0002_node_updates.sql'])await db.exec(await readFile('migrations/'+file,'utf8'));
+    for(const file of ['0001_control_plane.sql','0002_node_updates.sql','0003_release_withdrawal.sql'])await db.exec(await readFile('migrations/'+file,'utf8'));
     await db.prepare('INSERT INTO users VALUES(?,?,?,?)').bind('owner','Owner','admin',time).run();
     await db.prepare('INSERT INTO sessions VALUES(?,?,?,?)').bind(await digest('session'),'owner','csrf',time+3600).run();
     await db.prepare('INSERT INTO nodes(id,name,token_hash) VALUES(?,?,?)').bind('node-1','Pilot',await digest('b'.repeat(64))).run();
@@ -44,6 +44,12 @@ test('signed release distribution, authorization, immutable versions and job lif
     assert.equal((await req('result',node,{id:claimed.job.id,status:'succeeded'})).status,200);
     assert.deepEqual(await (await req('poll',node,{})).json(),{job:null});
     assert.equal((await db.prepare('SELECT status FROM node_updates').first<{status:string}>())?.status,'succeeded');
+    assert.equal((await req('updates',admin,{node:'node-1',version:'v1.0.0'})).status,200);
+    assert.equal((await req('withdraw',admin,{version:'v1.0.0'})).status,200);
+    assert.equal((await req('releases/v1.0.0/archive',node)).status,404);
+    assert.deepEqual(await (await req('poll',node,{})).json(),{job:null});
+    assert.equal((await req('releases',admin,pkg)).status,409);
+    assert.equal((await req('updates',admin,{node:'node-1',version:'v1.0.0'})).status,409);
     await db.prepare('UPDATE nodes SET enabled=0').run();
     assert.equal((await req('releases/v1.0.0/archive',node)).status,401);
     assert.equal((await req('poll',node,{})).status,401);

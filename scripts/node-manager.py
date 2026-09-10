@@ -53,7 +53,7 @@ def save(path, data):
 
 
 def request(config, path, body=None, limit=65536):
-    headers = {'Authorization': 'Bearer ' + config['token'], 'X-Node-ID': config['node']}
+    headers = {'Authorization': 'Bearer ' + config['token'], 'X-Node-ID': config['node'], 'User-Agent': 'Farmservers-Node/1.0 (+https://farmservers.sargentweb.com)'}
     data = None if body is None else json.dumps(body).encode()
     if data is not None:
         headers['Content-Type'] = 'application/json'

@@ -68,6 +68,10 @@ If the installer stops partway through, preserve the installation and .env, insp
 
 ## Failure and recovery
 
+If a published release has a problem, select it under Node software & setup and click **Withdraw selected release**. This blocks new downloads, fails queued jobs, and preserves the version record so it cannot be overwritten. An update already executing may finish. Publish corrections as a new version. The initial v1.0.0 pilot was withdrawn before any node enrollment; use v1.0.1 or a newer approved release.
+
+The updater and publisher identify themselves as `Farmservers-Node/1.0`. This is required for compatibility with the site's Browser Integrity Check; Python's default identifier receives Cloudflare error 1010. Keep the explicit client identifier when extending these tools. Do not disable zone-wide security protections to work around client configuration.
+
 Backups are root-only under `/var/backups/farmservers/JOB-ID`: node.env, panel.sql, previous versions of overwritten source files, file inventory and image references. The updater preserves old images with local backup tags. Take separate off-host backups of game saves and databases; local update backups are not disaster recovery. Retain backups until a release is accepted, then prune intentionally to avoid filling disk.
 
 A normal apply failure restores overwritten source and previous control images and recreates control services. Database contents are not automatically rolled back. The source bundle cannot contain .env or saves. Removed upstream source files remain on disk; releases requiring source deletion or incompatible database changes need a reviewed maintenance procedure.

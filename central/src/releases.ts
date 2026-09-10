@@ -21,10 +21,10 @@ export async function distribution(request: Request, env: ReleaseEnv, admin: boo
     const token = request.headers.get('Authorization') || '';
     if (!validId(node) || !/^Bearer [a-f0-9]{64}$/.test(token) || !await env.DB.prepare('SELECT id FROM nodes WHERE id=? AND token_hash=? AND enabled=1').bind(node,await digest(token.slice(7))).first()) return json({error:'Unauthorized node'},401);
   }
-  if (path === '/api/distribution/releases' && request.method === 'GET') return json((await env.DB.prepare('SELECT version,created FROM releases ORDER BY created DESC').all()).results);
+  if (path === '/api/distribution/releases' && request.method === 'GET') return json((await env.DB.prepare('SELECT version,created FROM releases WHERE enabled=1 ORDER BY created DESC').all()).results);
   const match = path.match(/^\/api\/distribution\/releases\/(v\d+\.\d+\.\d+)(\/archive)?$/);
   if (match && request.method === 'GET') {
-    const release = await env.DB.prepare('SELECT * FROM releases WHERE version=?').bind(match[1]).first<{manifest:string;signature:string;object_key:string}>();
+    const release = await env.DB.prepare('SELECT * FROM releases WHERE version=? AND enabled=1').bind(match[1]).first<{manifest:string;signature:string;object_key:string}>();
     if (!release) return json({error:'Release not found'},404);
     if (!match[2]) return json({manifest:release.manifest,signature:release.signature});
     const object=await env.RELEASES.get(release.object_key);
@@ -40,15 +40,24 @@ export async function distribution(request: Request, env: ReleaseEnv, admin: boo
     if (archive.length!==manifest.size || hash!==manifest.sha256) return json({error:'Archive checksum mismatch'},422);
     const key='sha256/'+hash;
     await env.RELEASES.put(key,archive);
-    const inserted=await env.DB.prepare('INSERT OR IGNORE INTO releases VALUES(?,?,?,?,?)').bind(manifest.version,body.manifest,body.signature,key,time()).run();
+    const inserted=await env.DB.prepare('INSERT OR IGNORE INTO releases(version,manifest,signature,object_key,created) VALUES(?,?,?,?,?)').bind(manifest.version,body.manifest,body.signature,key,time()).run();
     return inserted.meta.changes ? json({ok:true,version:manifest.version}) : json({error:'Version already published; choose a new version'},409);
+  }
+  if (admin && path === '/api/distribution/withdraw' && request.method === 'POST') {
+    const body=await readJson(request,4096);
+    if (!validVersion(body.version)) return json({error:'Invalid version'},422);
+    await env.DB.batch([
+      env.DB.prepare('UPDATE releases SET enabled=0 WHERE version=?').bind(body.version),
+      env.DB.prepare("UPDATE node_updates SET status='failed',updated=? WHERE version=? AND status='queued'").bind(time(),body.version)
+    ]);
+    return json({ok:true,version:body.version});
   }
   if (admin && path === '/api/distribution/updates' && request.method === 'GET') return json((await env.DB.prepare('SELECT * FROM node_updates ORDER BY created DESC LIMIT 100').all()).results);
   if (admin && path === '/api/distribution/updates' && request.method === 'POST') {
     const body=await readJson(request,4096);
     if (!validId(body.node) || !validVersion(body.version)) return json({error:'Invalid node or release'},422);
     const id=crypto.randomUUID();
-    const inserted=await env.DB.prepare("INSERT OR IGNORE INTO node_updates SELECT ?,n.id,r.version,'queued',?,? FROM nodes n,releases r WHERE n.id=? AND n.enabled=1 AND r.version=?").bind(id,time(),time(),body.node,body.version).run();
+    const inserted=await env.DB.prepare("INSERT OR IGNORE INTO node_updates SELECT ?,n.id,r.version,'queued',?,? FROM nodes n,releases r WHERE n.id=? AND n.enabled=1 AND r.version=? AND r.enabled=1").bind(id,time(),time(),body.node,body.version).run();
     return inserted.meta.changes ? json({ok:true,id,node:body.node,version:body.version}) : json({error:'Node disabled, release missing, or update already active'},409);
   }
   if (admin && path === '/api/distribution/cancel' && request.method === 'POST') {
