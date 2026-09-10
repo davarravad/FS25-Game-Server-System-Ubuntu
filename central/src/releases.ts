@@ -7,7 +7,7 @@ const time = () => Math.floor(Date.now()/1000);
 const bytes = (s: string) => Uint8Array.from(atob(s),c=>c.charCodeAt(0));
 export async function verifyManifest(manifest: string, signature: string, key: string) {
   const parsed = JSON.parse(manifest);
-  if (!validVersion(parsed.version) || !/^[a-f0-9]{64}$/.test(parsed.sha256) || !Number.isInteger(parsed.size) || parsed.size < 1 || parsed.size > 24*1024*1024) throw new Error('Invalid manifest');
+  if (!validVersion(parsed.version) || !/^[a-f0-9]{64}$/.test(parsed.sha256) || !Number.isInteger(parsed.size) || parsed.size < 1 || parsed.size > 12*1024*1024) throw new Error('Invalid manifest');
   const publicKey = await crypto.subtle.importKey('spki',bytes(key),{name:'Ed25519'},false,['verify']);
   if (!await crypto.subtle.verify('Ed25519',publicKey,bytes(signature),new TextEncoder().encode(manifest))) throw new Error('Invalid release signature');
   return parsed as {version:string;sha256:string;size:number};
@@ -31,7 +31,7 @@ export async function distribution(request: Request, env: ReleaseEnv, admin: boo
     return object ? new Response(object.body,{headers:{'Content-Type':'application/gzip','Cache-Control':'no-store'}}) : json({error:'Archive unavailable'},503);
   }
   if (admin && path === '/api/distribution/releases' && request.method === 'POST') {
-    const body=await readJson(request,34*1024*1024);
+    const body=await readJson(request,18*1024*1024);
     if (typeof body.manifest !== 'string' || body.manifest.length>4096 || typeof body.signature !== 'string' || typeof body.archive !== 'string') return json({error:'Invalid release package'},422);
     let manifest;
     try { manifest=await verifyManifest(body.manifest,body.signature,env.RELEASE_PUBLIC_KEY); } catch { return json({error:'Invalid release manifest or signature'},422); }

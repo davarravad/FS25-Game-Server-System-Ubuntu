@@ -105,7 +105,7 @@ def download(config, version):
         (folder/'signature').write_bytes(base64.b64decode(package['signature'], validate=True))
         call(['openssl', 'pkeyutl', '-verify', '-pubin', '-keyform', 'DER', '-inkey', str(folder/'key.der'), '-rawin', '-in', str(folder/'manifest'), '-sigfile', str(folder/'signature')], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     meta = json.loads(manifest)
-    if meta['version'] != version or not isinstance(meta['size'], int) or not 0 < meta['size'] <= 24*1024*1024:
+    if meta['version'] != version or not isinstance(meta['size'], int) or not 0 < meta['size'] <= 12*1024*1024:
         raise ValueError('Invalid manifest')
     raw = request(config, 'releases/' + version + '/archive', limit=meta['size'])
     if len(raw) != meta['size'] or hashlib.sha256(raw).hexdigest() != meta['sha256']:
