@@ -755,7 +755,7 @@ def inspect_container(container_name: str) -> dict:
     result = run_command([
         "docker", "inspect", container_name,
         "--format", "{{json .State}}",
-    ])
+    ], timeout=10)
 
     if result["code"] != 0 or not result["stdout"].strip():
         return {
@@ -888,17 +888,20 @@ def derive_runtime_state(containers: list[dict], desired_running: bool) -> dict:
     }
 
 
-def instance_metrics(instance_id: str) -> dict:
+DISK_METRICS_CACHE = {}
+
+
+def instance_metrics(instance_id: str, stats_result=None) -> dict:
     instance_dir = INSTANCE_BASE_PATH / instance_id
     compose_file = instance_dir / "compose.yml"
     if not compose_file.exists():
         return {"ok": False, "error": "instance compose file not found"}
 
     main_container = instance_id
-    stats_result = run_command([
+    stats_result = stats_result if stats_result is not None else run_command([
         "docker", "stats", main_container, "--no-stream",
-        "--format", "{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}",
-    ])
+        "--format", "{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}|{{.NetIO}}",
+    ], timeout=15)
 
     metrics = {
         "cpu_percent": 0.0,
@@ -916,10 +919,6 @@ def instance_metrics(instance_id: str) -> dict:
             "detail": "Required containers are not running.",
         },
     }
-
-    ps_result = run_command(compose_cmd("-f", str(compose_file), "ps", "--status", "running", "--services"), cwd=str(instance_dir))
-    if ps_result["code"] == 0:
-        metrics["running"] = "fs25" in [line.strip() for line in ps_result["stdout"].splitlines()]
 
     containers = [
         {"service": "fs25", **inspect_container(instance_id)},
@@ -940,14 +939,23 @@ def instance_metrics(instance_id: str) -> dict:
         if len(parts) == 2:
             metrics["memory_used_bytes"] = parse_size_to_bytes(parts[0])
             metrics["memory_limit_bytes"] = parse_size_to_bytes(parts[1])
+        fields = stats_result['stdout'].strip().split('|')
+        network = fields[3].split('/') if len(fields) > 3 else []
+        if len(network) == 2:
+            metrics['network_in_bytes'] = parse_size_to_bytes(network[0].strip())
+            metrics['network_out_bytes'] = parse_size_to_bytes(network[1].strip())
 
-    disk_result = run_command(["du", "-sb", str(instance_dir)])
+    cached_disk = DISK_METRICS_CACHE.get(instance_id)
+    if cached_disk and time.monotonic() - cached_disk[0] < 300:
+        metrics.update(cached_disk[1])
+        return {"ok": True, "metrics": metrics}
+    disk_result = run_command(["du", "-sb", str(instance_dir)], timeout=10)
     if disk_result["code"] == 0 and disk_result["stdout"].strip():
         first = disk_result["stdout"].split()[0]
         with suppress(ValueError):
             metrics["disk_used_bytes"] = int(first)
 
-    fs_result = run_command(["df", "-B1", str(instance_dir)])
+    fs_result = run_command(["df", "-B1", str(instance_dir)], timeout=5)
     if fs_result["code"] == 0:
         lines = [line for line in fs_result["stdout"].splitlines() if line.strip()]
         if len(lines) >= 2:
@@ -958,7 +966,31 @@ def instance_metrics(instance_id: str) -> dict:
                     if total_bytes > 0:
                         metrics["disk_percent"] = round((metrics["disk_used_bytes"] / total_bytes) * 100, 2)
 
+    if disk_result["code"] == 0:
+        DISK_METRICS_CACHE[instance_id] = (time.monotonic(), {key: metrics[key] for key in ("disk_used_bytes", "disk_percent")})
+    else:
+        metrics["disk_used_bytes"] = None
+        metrics["disk_percent"] = None
     return {"ok": True, "metrics": metrics}
+
+
+from telemetry import Telemetry
+telemetry = Telemetry(INSTANCE_BASE_PATH, run_command, instance_metrics)
+
+
+@app.post("/telemetry")
+def get_telemetry():
+    payload = request.get_json(silent=True) or {}
+    scope = str(payload.get("scope", "host"))
+    if scope != "host" and not safe_instance_id(scope):
+        return jsonify({"ok": False, "error": "Invalid scope"}), 400
+    try:
+        hours = int(payload.get("hours", 1))
+    except (ValueError, TypeError):
+        return jsonify({"ok": False, "error": "Invalid range"}), 400
+    if hours not in (1, 6, 24, 168, 720):
+        return jsonify({"ok": False, "error": "Invalid range"}), 400
+    return jsonify(telemetry.read(scope, hours))
 
 
 @app.before_request
@@ -1246,7 +1278,11 @@ def get_instance_metrics():
     if not safe_instance_id(instance_id):
         return jsonify({"ok": False, "error": "invalid instance id"}), 400
 
-    result = instance_metrics(instance_id)
+    cached = telemetry.latest(instance_id)
+    if cached['sampled_at'] and time.time() - cached['sampled_at'] < 90:
+        result = {'ok': True, 'metrics': cached['latest']}
+    else:
+        result = {'ok': False, 'error': 'Waiting for fresh telemetry'}
     status = 200 if result.get("ok") else 404
     return jsonify(result), status
 
@@ -1562,5 +1598,6 @@ def upload_host_file_chunk():
 
 
 if __name__ == "__main__":
+    telemetry.start()
     restore_desired_instances()
     app.run(host="0.0.0.0", port=8081)
