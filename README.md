@@ -293,3 +293,38 @@ It writes `<repo-root>/.env`, installs missing software, creates the required di
 ## Important note about FS25 licensing
 
 Make sure your use of any dedicated server image and FS25 server tooling complies with the game publisher's licensing and distribution requirements.
+
+## Resource history and dashboard
+
+The **Overview** home page shows CPU, memory, storage, and network charts for the selected enabled host. Each server detail page includes the same historical view for its game container (disk is the instance folder). Choose 1 hour, 6 hours, 24 hours, 7 days, or 30 days; hover for values and pause/resume live updates. Game Servers includes instant name/host/address search.
+
+The agent collects samples approximately every 30 seconds, even without an open browser, and retains 30 days in `<INSTANCE_BASE_PATH>/.telemetry.sqlite3`. SQLite history survives container recreation. Long ranges return bucket averages (at most 361 points), with min/max/average describing the displayed buckets. CPU and network rates need two samples. Missing or stale telemetry is labeled; a graph gap is not a zero reading. Collection may take longer on heavily loaded hosts.
+
+- Host CPU covers the physical host, memory uses Linux MemAvailable, and disk covers the filesystem containing the instances directory. Memory and host-disk charts show capacity guides.
+- Server CPU follows Docker's convention: 100% is one logical core. Server RAM follows Docker CLI cache-adjusted usage. Server disk measures the instance directory, not shared game/DLC mounts or a configured quota. See [Docker stats documentation](https://docs.docker.com/reference/cli/docker/container/stats/).
+- Host network excludes loopback and Docker bridges/veth interfaces; custom bonded, bridged, VPN, or VLAN layouts may need interface-specific filtering. Network rates are averages between samples, not instantaneous peaks. Server network covers the game container, not its separate SFTP container. If host process-network counters cannot be read, host network charts show no samples while other host metrics continue.
+- One batched Docker stats command serves all servers. Instance inspections use at most four workers, disk scans are cached for five minutes, and HTTP reads use stored metrics. Browser charts pause in hidden tabs. Server cards skip log downloads and allow only three concurrent refresh requests. Unrelated pages no longer fetch file listings or probe local host health.
+- Telemetry stays behind the existing panel login and internal agent token. It does not require a chart CDN or new database service.
+
+### Updating an existing Ubuntu installation
+
+After copying/pulling the updated code on the panel host, run from the repository root:
+
+```bash
+docker compose up -d --build --no-deps agent
+```
+
+The web source and assets are already bind-mounted. Reload the website. Rebuild/recreate every remote agent too, and give it the same read-only `/proc:/host/proc:ro` mount added to the local Compose service. No game container recreation or SQL migration is needed. History starts at upgrade; allow about one minute for initial rate samples. Recreating the agent also runs its existing desired-state restoration on startup.
+
+For a smoke check, sign in, select Overview, confirm the sample timestamp advances, switch history ranges, and open a server detail page. Compare resource values with host tools and `docker stats`; verify offline/unreachable states and existing start/stop/log workflows. This repository was validated on Windows with unit tests and a synthetic browser fixture; real Ubuntu/Docker integration still needs that smoke check.
+
+Local checks:
+
+```bash
+python -B -m unittest discover -s tests -p 'test_*.py' -v
+php -l app/web/public/index.php
+php -l app/web/src/telemetry-view.php
+node --check app/web/public/assets/telemetry.js
+# Optional standalone visual fixture (synthetic data, no database needed):
+php -S 127.0.0.1:8765 tests/preview.php
+```

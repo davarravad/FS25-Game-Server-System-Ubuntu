@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 require __DIR__ . '/../src/bootstrap.php';
+require __DIR__ . '/../src/telemetry-view.php';
 
 function redirect_route(string $route): void
 {
@@ -89,7 +90,7 @@ if ($route === 'login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($user && password_verify($password, $user['password_hash'])) {
         $_SESSION['user'] = ['id' => $user['id'], 'username' => $user['username']];
-        redirect_route('game_servers');
+        redirect_route('dashboard');
     }
 
     flash('Invalid username or password.');
@@ -221,6 +222,19 @@ if ($route === 'api_node_server_action' && $_SERVER['REQUEST_METHOD'] === 'POST'
 
     $result = perform_server_lifecycle_action($server, $action, true);
     json_response($result, ($result['ok'] ?? false) ? 200 : 500);
+}
+
+if ($route === 'telemetry') {
+    require_login();
+    $instanceId = (string) ($_GET['instance_id'] ?? '');
+    $host = $instanceId !== '' ? find_instance_with_host($instanceId) : find_host((int) ($_GET['host_id'] ?? 0));
+    if (!$host || !(int) ($host['is_enabled'] ?? 0)) {
+        json_response(['ok' => false, 'error' => 'Host is unavailable'], 404);
+    }
+    session_write_close();
+    header('Cache-Control: no-store');
+    $result = agent_post_for_host($host, '/telemetry', ['scope' => $instanceId !== '' ? $instanceId : 'host', 'hours' => (int) ($_GET['hours'] ?? 1)], 10);
+    json_response($result, ($result['ok'] ?? false) ? 200 : 503);
 }
 
 if ($route === 'export_servers_excel') {
@@ -593,7 +607,9 @@ if ($route === 'upload_large' || $route === 'installer_upload') {
             .error { color: #fca5a5; }
             .ok { color: #86efac; }
         </style>
-    </head>
+    <link rel="stylesheet" href="/assets/telemetry.css?v=1">
+<script defer src="/assets/telemetry.js?v=1"></script>
+</head>
     <body>
     <div class="page">
         <div class="card">
@@ -996,7 +1012,12 @@ if ($route === 'server_live') {
         json_response(['ok' => false, 'error' => 'Managed host for this server is missing or disabled.'], 404);
     }
 
+    session_write_close();
     $metricsResult = instance_metrics_for_server($server);
+    if (($_GET['metrics_only'] ?? '') === '1') {
+        header('Cache-Control: no-store');
+        json_response($metricsResult, ($metricsResult['ok'] ?? false) ? 200 : 503);
+    }
     $logsAgent = agent_post_for_host($server, '/instance/action', [
         'instance_id' => $instanceId,
         'action' => 'logs',
@@ -1120,7 +1141,9 @@ if ($route === 'logs') {
             .toggle-row { margin-top: 14px; display: flex; align-items: center; gap: 10px; }
             .toggle-row input { width: 16px; height: 16px; }
         </style>
-    </head>
+    <link rel="stylesheet" href="/assets/telemetry.css?v=1">
+<script defer src="/assets/telemetry.js?v=1"></script>
+</head>
     <body>
     <div class="page">
         <div class="topbar">
@@ -1197,14 +1220,18 @@ if ($route === 'logs') {
             target.scrollTop = target.scrollHeight;
         };
 
+        let logsBusy = false;
         const refreshLiveLogs = async () => {
+            if (logsBusy || document.hidden) return;
+            logsBusy = true;
             const url = new URL('/?route=server_live', window.location.origin);
             url.searchParams.set('instance_id', instanceId);
             url.searchParams.set('include_docker_logs', dockerToggle && dockerToggle.checked ? '1' : '0');
             try {
                 const response = await fetch(url.toString(), {
                     method: 'GET',
-                    headers: { 'Accept': 'application/json' }
+                    headers: { 'Accept': 'application/json' },
+                    signal: AbortSignal.timeout(15000)
                 });
                 if (!response.ok) {
                     return;
@@ -1217,7 +1244,7 @@ if ($route === 'logs') {
                 renderLogText(dockerLogView, payload.docker_log_output || 'No Docker logs returned');
             } catch (error) {
                 console.error('Failed to refresh logs', error);
-            }
+            } finally { logsBusy = false; }
         };
 
         setInterval(refreshLiveLogs, 3000);
@@ -1400,7 +1427,7 @@ if ($route === 'server') {
     ]);
     $secretsResult = instance_secrets_for_server($server);
     $vncPassword = (string) ($secretsResult['secrets']['vnc_password'] ?? '');
-    $initialRuntimeState = $metrics['runtime_state'] ?? ['state' => (($metrics['running'] ?? false) ? 'online' : 'offline'), 'label' => (($metrics['running'] ?? false) ? 'Online' : 'Offline'), 'detail' => ''];
+    $initialRuntimeState = $metrics['runtime_state'] ?? ['state' => (($metrics['running'] ?? false) ? 'online' : 'offline'), 'label' => (($metrics['running'] ?? false) ? 'Online' : 'Waiting for data'), 'detail' => ''];
     $isRuntimeRunning = in_array((string) ($initialRuntimeState['state'] ?? 'offline'), ['online', 'booting', 'degraded'], true);
     $statusOutput = implode("\n", [
         'Panel status: ' . (string) ($server['status'] ?? 'unknown'),
@@ -1466,7 +1493,9 @@ if ($route === 'server') {
             .secret-row input { flex: 1; }
             @media (max-width: 900px) { .grid.two, .grid.form, .server-toolbar, .danger-row { grid-template-columns: 1fr; } }
         </style>
-    </head>
+    <link rel="stylesheet" href="/assets/telemetry.css?v=1">
+<script defer src="/assets/telemetry.js?v=1"></script>
+</head>
     <body>
     <div class="page">
         <?php if ($flash): ?><div class="flash"><?= h($flash) ?></div><?php endif; ?>
@@ -1544,6 +1573,7 @@ if ($route === 'server') {
                 </form>
             </div>
             <div class="card">
+                <?php render_telemetry([['query' => 'instance_id=' . rawurlencode($instanceId), 'name' => (string) $server['server_name']]], 'Server performance'); ?>
                 <h2 style="margin-top:0;">Runtime Health</h2>
                 <?php
                     $cpuPercent = (float) ($metrics['cpu_percent'] ?? 0);
@@ -1852,7 +1882,10 @@ if ($route === 'server') {
             }
         }
 
+        let liveViewBusy = false;
         async function refreshLiveView() {
+            if (liveViewBusy || document.hidden) return;
+            liveViewBusy = true;
             try {
                 const response = await fetch(`/?route=server_live&instance_id=${encodeURIComponent(instanceId)}`, {
                     headers: { 'X-Requested-With': 'XMLHttpRequest' },
@@ -1862,10 +1895,11 @@ if ($route === 'server') {
                     throw new Error(`Live status failed (${response.status})`);
                 }
                 const payload = await response.json();
+                if (!payload.metrics_ok) throw new Error('Waiting for fresh resource data');
                 updateLiveView(payload);
             } catch (error) {
                 setInlineStatus(error.message, true);
-            }
+            } finally { liveViewBusy = false; }
         }
 
         actionForms.forEach((form) => {
@@ -2056,7 +2090,9 @@ if ($route === 'console') {
             .flash { margin: 12px 20px 0; padding: 12px; background: #1d4ed8; border-radius: 10px; }
             iframe { width: 100%; height: calc(100vh - 81px); border: 0; background: #050814; }
         </style>
-    </head>
+    <link rel="stylesheet" href="/assets/telemetry.css?v=1">
+<script defer src="/assets/telemetry.js?v=1"></script>
+</head>
     <body>
     <div class="console-shell">
         <div>
@@ -2124,7 +2160,9 @@ if ($route === 'web_admin') {
             .flash { margin: 12px 20px 0; padding: 12px; background: #1d4ed8; border-radius: 10px; }
             iframe { width: 100%; height: calc(100vh - 81px); border: 0; background: #fff; }
         </style>
-    </head>
+    <link rel="stylesheet" href="/assets/telemetry.css?v=1">
+<script defer src="/assets/telemetry.js?v=1"></script>
+</head>
     <body>
     <div class="console-shell">
         <div>
@@ -2157,9 +2195,9 @@ if (!current_user() && $route !== 'login') {
 $flash = flash();
 $logs = $_SESSION['logs'] ?? null;
 unset($_SESSION['logs']);
-$pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers', 'create_server', 'docs'], true)
+$pageRoute = in_array($route, ['dashboard', 'managed_hosts', 'file_management', 'game_servers', 'create_server', 'docs'], true)
     ? $route
-    : 'game_servers';
+    : 'dashboard';
 
 ?><!doctype html>
 <html lang="en">
@@ -2232,6 +2270,8 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
             .topbar-inner { align-items: start; flex-direction: column; }
         }
     </style>
+<link rel="stylesheet" href="/assets/telemetry.css?v=1">
+<script defer src="/assets/telemetry.js?v=1"></script>
 </head>
 <body>
 <div class="shell">
@@ -2287,7 +2327,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
             $createHosts = enabled_hosts();
             $localHost = local_host_record();
             $node = local_node_config();
-            $nodeSummary = node_summary();
+            $nodeSummary = $pageRoute === 'managed_hosts' ? node_summary() : [];
             $createDefaults = suggested_create_defaults();
             $createImageOptions = fs25_image_options((string) $createDefaults['image_name']);
             $fileScope = (string) ($_GET['fm_scope'] ?? 'host');
@@ -2298,8 +2338,8 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
             $fileServer = ($fileScope === 'instance' && $fileInstanceId !== '') ? find_instance_with_host($fileInstanceId) : null;
             $fileHost = $fileServer ?: ($fileHostId > 0 ? find_host($fileHostId) : $localHost);
             $fileContext = file_context_for_request($fileServer ? null : $fileHost, $fileServer, $fileTarget);
-            $fileAccess = $fileContext ? file_access_status_for_context($fileContext) : ['ok' => false];
-            $fileListing = $fileContext ? directory_listing_for_context($fileContext, $fileSubpath) : ['ok' => false, 'files' => []];
+            $fileAccess = $pageRoute === 'file_management' && $fileContext ? file_access_status_for_context($fileContext) : ['ok' => false];
+            $fileListing = $pageRoute === 'file_management' && $fileContext ? directory_listing_for_context($fileContext, $fileSubpath) : ['ok' => false, 'files' => []];
         ?>
         <header class="topbar">
             <div class="topbar-inner">
@@ -2308,6 +2348,7 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
                     <div class="brand-copy">Logged in as <?= h(current_user()['username']) ?>. Run this node locally now, and connect it to a main site later if needed.</div>
                 </div>
                 <nav class="nav">
+                    <a class="nav-link <?= $pageRoute === 'dashboard' ? 'active' : '' ?>" href="/?route=dashboard">Overview</a>
                     <a class="nav-link <?= $pageRoute === 'managed_hosts' ? 'active' : '' ?>" href="/?route=managed_hosts">Managed Hosts</a>
                     <a class="nav-link <?= $pageRoute === 'file_management' ? 'active' : '' ?>" href="/?route=file_management">File Management</a>
                     <a class="nav-link <?= $pageRoute === 'game_servers' ? 'active' : '' ?>" href="/?route=game_servers">Game Servers</a>
@@ -2320,7 +2361,10 @@ $pageRoute = in_array($route, ['managed_hosts', 'file_management', 'game_servers
         <main class="wrap">
         <?php if ($flash): ?><div class="flash"><?= h($flash) ?></div><?php endif; ?>
 
-        <?php if ($pageRoute === 'managed_hosts'): ?>
+        <?php if ($pageRoute === 'dashboard'): ?>
+            <section class="hero"><h1>Your node, at a glance</h1><p>Host resources, historical trends, and a clear path to every game server.</p><div class="flex"><a class="stat-chip" href="/?route=managed_hosts"><?= count($hosts) ?> managed hosts</a><a class="stat-chip" href="/?route=game_servers"><?= count($servers) ?> game servers &rarr;</a></div></section>
+            <?php render_telemetry(array_map(static fn(array $host): array => ['query' => 'host_id=' . (int) $host['id'], 'name' => (string) $host['name']], $createHosts), 'Host performance'); ?>
+        <?php elseif ($pageRoute === 'managed_hosts'): ?>
             <section class="hero">
                 <h1>Managed Hosts</h1>
                 <p>This install acts as its own FS25 node. Use this page to maintain the default local host record, confirm connectivity, and prepare the shared FS paths used by this node.</p>
@@ -2806,27 +2850,9 @@ curl -X POST \
         <?php endif; ?>
 
         <?php if ($pageRoute === 'game_servers'): ?>
-        <div class="page-grid equal">
-            <div class="card">
-                <h2>How To Use This Page</h2>
-                <div class="stack muted">
-                    <div>1. Each server is shown as a health card with live CPU, RAM, and disk usage bars.</div>
-                    <div>2. Click a server card to open its detail page and edit panel-managed settings.</div>
-                    <div>3. Use VNC, web, and logs shortcuts directly from the card for quick access.</div>
-                    <div>4. Use the detail page for lifecycle actions and deeper per-server management.</div>
-                </div>
-            </div>
-            <div class="card">
-                <h2>Current Estate</h2>
-                <div class="stack muted">
-                    <div>Managed hosts: <?= h((string) count($hosts)) ?></div>
-                    <div>Game servers: <?= h((string) count($servers)) ?></div>
-                    <div>Page purpose: day-to-day server operations</div>
-                </div>
-            </div>
-        </div>
         <div class="card">
             <h2>Server Instances</h2>
+            <div class="server-search-toolbar"><input type="search" data-server-search aria-label="Search servers" placeholder="Search by server name, host, or address…"><span class="stat-chip" data-server-count><?= count($servers) ?> servers</span></div>
             <div class="flex" style="margin-bottom: 14px;">
                 <a class="button-link" href="/?route=export_servers_excel">Export all settings to Excel</a>
             </div>
@@ -2841,7 +2867,7 @@ curl -X POST \
                         $cpuPercent = (float) ($metrics['cpu_percent'] ?? 0);
                         $memoryPercent = (float) ($metrics['memory_percent'] ?? 0);
                         $diskPercent = (float) ($metrics['disk_percent'] ?? 0);
-                        $cardRuntime = $metrics['runtime_state'] ?? ['state' => (($metrics['running'] ?? false) ? 'online' : 'offline'), 'label' => (($metrics['running'] ?? false) ? 'Online' : 'Offline')];
+                        $cardRuntime = $metrics['runtime_state'] ?? ['state' => (($metrics['running'] ?? false) ? 'online' : 'offline'), 'label' => (($metrics['running'] ?? false) ? 'Online' : 'Waiting for data')];
                     ?>
                     <div class="card server-card" data-live-instance-id="<?= h((string) $server['instance_id']) ?>">
                         <a class="server-card-link" href="<?= h($detailUrl) ?>">
@@ -3011,29 +3037,31 @@ curl -X POST \
                 }
             }
 
+            let cardsBusy = false;
             async function refreshGameServerCards() {
-                await Promise.all(liveServerCards.map(async (card) => {
-                    const instanceId = card.getAttribute('data-live-instance-id');
-                    if (!instanceId) {
-                        return;
-                    }
-                    try {
-                        const response = await fetch(`/?route=server_live&instance_id=${encodeURIComponent(instanceId)}`, {
-                            headers: { 'X-Requested-With': 'XMLHttpRequest' },
-                            credentials: 'same-origin',
-                        });
-                        if (!response.ok) {
-                            return;
+                if (cardsBusy || document.hidden) return;
+                cardsBusy = true;
+                try {
+                    // Limit parallel requests so a large estate cannot exhaust PHP workers.
+                    const pending = liveServerCards.filter(card => !card.hidden).slice();
+                    await Promise.all(Array.from({length: Math.min(3, pending.length)}, async () => {
+                        while (pending.length) {
+                            const card = pending.shift();
+                            const instanceId = card.getAttribute('data-live-instance-id');
+                            try {
+                                const response = await fetch(`/?route=server_live&metrics_only=1&instance_id=${encodeURIComponent(instanceId)}`, {credentials:'same-origin', signal: AbortSignal.timeout(15000)});
+                                if (!response.ok) throw new Error('Unavailable');
+                                updateLiveServerCard(card, await response.json());
+                            } catch (_) {
+                                const badge = card.querySelector('[data-live-running]');
+                                if (badge) badge.textContent = 'Unavailable';
+                            }
                         }
-                        const payload = await response.json();
-                        updateLiveServerCard(card, payload);
-                    } catch (error) {
-                    }
-                }));
+                    }));
+                } finally { cardsBusy = false; }
             }
-
             refreshGameServerCards();
-            window.setInterval(refreshGameServerCards, 5000);
+            window.setInterval(refreshGameServerCards, 30000);
             <?php endif; ?>
         </script>
         <?php endif; ?>
