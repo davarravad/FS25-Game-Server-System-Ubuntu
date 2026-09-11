@@ -151,6 +151,7 @@ main>header>#live-status{flex-basis:100%;text-align:right}
 /* Scroll logs inside a bounded, keyboard-accessible panel. */
 .log-output{max-height:min(420px,55vh);overflow:auto;white-space:pre;overflow-wrap:normal;scrollbar-gutter:stable;overscroll-behavior:contain;font-size:12px;line-height:1.5}
 
+.guide-list{margin:12px 0 0;padding-left:22px;color:#c0d0df;line-height:1.65}.guide-list li{margin-bottom:10px}.guide-list strong{color:#e8eef7}.guide-paths{width:100%;border-collapse:collapse;margin-top:12px}.guide-paths th,.guide-paths td{text-align:left;padding:10px 8px;border-bottom:1px solid #2b3e55;vertical-align:top;line-height:1.5}.guide-paths th{color:#9aacc4;font-weight:600}.guide-paths code{font-size:13px;color:#e8eef7}#page>section>pre{margin:12px 0 0}
 .audit-toolbar{margin-top:var(--control-gap)}.audit-toolbar select{flex:1;min-width:160px;max-width:260px}.audit-toolbar input{flex:2;min-width:200px}
 .game-auto{display:flex;gap:10px;align-items:center;margin:16px 0}.game-auto input{width:auto}
 #live-status{--live-color:#eab55a;font-variant-numeric:tabular-nums}

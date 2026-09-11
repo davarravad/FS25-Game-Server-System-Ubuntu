@@ -424,19 +424,11 @@ async function access(version){
 
 function guides(install){
 
-  title(install?'Install a node':'Node updates',install?'Install a new Ubuntu node or connect an existing installation.':'Prepare your control plane and manage node software releases.',install?'install':'setup');
+  title(install?'Install a node':'Node updates',install?'Every step from a fresh Ubuntu 24.04 install to a running game server, with the same paths as your existing nodes.':'Prepare your control plane and manage node software releases.',install?'install':'setup');
 
   const tabs=element('div',undefined,'subnav');tabs.append(link('Node updates','/setup'),link('Install a node','/install'));$('page').append(tabs);
 
-  if(install){const s=section('1. Create your node');s.append(element('p','Create a unique node in Server Nodes, then open its Connection & access tab and use View token and Copy token.'),link('Server Nodes','/nodes'));
-
-    const installSection=section('2. Install on Ubuntu 24.04');installSection.append(element('p','Run these commands on the Ubuntu host. Enter the node ID and publishing token when prompted. Verify the signing-key fingerprint with your maintainer before selecting a release.'),element('pre',"sudo apt-get update && sudo apt-get install -y ca-certificates curl python3 openssl\ncurl --fail --show-error --silent --proto '=https' --tlsv1.2 https://farmservers.sargentweb.com/install.py -o /tmp/farmservers-install.py && sudo python3 /tmp/farmservers-install.py --install"));
-
-    const migrate=section('Connect an existing installation');migrate.append(element('p','Apply the reviewed bridge update and back up the existing configuration and game saves first. Download the installer above, then adopt the existing directory:'),element('pre','sudo python3 /tmp/farmservers-install.py --adopt /absolute/path/to/existing/node'),link('Full migration guide','/node-distribution.txt'));
-
-    const finish=section('3. Connect and verify');finish.append(element('p','Enable automatic node connections on the Cloudflare page. Once connection status is Ready, install licensed game content and test a spare game.'),link('Cloudflare setup instructions','/central-setup.txt'),link('View nodes','/'));
-
-  }
+  if(install)installGuide();
 
 }
 

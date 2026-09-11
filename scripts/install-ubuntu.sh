@@ -32,7 +32,7 @@ HOST_FIREWALL_HELPER_IMAGE_DEFAULT="ubuntu:24.04"
 ADMIN_SFTP_PORT_DEFAULT="22220"
 ADMIN_SFTP_USERNAME_DEFAULT="paneladmin"
 APP_ENV_DEFAULT="production"
-TZ_DEFAULT="America/Chicago"
+TZ_DEFAULT="America/New_York"
 
 require_root() {
   if [ "${EUID}" -ne 0 ]; then

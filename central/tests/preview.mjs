@@ -74,7 +74,7 @@ createServer(async(req,res)=>{
     res.writeHead(path in data?200:404,{'Content-Type':'application/json'}).end(JSON.stringify(data[path]||{error:'Fixture endpoint unavailable'}));return;
   }
   const name=path==='/'||path==='/setup.html'||/^\/(nodes|servers|access|users|cloudflare|setup|install|game-status)(\/|$)/.test(path)?'index.html':path.slice(1);
-  if(!['favicon.svg','favicon-32.png','apple-touch-icon.png','fs-farmservers-logo.svg','fs-farmservers-logo.png','index.html','live.js','game-status.js','management.js','app.js','cloudflare.js','account.js','charts.js','software.js','style.css','node-distribution.txt','central-setup.txt'].includes(name)){res.writeHead(404).end();return;}
+  if(!['favicon.svg','favicon-32.png','apple-touch-icon.png','fs-farmservers-logo.svg','fs-farmservers-logo.png','index.html','live.js','game-status.js','install.js','management.js','app.js','cloudflare.js','account.js','charts.js','software.js','style.css','node-distribution.txt','central-setup.txt'].includes(name)){res.writeHead(404).end();return;}
   const type=name.endsWith('.svg')?'image/svg+xml':name.endsWith('.png')?'image/png':name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':name.endsWith('.html')?'text/html':'text/plain';
   res.writeHead(200,{'Content-Type':type+'; charset=utf-8'}).end(await readFile(new URL('../public/'+name,import.meta.url)));
 }).listen(Number(process.env.PREVIEW_PORT||8766),'127.0.0.1',()=>console.log('Synthetic dashboard: http://127.0.0.1:8766'));
