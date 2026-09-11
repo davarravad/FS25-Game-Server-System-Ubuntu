@@ -35,6 +35,12 @@ createServer(async(req,res)=>{
     const data=req.method==='POST'?{ok:true,instance_id:'game-3',message:'Saved.'}:op==='server'?{ok:true,server,secrets:{secrets:{vnc_password:'fixture-secret'}}}:op==='inventory'?{ok:true,defaults,host,servers:nodes[0].snapshot.servers,health:{ok:true},sftp:{admin_sftp_host:'192.0.2.10',admin_sftp_password:'fixture-secret'}}:op==='files'?{ok:true,path:'/opt/fs25/game',files:[{name:'Installer.zip',is_dir:false,size:123456,modified_at:time},{name:'mods',is_dir:true,relative_path:'mods',modified_at:time}]}:{ok:true,metrics:{runtime_state:{label:'Running',detail:'All containers healthy'},containers:[{service:'fs25',status:'running',health:'healthy'}]},log_output:'Server ready. Waiting for players.',docker_log_output:'Container started.'};
     for await(const chunk of req){}res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify(data));return;
   }
+  if(path==='/api/audit'){
+    const u=new URL(req.url,'http://localhost'),q=(u.searchParams.get('q')||'').toLowerCase(),action=u.searchParams.get('action')||'',actor=u.searchParams.get('actor')||'',before=Number(u.searchParams.get('before')||0);
+    const all=Array.from({length:40},(_,i)=>({id:40-i,ts:time-i*600,actor:i%3?'preview':'123456789012345678',action:['login','server.restart','management.server','node.update','viewer.vnc'][i%5],target:['discord','pilot/game-1','pilot/game-1','pilot','north/Game_3'][i%5]}));
+    const rows=all.filter(e=>(!before||e.id<before)&&(!action||e.action===action)&&(!actor||e.actor===actor)&&(!q||(e.action+' '+e.target+' '+e.actor).toLowerCase().includes(q))).slice(0,16);
+    const events=rows.slice(0,15);res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify({events,actions:[...new Set(all.map(e=>e.action))].sort(),nextCursor:rows.length>15?String(events[14].id):null}));return;
+  }
   if(path==='/api/distribution/updates'&&req.method==='GET'){
     const cursor=new URL(req.url,'http://localhost').searchParams.get('cursor'),start=cursor?Number(cursor):0;
     res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify({jobs:jobs.slice(start,start+25),nextCursor:start+25<jobs.length?String(start+25):null}));return;
@@ -47,7 +53,7 @@ createServer(async(req,res)=>{
       '/api/me':{id:'preview',name:'Local preview administrator',role:process.env.PREVIEW_ROLE||'admin',csrf:'fixture'},
       '/api/users':[{id:'preview',name:'Local preview administrator',role:'admin'},{id:'123456789012345678',name:'Farm viewer',role:'viewer'}],
       '/api/notifications':notices,
-      '/api/audit':[{id:3,ts:time,actor:'preview',action:'node.update',target:'pilot'},{id:2,ts:time-600,actor:'123456789012345678',action:'server.restart',target:'pilot/game-1'},{id:1,ts:time-3600,actor:'preview',action:'login',target:'discord'}],
+
       '/api/nodes':{nodes},
       '/api/history':{points:Array.from({length:20},(_,i)=>({timestamp:time-1800+i*90,cpu_percent:15+i%5,memory_used_bytes:8589934592,disk_used_bytes:12884901888,network_in_bytes_sec:1048576,network_out_bytes_sec:524288}))},
       '/api/distribution/releases':[{version:'v1.0.0'}],

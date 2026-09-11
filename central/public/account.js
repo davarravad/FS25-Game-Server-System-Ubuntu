@@ -53,8 +53,28 @@ async function userManagement(){
 async function auditLog(users){
   const panel=section('Audit log'),status=element('p',undefined,'muted'),wrap=element('div',undefined,'update-table-wrap'),table=element('table',undefined,'update-table'),head=element('thead'),heading=element('tr'),rows=element('tbody');
   status.setAttribute('role','status');
-  for(const label of ['When','Who','Action','Target']){const cell=element('th',label);cell.scope='col';heading.append(cell);}head.append(heading);table.append(element('caption','Most recent 100 events'),head,rows);wrap.append(table);
-  const refresh=async()=>{status.textContent='Loading…';try{const events=await api('audit');rows.replaceChildren(...events.map(event=>{const row=element('tr'),who=users().find(u=>u.id===event.actor);row.append(element('td',stamp(event.ts)),element('td',who?who.name+' · '+event.actor:event.actor),element('td',event.action),element('td',event.target));return row;}));status.textContent=events.length?'Showing the '+events.length+' most recent events.':'No events recorded yet.';}catch(e){status.textContent=e.message;}};
-  panel.append(element('p','Sign-ins, role changes, node and release changes, server commands and management operations recorded by the site. Events are kept for 90 days.'),button('Refresh audit log',refresh),status,wrap);
-  await refresh();
+  for(const label of ['When','Who','Action','Target']){const cell=element('th',label);cell.scope='col';heading.append(cell);}head.append(heading);table.append(head,rows);wrap.append(table);
+  const toolbar=element('div',undefined,'toolbar audit-toolbar'),search=element('input'),actionFilter=element('select'),actorFilter=element('select');
+  search.type='search';search.placeholder='Search action, target or Discord ID';search.setAttribute('aria-label',search.placeholder);search.maxLength=100;
+  actionFilter.setAttribute('aria-label','Filter by action');actorFilter.setAttribute('aria-label','Filter by user');
+  const option=(select,value,text)=>{const o=element('option',text);o.value=value;select.append(o);};
+  option(actionFilter,'','All actions');option(actorFilter,'','All users');for(const user of users())option(actorFilter,user.id,user.name);
+  const more=button('Show 15 more',()=>load(true)),refresh=button('Refresh',()=>load(false));more.hidden=true;
+  let cursor=null,busy=false,request=0,knownActions=[];
+  const query=()=>new URLSearchParams({q:search.value.trim(),action:actionFilter.value,actor:actorFilter.value,...(cursor?{before:cursor}:{})});
+  const load=async append=>{
+    if(busy)return;busy=true;more.disabled=true;refresh.disabled=true;const current=++request;if(!append)cursor=null;status.textContent='Loading\u2026';
+    try{
+      const data=await api('audit?'+query());if(current!==request||!panel.isConnected)return;
+      if(JSON.stringify(data.actions)!==JSON.stringify(knownActions)){knownActions=data.actions;const previous=actionFilter.value;actionFilter.replaceChildren();option(actionFilter,'','All actions');for(const name of knownActions)option(actionFilter,name,name);if(knownActions.includes(previous))actionFilter.value=previous;}
+      const items=data.events.map(event=>{const row=element('tr'),who=users().find(u=>u.id===event.actor);row.append(element('td',stamp(event.ts)),element('td',who?who.name+' \u00b7 '+event.actor:event.actor),element('td',event.action),element('td',event.target));return row;});
+      if(append)rows.append(...items);else rows.replaceChildren(...items);
+      cursor=data.nextCursor;more.hidden=!cursor;
+      const shown=rows.children.length;status.textContent=shown?'Showing '+shown+' event'+(shown===1?'':'s')+(cursor?'; more available.':'.'):'No matching events.';
+    }catch(e){status.textContent=e.message;}finally{if(current===request){busy=false;more.disabled=false;refresh.disabled=false;}}
+  };
+  let timer;search.oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>load(false),300);};actionFilter.onchange=actorFilter.onchange=()=>load(false);
+  toolbar.append(search,actionFilter,actorFilter,refresh);
+  panel.append(element('p','Sign-ins, role changes, node and release changes, server commands and management operations recorded by the site. Events are kept for 90 days and shown 15 at a time, newest first.'),toolbar,status,wrap,more);
+  await load(false);
 }

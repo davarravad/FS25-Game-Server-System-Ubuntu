@@ -156,6 +156,17 @@ test('D1 heartbeat, CSRF, approval and one-use viewer tickets',async()=>{
     assert.equal((await mf.dispatchFetch(origin+'/api/heartbeat/node-1',heartbeat)).status,401);
     assert.equal((await (await reveal()).json() as {token:string}).token,rotated.token);
     const audits=await db.prepare("SELECT target FROM audit WHERE action='node.token-view'").all();assert.ok(audits.results.length>0);
+    for(let i=0;i<20;i++)await db.prepare('INSERT INTO audit(ts,actor,action,target) VALUES(?,?,?,?)').bind(time+i,i%2?'513527870258151439':'999999999999999999','test.page','page-'+i+(i%4?'':'%special_')).run();
+    type Page={events:{id:number;action:string;target:string;actor:string}[];actions:string[];nextCursor:string|null};
+    let page=await (await mf.dispatchFetch(origin+'/api/audit',{headers})).json() as Page;
+    assert.equal(page.events.length,15);assert.ok(page.nextCursor);assert.ok(page.actions.includes('test.page')&&page.actions.includes('node.token-view'));
+    const next=await (await mf.dispatchFetch(origin+'/api/audit?before='+page.nextCursor,{headers})).json() as Page;
+    assert.ok(next.events.every(e=>e.id<Number(page.nextCursor)));assert.ok(next.events.length>0);
+    page=await (await mf.dispatchFetch(origin+'/api/audit?action=test.page&actor=999999999999999999',{headers})).json() as Page;
+    assert.ok(page.events.length>0&&page.events.every(e=>e.action==='test.page'&&e.actor==='999999999999999999'));
+    page=await (await mf.dispatchFetch(origin+'/api/audit?q=%25special_',{headers})).json() as Page;
+    assert.equal(page.events.length,5);assert.ok(page.events.every(e=>e.target.endsWith('%special_')));
+    assert.equal((await mf.dispatchFetch(origin+'/api/audit?actor=not-an-id',{headers})).status,422);
     await db.prepare("UPDATE users SET role='pending'").run();
     assert.equal((await mf.dispatchFetch(origin+'/api/nodes',{headers})).status,403);
   } finally { await mf.dispose(); }

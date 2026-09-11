@@ -395,7 +395,15 @@ async function api(request: Request, env: Bindings, url: URL) {
     await env.DB.batch([env.DB.prepare('UPDATE users SET blocked=?,role=CASE WHEN ?=0 THEN \'pending\' ELSE role END WHERE id=?').bind(body.blocked?1:0,body.blocked?1:0,body.id),env.DB.prepare('DELETE FROM sessions WHERE user_id=?').bind(body.id)]);
     await audit(env,user.user_id,body.blocked?'user.block':'user.unblock',body.id);return reply({ok:true});
   }
-  if (url.pathname === '/api/audit' && request.method === 'GET') return reply((await env.DB.prepare('SELECT * FROM audit ORDER BY id DESC LIMIT 100').all()).results);
+  if (url.pathname === '/api/audit' && request.method === 'GET') {
+    const q=(url.searchParams.get('q')||'').trim().slice(0,100),action=url.searchParams.get('action')||'',actor=url.searchParams.get('actor')||'',before=url.searchParams.get('before')||'';
+    need((action===''||/^[a-z0-9.-]{1,60}$/.test(action))&&(actor===''||/^\d{17,20}$/.test(actor))&&(before===''||/^\d{1,18}$/.test(before)),422,'Invalid audit filter');
+    const like='%'+q.replace(/[\\%_]/g,c=>'\\'+c)+'%';
+    const rows=(await env.DB.prepare("SELECT * FROM audit WHERE (?='' OR id<?) AND (?='' OR action=?) AND (?='' OR actor=?) AND (?='' OR action LIKE ? ESCAPE '\\' OR target LIKE ? ESCAPE '\\' OR actor LIKE ? ESCAPE '\\') ORDER BY id DESC LIMIT 16").bind(before,Number(before||0),action,action,actor,actor,q,like,like,like).all<{id:number}>()).results;
+    const actions=(await env.DB.prepare('SELECT DISTINCT action FROM audit ORDER BY action').all<{action:string}>()).results.map(r=>r.action);
+    const events=rows.slice(0,15);
+    return reply({events,actions,nextCursor:rows.length>15?String(events[events.length-1].id):null});
+  }
   if (url.pathname === '/api/users' && request.method === 'POST') {
     const body = await readJson(request,4096);
     need(typeof body.id === 'string' && /^\d{17,20}$/.test(body.id) && roles.includes(body.role as Role),422,'Invalid user or role');
