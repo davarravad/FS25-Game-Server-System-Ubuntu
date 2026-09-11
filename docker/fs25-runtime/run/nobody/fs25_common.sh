@@ -1,6 +1,10 @@
 #!/bin/bash
 
 set -u
+if [ -f "/opt/fs25/game/Farming Simulator 2025/.farmservers-sync-in-progress" ]; then
+    echo "Game file synchronization is applying. Start this server after Game status reports completion."
+    exit 1
+fi
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -132,6 +136,9 @@ scan_dlc_installers() {
         exe|EXE)
           raw="${base#${DLC_PREFIX}}"
           name="${raw%%_*}"
+          if [ -f "${INSTANCE_PROFILE_DIR}/.farmservers-enabled-dlcs" ] && ! grep -Fxq "$name" "${INSTANCE_PROFILE_DIR}/.farmservers-enabled-dlcs"; then
+            continue
+          fi
           if [[ -n "$name" && -z "${seen[$name]:-}" ]]; then
             supported_names+=("$name")
             seen["$name"]=1

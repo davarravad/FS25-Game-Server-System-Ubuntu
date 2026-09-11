@@ -29,6 +29,32 @@ def archive(extra=None):
 
 
 class NodeManagerTests(unittest.TestCase):
+    def test_connection_ack_retry_does_not_reinstall(self):
+        connection = {'revision': 'a'*8+'-'+'b'*4+'-'+'c'*4+'-'+'d'*4+'-'+'e'*12}
+        with tempfile.TemporaryDirectory() as tmp, patch.object(manager, 'STATE', Path(tmp)), patch.object(manager, 'request', return_value=json.dumps({'connection':connection}).encode()) as request, patch.object(manager, 'configure_connection') as configure:
+            config = {'port':'8080'}
+            manager.sync_connection(config)
+            manager.sync_connection(config)
+            configure.assert_called_once()
+            self.assertEqual(request.call_args.args[2]['status'], 'applied')
+            self.assertNotIn('gatewayToken', json.loads((Path(tmp)/'connection.json').read_text()))
+
+    def test_connection_rejects_secret_injection_before_running_commands(self):
+        with patch.object(manager, 'call') as command:
+            with self.assertRaises(ValueError):
+                manager.configure_connection({}, {'revision':'a'*36,'gatewayToken':'a'*64,'tunnelToken':'valid\nINJECT=bad'})
+            command.assert_not_called()
+
+    def test_connection_failure_restores_previous_gateway(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            previous='CENTRAL_GATEWAY_TOKEN='+'b'*64+'\nOTHER=keep\n'
+            (root/'.env').write_text(previous)
+            with patch.object(manager, 'CONFIG', root/'etc/updater.json'), patch.object(manager, 'call'), patch.object(manager, 'compose', side_effect=[RuntimeError('failed'),None]):
+                with self.assertRaises(RuntimeError):
+                    manager.configure_connection({'root':tmp}, {'revision':'a'*36,'gatewayToken':'c'*64,'tunnelToken':'d'*64})
+            self.assertEqual((root/'.env').read_text(),previous)
+
     def test_failed_build_restores_source_and_images_without_touching_env(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)/'node'

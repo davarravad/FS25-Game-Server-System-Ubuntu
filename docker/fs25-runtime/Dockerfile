@@ -1,4 +1,5 @@
 FROM binhex/arch-int-gui:latest
+LABEL com.farmservers.dlc-selection="1"
 LABEL org.opencontainers.image.authors="Toetje585"
 LABEL org.opencontainers.image.source="https://github.com/winegameservers/arch-fs25server"
 

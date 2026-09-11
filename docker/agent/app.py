@@ -1,4 +1,5 @@
 import json
+import fcntl
 import base64
 import hashlib
 import hmac
@@ -11,8 +12,9 @@ import tempfile
 import time
 from contextlib import suppress
 from pathlib import Path
+from game_details import collect as collect_game_details
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, g
 
 app = Flask(__name__)
 
@@ -645,7 +647,16 @@ def restore_desired_instances():
         if not compose_file.exists() or not bool(state.get("desired_running")):
             continue
 
-        run_command(compose_cmd("-f", str(compose_file), "up", "-d"), cwd=str(instance_dir))
+        shared = Path(str(read_env_file(instance_dir / ".env").get("SHARED_GAME_PATH", "/opt/fs25/game")))
+        if (shared / "Farming Simulator 2025" / ".farmservers-sync-in-progress").exists():
+            continue
+        shared.mkdir(parents=True, exist_ok=True)
+        with (shared / ".farmservers-sync.lock").open("a") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError:
+                continue
+            run_command(compose_cmd("-f", str(compose_file), "up", "-d"), cwd=str(instance_dir))
 
 
 def decode_base64url(value: str) -> bytes:
@@ -949,6 +960,7 @@ def instance_metrics(instance_id: str, stats_result=None) -> dict:
             metrics['network_out_bytes'] = parse_size_to_bytes(network[1].strip())
 
     cached_disk = DISK_METRICS_CACHE.get(instance_id)
+    metrics.update(collect_game_details(instance_dir, instance_id, read_env_file(instance_dir / '.env'), metrics['running'], run_command))
     if cached_disk and time.monotonic() - cached_disk[0] < 300:
         metrics.update(cached_disk[1])
         return {"ok": True, "metrics": metrics}
@@ -1007,7 +1019,32 @@ def block_unauthorized():
         return None
     if not require_auth():
         return jsonify({"ok": False, "error": "unauthorized"}), 401
+    if request.path in {"/instance/create", "/instance/action", "/instance/sync", "/host/installer/unzip"}:
+        payload = request.get_json(silent=True) or {}
+        if request.path == "/instance/action" and payload.get("action") in {"stop", "down", "logs", "status"}:
+            return None
+        instance = str(payload.get("instance_id", ""))
+        env = read_env_file(INSTANCE_BASE_PATH / instance / ".env") if safe_instance_id(instance) else {}
+        root = Path(str(env.get("SHARED_GAME_PATH", payload.get("shared_game_path", os.getenv("SHARED_GAME_PATH", "/opt/fs25/game")))))
+        root.mkdir(parents=True, exist_ok=True)
+        lock = (root / ".farmservers-sync.lock").open("a")
+        try:
+            fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            if (root / "Farming Simulator 2025" / ".farmservers-sync-in-progress").exists():
+                lock.close()
+                return jsonify({"ok": False, "error": "Game sync recovery is pending. Check Game status before starting servers."}), 409
+        except BlockingIOError:
+            lock.close()
+            return jsonify({"ok": False, "error": "Game files are being applied. Wait for Game status to finish."}), 409
+        g.game_sync_lock = lock
     return None
+
+
+@app.teardown_request
+def release_game_sync_lock(error=None):
+    lock = getattr(g, "game_sync_lock", None)
+    if lock:
+        lock.close()
 
 
 @app.get("/health")
@@ -1118,7 +1155,7 @@ def instance_action():
 
     image_name = image_name_from_compose(compose_file)
 
-    if action in {"start", "restart", "rebuild", "reinstall_game"}:
+    if action in {"start", "restart", "rebuild", "resync", "reinstall_game"}:
         append_runtime_log(instance_id, "Console: Server marked as starting...")
     elif action in {"stop", "down"}:
         append_runtime_log(instance_id, "Console: Server marked as stopping...")
@@ -1129,12 +1166,14 @@ def instance_action():
     elif action == "reinstall_sftp":
         append_runtime_log(instance_id, "Console: SFTP reinstall requested. Recreating SFTP container...")
 
-    if action in {"start", "restart", "rebuild", "reinstall_game"}:
+    if action in {"start", "restart", "rebuild", "resync", "reinstall_game"}:
         image_result = ensure_runtime_image(image_name, force_rebuild=(action == "rebuild"))
         if not image_result.get("ok"):
             return jsonify(image_result), 500
         if action == "rebuild":
             append_runtime_log(instance_id, "Version mismatch detected. Rebuilding server files.")
+        elif action == "resync":
+            append_runtime_log(instance_id, "Console: Applying updated configuration. Recreating container...")
         elif action == "reinstall_game":
             append_runtime_log(instance_id, "Console: Game server reinstall requested. Recreating game server container...")
 
@@ -1158,6 +1197,7 @@ def instance_action():
         "restart": compose_cmd("-f", str(compose_file), "restart"),
         "pull": compose_cmd("-f", str(compose_file), "pull"),
         "rebuild": compose_cmd("-f", str(compose_file), "up", "-d", "--force-recreate"),
+        "resync": compose_cmd("-f", str(compose_file), "up", "-d", "--force-recreate"),
         "reinstall_game": compose_cmd("-f", str(compose_file), "up", "-d", "--force-recreate", "--no-deps", "fs25"),
         "reinstall_sftp": compose_cmd("-f", str(compose_file), "up", "-d", "--force-recreate", "--no-deps", "sftp"),
         "down": compose_cmd("-f", str(compose_file), "down"),
@@ -1191,10 +1231,12 @@ def instance_action():
     result = run_command(action_map[action], cwd=str(instance_dir))
 
     if result["code"] == 0:
-        if action in {"start", "restart", "rebuild", "reinstall_game"}:
+        if action in {"start", "restart", "rebuild", "resync", "reinstall_game"}:
             write_instance_state(instance_id, True)
             if action == "reinstall_game":
                 append_runtime_log(instance_id, "Console: Game server container recreated.")
+            elif action == "resync":
+                append_runtime_log(instance_id, "Console: Configuration applied. Container recreated.")
         elif action in {"stop", "down"}:
             write_instance_state(instance_id, False)
             append_runtime_log(instance_id, "Console: Server marked as offline...")

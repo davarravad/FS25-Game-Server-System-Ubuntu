@@ -1,0 +1,1 @@
+CREATE TABLE IF NOT EXISTS game_endpoints (host TEXT PRIMARY KEY, node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE, instance TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('web','vnc')), ready INTEGER NOT NULL DEFAULT 0, UNIQUE(node_id,instance,kind));

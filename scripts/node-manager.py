@@ -52,12 +52,12 @@ def save(path, data):
             os.close(descriptor)
 
 
-def request(config, path, body=None, limit=65536):
+def request(config, path, body=None, limit=65536, endpoint='distribution/'):
     headers = {'Authorization': 'Bearer ' + config['token'], 'X-Node-ID': config['node'], 'User-Agent': 'Farmservers-Node/1.0 (+https://farmservers.sargentweb.com)'}
     data = None if body is None else json.dumps(body).encode()
     if data is not None:
         headers['Content-Type'] = 'application/json'
-    req = urllib.request.Request(SITE + '/api/distribution/' + path, data=data, headers=headers)
+    req = urllib.request.Request(SITE + '/api/' + endpoint + path, data=data, headers=headers)
     with urllib.request.build_opener(NoRedirect()).open(req, timeout=120) as response:
         content = response.read(limit + 1)
     if len(content) > limit:
@@ -209,8 +209,84 @@ def apply(config, version, files, job_id):
     replacement.replace(RUNNER)
 
 
+def configure_connection(config, connection):
+    revision = connection.get('revision', '')
+    token = connection.get('gatewayToken', '')
+    tunnel = connection.get('tunnelToken', '')
+    if not re.fullmatch(r'[a-f0-9-]{36}', revision) or not re.fullmatch(r'[a-f0-9]{64}', token) or not isinstance(tunnel, str) or not re.fullmatch(r'[A-Za-z0-9+/=_-]{40,8192}', tunnel):
+        raise ValueError('Invalid connection settings')
+    directory = CONFIG.parent
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    token_file = directory/'tunnel-token'
+    temporary = directory/'tunnel-token.tmp'
+    temporary.write_text(tunnel, encoding='utf-8')
+    temporary.chmod(0o600)
+    temporary.replace(token_file)
+    compose_file = directory/'tunnel-compose.json'
+    save(compose_file, {'services': {'connector': {
+        'image': 'cloudflare/cloudflared:latest', 'restart': 'unless-stopped',
+        'network_mode': 'host', 'user': '0:0', 'read_only': True,
+        'cap_drop': ['ALL'], 'security_opt': ['no-new-privileges:true'],
+        'volumes': [str(token_file)+':/run/tunnel-token:ro'],
+        'command': ['tunnel', '--no-autoupdate', '--metrics', '127.0.0.1:20241', 'run', '--token-file', '/run/tunnel-token'],
+        'logging': {'driver': 'json-file', 'options': {'max-size': '10m', 'max-file': '3'}}
+    }}})
+    call(['docker', 'compose', '-p', 'farmservers-connection', '-f', str(compose_file), 'up', '-d', '--force-recreate'], capture_output=True, text=True)
+    env_file = Path(config['root'])/'.env'
+    previous = env_file.read_text()
+    lines = [line for line in previous.splitlines() if not re.match(r'^\s*(?:export\s+)?CENTRAL_GATEWAY_TOKEN\s*=', line)]
+    lines.append('CENTRAL_GATEWAY_TOKEN='+token)
+    temp = env_file.with_suffix('.connection.tmp')
+    temp.write_text('\n'.join(lines)+'\n')
+    temp.chmod(0o600)
+    temp.replace(env_file)
+    try:
+        compose(config, 'up', '-d', '--no-deps', '--force-recreate', 'web', capture_output=True, text=True)
+        for attempt in range(30):
+            try:
+                req = urllib.request.Request('http://127.0.0.1:'+config['port']+'/?route=api_central_health', headers={'X-Central-Token':token,'X-Central-User':'10000000000000000','X-Central-Role':'operator'})
+                with urllib.request.build_opener(NoRedirect()).open(req, timeout=5) as response:
+                    match = json.loads(response.read(4096)).get('node') == config['node']
+                with urllib.request.urlopen('http://127.0.0.1:20241/ready', timeout=5) as response:
+                    connected = response.status == 200
+                if match and connected:
+                    return
+            except Exception:
+                pass
+            time.sleep(2)
+        raise RuntimeError('Connector or node health check failed; update node software and check tunnel connectivity')
+    except Exception:
+        temp.write_text(previous)
+        temp.chmod(0o600)
+        temp.replace(env_file)
+        compose(config, 'up', '-d', '--no-deps', '--force-recreate', 'web', capture_output=True, text=True)
+        raise
+
+
+def sync_connection(config):
+    journal = STATE/'connection.json'
+    state = json.loads(journal.read_text()) if journal.exists() else {}
+    data = json.loads(request(config, 'node-connection', {**state, 'port': int(config['port'])}, endpoint=''))
+    connection = data.get('connection')
+    if not connection or (state.get('revision') == connection.get('revision') and state.get('status') == 'applied'):
+        return
+    state = {'revision': connection.get('revision'), 'status': 'applying'}
+    save(journal, state)
+    try:
+        configure_connection(config, connection)
+        state['status'] = 'applied'
+    except Exception as error:
+        print('Connection setup failed; check Docker, tunnel connectivity and node software. Error type:', type(error).__name__, flush=True)
+        state['status'] = 'failed'
+    save(journal, state)
+    request(config, 'node-connection', {**state, 'port': int(config['port'])}, endpoint='')
+
+
 def poll(config):
-    job = json.loads(request(config, 'poll', {}))['job']
+    installed = STATE/'installed.json'
+    version = json.loads(installed.read_text()).get('version') if installed.exists() else None
+    report = {'installed_version': version} if isinstance(version, str) and VERSION.fullmatch(version) else {}
+    job = json.loads(request(config, 'poll', report))['job']
     if not job:
         return
     if not re.fullmatch(r'[a-f0-9-]{36}', job['id']):
@@ -235,8 +311,25 @@ def poll(config):
     request(config, 'result', result)
 
 
+def install_game_service(config):
+    source = Path(config['root'])/'scripts/game-sync.py'
+    destination = RUNNER.parent/'game-sync.py'
+    if not source.is_file():
+        return
+    if destination.exists() and destination.read_bytes() == source.read_bytes() and Path('/etc/systemd/system/farmservers-game-sync.timer').exists():
+        return
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    shutil.copy2(source, destination)
+    destination.chmod(0o700)
+    Path('/etc/systemd/system/farmservers-game-sync.service').write_text("[Unit]\nDescription=Farmservers private game library sync\nAfter=network-online.target docker.service\nWants=network-online.target\n[Service]\nType=oneshot\nExecStart=/usr/bin/python3 /usr/local/lib/farmservers/game-sync.py\nUMask=0077\nTimeoutStartSec=86400\n")
+    Path('/etc/systemd/system/farmservers-game-sync.timer').write_text("[Unit]\nDescription=Detect game versions and resume approved transfers\n[Timer]\nOnBootSec=90\nOnUnitInactiveSec=60\nRandomizedDelaySec=15\n[Install]\nWantedBy=timers.target\n")
+    call(['systemctl', 'daemon-reload'])
+    call(['systemctl', 'enable', '--now', 'farmservers-game-sync.timer'])
+
+
 def install_service(config):
     save(CONFIG, config)
+    install_game_service(config)
     RUNNER.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     shutil.copy2(Path(config['root'])/'scripts/node-manager.py', RUNNER)
     RUNNER.chmod(0o700)
@@ -266,7 +359,7 @@ WantedBy=timers.target
 def setup(adopt):
     if CONFIG.exists():
         raise RuntimeError('Already configured; edit /etc/farmservers/updater.json to rotate credentials')
-    node = input('Node ID from Access & nodes: ').strip()
+    node = input('Node ID from Server Nodes: ').strip()
     token = getpass.getpass('Node token (hidden): ').strip()
     if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,62}', node) or not re.fullmatch(r'[a-f0-9]{64}', token):
         raise ValueError('Invalid node credentials')
@@ -304,8 +397,10 @@ def setup(adopt):
     config['root'] = str(root)
     # Verify credentials and control services before enabling remote updates.
     healthy(config)
+    if not adopt:
+        save(STATE/'installed.json', {'version': version})
     install_service(config)
-    print('Remote updates enabled. Complete Tunnel and Access setup using the site guide.')
+    print('Remote updates enabled. Enable Cloudflare automation on the site to connect this node.')
 
 
 def main():
@@ -322,7 +417,13 @@ def main():
     with (STATE/'lock').open('w') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if args.poll:
-            poll(json.loads(CONFIG.read_text()))
+            config = json.loads(CONFIG.read_text())
+            poll(config)
+            install_game_service(config)
+            try:
+                sync_connection(config)
+            except Exception as error:
+                print('Connection sync deferred. Error type:', type(error).__name__, flush=True)
         else:
             setup(args.adopt)
 

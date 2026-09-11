@@ -640,6 +640,9 @@ function find_instance_with_host(string $instanceId): ?array
             mh.agent_url,
             mh.access_host,
             mh.agent_token,
+            mh.shared_game_path,
+            mh.shared_dlc_path,
+            mh.shared_installer_path,
             mh.is_enabled
         FROM server_instances si
         LEFT JOIN managed_hosts mh ON mh.id = si.host_id

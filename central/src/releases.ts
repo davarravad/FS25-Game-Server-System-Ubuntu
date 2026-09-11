@@ -4,6 +4,7 @@ export const validVersion = (v: unknown): v is string => typeof v === 'string' &
 export type ReleaseEnv = Env & { RELEASE_PUBLIC_KEY: string };
 const json = (value: unknown, status = 200) => Response.json(value,{status,headers:{'Cache-Control':'no-store'}});
 const time = () => Math.floor(Date.now()/1000);
+export const compareVersions=(a:string,b:string)=>{const x=a.slice(1).split('.').map(Number),y=b.slice(1).split('.').map(Number);return x[0]-y[0]||x[1]-y[1]||x[2]-y[2];};
 const bytes = (s: string) => Uint8Array.from(atob(s),c=>c.charCodeAt(0));
 export async function verifyManifest(manifest: string, signature: string, key: string) {
   const parsed = JSON.parse(manifest);
@@ -52,7 +53,30 @@ export async function distribution(request: Request, env: ReleaseEnv, admin: boo
     ]);
     return json({ok:true,version:body.version});
   }
-  if (admin && path === '/api/distribution/updates' && request.method === 'GET') return json((await env.DB.prepare('SELECT * FROM node_updates ORDER BY created DESC LIMIT 100').all()).results);
+  if (admin && path === '/api/distribution/updates' && request.method === 'GET') {
+    let cursor:{created:number;id:string}|null=null;
+    try{if(url.searchParams.has('cursor')){cursor=JSON.parse(url.searchParams.get('cursor')!);if(!cursor||!Number.isSafeInteger(cursor.created)||cursor.created<0||typeof cursor.id!=='string'||cursor.id.length>128)throw new Error();}}
+    catch{return json({error:'Invalid update history cursor'},422);}
+    const rows=(await env.DB.prepare('SELECT u.*,n.name AS node_name FROM node_updates u LEFT JOIN nodes n ON n.id=u.node_id '+(cursor?'WHERE u.created<? OR (u.created=? AND u.id<?) ':'')+'ORDER BY u.created DESC,u.id DESC LIMIT 26').bind(...(cursor?[cursor.created,cursor.created,cursor.id]:[])).all<{id:string;created:number}>()).results;
+    const jobs=rows.slice(0,25),last=jobs.at(-1);
+    return json({jobs,nextCursor:rows.length>25&&last?JSON.stringify({created:last.created,id:last.id}):null});
+  }
+  if (admin && path === '/api/distribution/update-all' && request.method === 'POST') {
+    const body=await readJson(request,4096);
+    const releases=(await env.DB.prepare('SELECT version FROM releases WHERE enabled=1').all<{version:string}>()).results.sort((a,b)=>compareVersions(b.version,a.version));
+    const latest=releases[0]?.version;
+    if(!latest)return json({error:'No published release is available'},409);
+    if(body.version!==latest)return json({error:'The latest release changed. Refresh and try again.'},409);
+    const fleet=(await env.DB.prepare("SELECT n.id,n.installed_version,COALESCE(n.installed_version,(SELECT version FROM node_updates WHERE node_id=n.id AND status='succeeded' ORDER BY updated DESC,id DESC LIMIT 1)) AS current_version FROM nodes n WHERE enabled=1 AND NOT EXISTS(SELECT 1 FROM node_updates WHERE node_id=n.id AND status IN ('queued','running'))").all<{id:string;installed_version:string|null;current_version:string|null}>()).results;
+    const candidates=fleet.filter(n=>!n.current_version||!validVersion(n.current_version)||compareVersions(n.current_version,latest)<0);
+    let queued=0;
+    // Recheck access, release availability, installed version and active jobs at insertion time.
+    for(let start=0;start<candidates.length;start+=50){
+      const results=await env.DB.batch(candidates.slice(start,start+50).map(n=>env.DB.prepare("INSERT OR IGNORE INTO node_updates SELECT ?,n.id,r.version,'queued',?,? FROM nodes n,releases r WHERE n.id=? AND n.enabled=1 AND n.installed_version IS ? AND r.version=? AND r.enabled=1 AND NOT EXISTS(SELECT 1 FROM node_updates WHERE node_id=n.id AND status IN ('queued','running'))").bind(crypto.randomUUID(),time(),time(),n.id,n.installed_version,latest)));
+      queued+=results.reduce((sum,r)=>sum+r.meta.changes,0);
+    }
+    return json({ok:true,version:latest,queued});
+  }
   if (admin && path === '/api/distribution/updates' && request.method === 'POST') {
     const body=await readJson(request,4096);
     if (!validId(body.node) || !validVersion(body.version)) return json({error:'Invalid node or release'},422);
@@ -66,13 +90,19 @@ export async function distribution(request: Request, env: ReleaseEnv, admin: boo
     return json({ok:!!result.meta.changes});
   }
   if (!admin && path === '/api/distribution/poll' && request.method === 'POST') {
+    const body=await readJson(request,4096);
+    if (body.installed_version !== undefined) {
+      if (!validVersion(body.installed_version)) return json({error:'Invalid installed version'},422);
+      await env.DB.prepare('UPDATE nodes SET installed_version=? WHERE id=?').bind(body.installed_version,node).run();
+    }
     await env.DB.prepare("UPDATE node_updates SET status='running',updated=? WHERE node_id=? AND status='queued'").bind(time(),node).run();
     return json({job:await env.DB.prepare("SELECT id,version FROM node_updates WHERE node_id=? AND status='running'").bind(node).first()});
   }
   if (!admin && path === '/api/distribution/result' && request.method === 'POST') {
     const body=await readJson(request,4096);
     if (!['succeeded','failed'].includes(String(body.status))) return json({error:'Invalid status'},422);
-    await env.DB.prepare("UPDATE node_updates SET status=?,updated=? WHERE id=? AND node_id=? AND status='running'").bind(body.status,time(),String(body.id),node).run();
+    const completed=await env.DB.prepare("UPDATE node_updates SET status=?,updated=? WHERE id=? AND node_id=? AND status='running' RETURNING version").bind(body.status,time(),String(body.id),node).first<{version:string}>();
+    if (body.status==='succeeded' && completed) await env.DB.prepare('UPDATE nodes SET installed_version=? WHERE id=?').bind(completed.version,node).run();
     return json({ok:true});
   }
   return json({error:'Not found'},404);
