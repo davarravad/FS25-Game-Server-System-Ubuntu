@@ -267,6 +267,9 @@ def build_instance_values(instance_id: str, payload: dict, existing_env: dict | 
 
     return {
         "INSTANCE_ID": instance_id,
+        # Applied to VNC, noVNC, web admin and TLS only. The per-server SFTP port stays
+        # published like the game port so third-party SFTP clients can reach it directly;
+        # see compose.instance.yml.tpl.
         "ADMIN_BIND": "127.0.0.1:" if os.getenv("CENTRAL_MODE", "0") == "1" else "",
         "MANAGEMENT_SERVICE_NETWORK": "    networks: [default, management]" if os.getenv("CENTRAL_MODE", "0") == "1" else "",
         "MANAGEMENT_NETWORK": "networks:\n  management:\n    external: true\n    name: fsg-management" if os.getenv("CENTRAL_MODE", "0") == "1" else "",

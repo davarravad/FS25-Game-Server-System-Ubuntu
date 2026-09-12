@@ -19,8 +19,10 @@ does not expose the node's gateway credentials or forward its session cookies.
 | Shared game, DLC and installer browsing/uploads | Node → Shared files |
 | Installer ZIP extraction | Node → Shared files → installer → Extract installer |
 | Create server with generated credentials, suggested ports and all existing creation options | Node → Create game server; also reachable from Game Servers |
-| Server name, image, ports, SFTP/web credentials, player limit, region and map editing | Server → Settings |
+| Server name (the label shown on the site), image, ports and SFTP/web credential editing | Server → Settings |
+| In-game name, join/admin passwords, player limit, region, map and game tuning | Seeded at creation only; afterwards Server → Overview → Game admin. Settings never overwrites them |
 | VNC credential reveal | Server → Settings → Connection credentials |
+| Per-server SFTP host address, port, username and password with copy buttons | Server → Overview → SFTP access |
 | Start, stop and restart | Server → Overview |
 | Game process restart, game/SFTP container reinstall | Server → Maintenance |
 | Delete instance and its files | Server → Maintenance, with exact instance-ID confirmation |

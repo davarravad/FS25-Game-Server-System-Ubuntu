@@ -39,7 +39,7 @@ tests/                Node-side Python and PHP tests
 
 Each game server is an isolated Compose project under `/opt/fsg-panel/instances/<instance-id>/` with `compose.yml`, `.env` and `data/{config,mods,logs,saves}`. Shared game, DLC and installer folders (`/opt/fs25/{game,dlc,installer}` by default) are mounted into every instance. Instances use `restart: unless-stopped`, and the agent remembers which instances should be running and restores them after a reboot. Every container uses `json-file` log rotation (50 MB, 3 files).
 
-With `CENTRAL_MODE=1` in the node `.env`, newly rendered instances bind VNC, noVNC, game web admin and SFTP ports to loopback and join the `fsg-management` network so only the tunnel can reach them. Game ports stay public. Use **Connection & access → Apply updates to all servers** on the site to recreate existing instances after changing this.
+With `CENTRAL_MODE=1` in the node `.env`, newly rendered instances bind VNC, noVNC and game web admin ports to loopback and join the `fsg-management` network so only the tunnel can reach them. Game and per-server SFTP ports stay public so players and third-party SFTP clients can reach them directly. Use **Connection & access → Apply updates to all servers** on the site to recreate existing instances after changing this.
 
 Admin SFTP (`ADMIN_SFTP_PORT`, default 22220) gives full file access to instances, shared folders and backups for large uploads that should not go through the browser. Its connection details are on the node's **Export & access** tab.
 

@@ -12,8 +12,8 @@ function manageApi(node,operation,server,body,params={}){
   return api('manage?'+new URLSearchParams({node:node.id,operation,...(server?{instance_id:server.instance_id}:{}),...params}),body,{signal:AbortSignal.timeout(125000)}).then(data=>{if(data.ok===false)throw new Error(data.error||'The node could not complete this operation');return data;});
 }
 const managementLabels={server_name:'Server name',instance_id:'Instance ID',image_name:'Runtime image',server_players:'Player limit',server_port:'Game port',web_port:'Game admin port',tls_port:'Game TLS port',vnc_port:'VNC port',novnc_port:'Browser VNC port',sftp_port:'SFTP port',server_password:'Join password',server_admin:'Game admin password',web_username:'Web username',web_password:'Web password',sftp_username:'SFTP username',sftp_password:'SFTP password',vnc_password:'VNC password',server_region:'Region',server_map:'Map',server_difficulty:'Difficulty',server_pause:'Pause mode',server_save_interval:'Save interval (seconds)',server_stats_interval:'Stats interval (seconds)',puid:'User ID',pgid:'Group ID',server_crossplay:'Crossplay',autostart_server:'Startup mode',name:'Host name',agent_url:'Agent API URL',access_host:'Game access hostname / IP',agent_token:'Agent token',shared_game_path:'Shared game path',shared_dlc_path:'Shared DLC path',shared_installer_path:'Shared installer path'};
-function managementField(form,key,value,creating=false){
-  const secret=/password|server_admin|agent_token/.test(key),label=managementLabels[key]||key;
+function managementField(form,key,value,creating=false,labelText){
+  const secret=/password|server_admin|agent_token/.test(key),label=labelText||managementLabels[key]||key;
   if(key==='autostart_server'||key==='server_crossplay'){
     const box=element('label',label),input=element('select');input.name=key;
     for(const [v,text] of key==='autostart_server'?[['true','Start game automatically'],['web_only','Game admin only'],['false','Manual start']]:[['true','Enabled'],['false','Disabled']]){const o=element('option',text);o.value=v;input.append(o);}input.value=String(value);box.append(input);form.append(box);return;
@@ -49,14 +49,15 @@ function managementForm(parent,node,server,operation,values,creating=false){
       for(const key of keys){if(!(key in values))continue;managementField(grid,key,values[key],creating);assigned.add(key);}
       parent.append(box);
     };
-    group('Server basics','Choose a name and capacity. The instance ID identifies this server on the host.',['server_name','instance_id','server_players','autostart_server']);
-    group('Game options',creating?'Review the suggested map and game settings.':'Update the map, region and available game options.',['server_map','server_region','server_crossplay']);
+    group('Server basics',creating?'Choose a name and capacity. The instance ID identifies this server on the host.':'The server name is the label shown on this site; the name players see is set in the game admin panel. The instance ID identifies this server on the host.',['server_name','instance_id','server_players','autostart_server']);
+    if(!creating){const owned=element('fieldset');owned.append(element('legend','Game settings'),element('p','The in-game server name, join and admin passwords, savegame, map, player slots, language, difficulty, save and stats intervals and crossplay are managed in the game admin panel (Overview → Game admin). Saving here never changes them, so nothing configured on the game server is overwritten.','muted'));form.append(owned);}
+    group('Game options','Review the suggested map and game settings. They seed the game’s first start only; afterwards change them in the game admin panel.',['server_map','server_region','server_crossplay']);
     const credentials=element('details',undefined,'create-options');credentials.append(element('summary','Passwords & access'),element('p',creating?'Suggested credentials are filled in. Expand to review or change them.':'Expand to review or change web panel and file-transfer access.','muted'));
-    group('Player & game admin access','The join password controls player access; the game admin password grants in-game administration.',['server_password','server_admin'],credentials);
+    group('Player & game admin access','The join password controls player access; the game admin password grants in-game administration. Both seed the game’s first start only; change them later in the game admin panel.',['server_password','server_admin'],credentials);
     group('Management access','Credentials for the web panel, file transfers and remote desktop.',['web_username','web_password','sftp_username','sftp_password','vnc_password'],credentials);form.append(credentials);
     const advanced=element('details',undefined,'create-options');advanced.append(element('summary','Advanced settings'),element('p',creating?'Keep the host’s suggested values unless your setup requires changes.':'Network ports and container configuration. Change these only when your setup requires it.','muted'));
     group('Network ports','Each server on this host needs its own ports.',['server_port','web_port','tls_port','vnc_port','novnc_port','sftp_port'],advanced);
-    group('Game tuning','Node-provided difficulty and pause codes, plus save and statistics intervals. Keep the defaults unless you need different behavior.',['server_difficulty','server_pause','server_save_interval','server_stats_interval'],advanced);
+    group('Game tuning','Node-provided difficulty and pause codes, plus save and statistics intervals, used for the game’s first start only. Keep the defaults unless you need different behavior.',['server_difficulty','server_pause','server_save_interval','server_stats_interval'],advanced);
     group('Runtime','Container image and filesystem ownership used by the server.',['image_name','puid','pgid'],advanced);
     const remaining=Object.keys(values).filter(key=>!assigned.has(key));if(remaining.length)group('Additional options','Other defaults supplied by this host.',remaining,advanced);form.append(advanced);
     for(const input of form.querySelectorAll('input[type="password"]')){const label=input.parentElement,reveal=label.querySelector('button'),control=element('span',undefined,'host-secret-control');control.append(input,reveal);label.append(control);}
@@ -142,7 +143,7 @@ function managementFiles(panel,node,server){
 }
 function managementHelp(panel,server){
   const steps=server?[
-    ['Settings','Edit the name, image, ports, map, region, player limit and SFTP/web credentials. Saved settings sync to the node. Use Game admin for gameplay settings managed by the game itself.'],
+    ['Settings','Edit the name shown on this site, the runtime image, ports and SFTP/web credentials. Saved settings sync to the node. The in-game name, passwords, map, player slots, language, difficulty and intervals are managed only in Game admin and are never overwritten from here.'],
     ['Game installation','Open VNC console, run Setup to install licensed game files, then Setup Server to prepare the instance. Use Start on the overview when ready.'],
     ['Files','Browse and upload profile files, mods, saves and logs. Large files upload in small chunks with progress.'],
     ['Logs & containers','Inspect game logs, optionally Docker logs, and each container’s status, health and exit code.'],

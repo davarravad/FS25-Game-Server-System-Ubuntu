@@ -740,9 +740,11 @@ function sync_instance_config_for_server(array $server): array
         return ['ok' => false, 'error' => 'Missing instance id'];
     }
 
+    // Only container, network and management-access settings are synced. The in-game name,
+    // player limit, region and map seed the game's first start at creation and are owned by
+    // the game admin panel afterwards; the agent keeps their existing env values untouched.
     return agent_post_for_host($server, '/instance/sync', [
         'instance_id' => $instanceId,
-        'server_name' => (string) ($server['server_name'] ?? $instanceId),
         'image_name' => canonical_fs25_image_name((string) ($server['image_name'] ?? '')),
         'server_port' => (int) ($server['server_port'] ?? 10823),
         'web_port' => (int) ($server['web_port'] ?? 18000),
@@ -754,9 +756,6 @@ function sync_instance_config_for_server(array $server): array
         'sftp_password' => (string) ($server['sftp_password'] ?? 'changeme'),
         'web_username' => (string) ($server['web_username'] ?? 'admin'),
         'web_password' => (string) ($server['web_password'] ?? 'changeme'),
-        'server_players' => (int) ($server['server_players'] ?? 16),
-        'server_region' => (string) ($server['server_region'] ?? 'en'),
-        'server_map' => (string) ($server['server_map'] ?? 'MapUS'),
         'shared_game_path' => (string) ($server['shared_game_path'] ?? '/opt/fs25/game'),
         'shared_dlc_path' => (string) ($server['shared_dlc_path'] ?? '/opt/fs25/dlc'),
         'shared_installer_path' => (string) ($server['shared_installer_path'] ?? '/opt/fs25/installer'),

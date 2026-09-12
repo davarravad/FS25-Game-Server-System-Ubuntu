@@ -12,6 +12,9 @@ function normalize_relative_subpath(string $path): ?string {return str_contains(
 function directory_listing_for_context($context,$subpath): array {return ['ok'=>true,'files'=>[]];}
 function canonical_fs25_image_name(string $name): string {return $name;}
 function is_safe_sftp_credential(string $value): bool {return (bool) preg_match('/^[a-zA-Z0-9._-]+$/D',$value);}
+function instance_secrets_for_server(array $server): array {return ['ok'=>true,'secrets'=>['vnc_password'=>'vnc']];}
+function resolved_access_endpoint(array $server): ?array {return ['scheme'=>'http','host'=>'node.example.test'];}
+function instance_access_url(array $server, string $kind): ?string {return $kind==='sftp'?'sftp://node.example.test:2222':null;}
 require __DIR__.'/../app/web/src/management.php';
 function check(string $operation,string $method,string $role,array $query=[],array $post=[],int $status=200,?string $route=null): void {
     $GLOBALS['user']=$role==='none'?null:['role'=>$role];$_GET=array_merge(['operation'=>$operation],$query);$_POST=$post;$_SERVER=['REQUEST_METHOD'=>$method,'CONTENT_LENGTH'=>'0'];
@@ -30,6 +33,10 @@ check('files','GET','admin',['target'=>'game','subpath'=>'../secret'],[],422);
 check('files','GET','admin',['target'=>'game'],[],200);
 check('delete','POST','admin',['instance_id'=>'existing'],['delete_code'=>'existing'],200,'server_delete');
 check('upload','POST','operator',[],[],403);
+$GLOBALS['user']=['role'=>'admin'];$_GET=['operation'=>'server','instance_id'=>'existing'];$_POST=[];$_SERVER=['REQUEST_METHOD'=>'GET','CONTENT_LENGTH'=>'0'];
+try{central_management();throw new Exception('Server operation did not respond');}
+catch(Reply $r){if($r->status!==200||($r->data['access']['host']??null)!=='node.example.test'||($r->data['access']['sftp_url']??null)!=='sftp://node.example.test:2222'||($r->data['secrets']['secrets']['vnc_password']??null)!=='vnc')throw new Exception('Server operation is missing SFTP access details: '.json_encode($r->data));}
+echo "Server operation SFTP access details test passed.\n";
 echo "Management permissions, scope and dispatch tests passed.\n";
 
 class FakeStatement {
@@ -56,7 +63,10 @@ if(count($GLOBALS['writes'])!==1||$GLOBALS['sent']['server_crossplay']!==true||$
 $GLOBALS['writes']=[];$GLOBALS['sync_ok']=false;$_POST=['server_name'=>'Updated','web_password'=>''];
 try{management_save(local_host_record(),array_merge($defaults,['host_id'=>1]));}catch(Reply $reply){if($reply->status!==502)throw new Exception('Sync failure not returned');}
 if($GLOBALS['writes']!==[]||$GLOBALS['sent']['web_password']!=='password')throw new Exception('Failed sync changed saved settings or erased password');
-$GLOBALS['sync_ok']=true;
+$GLOBALS['sync_ok']=true;$_POST=['server_name'=>'Updated','web_password'=>'','server_players'=>'4','server_map'=>'Changed','server_region'=>'de'];
 try{management_save(local_host_record(),array_merge($defaults,['host_id'=>1]));}catch(Reply $reply){if($reply->status!==200)throw new Exception('Update failed');}
 if(count($GLOBALS['writes'])!==1)throw new Exception('Successful update did not persist');
-echo "Management create/update validation, credential preservation and sync failure tests passed.\n";
+// Player limit, region and map belong to the game admin panel after creation: never stored or synced for an existing server.
+foreach(['Changed','de',4] as $value)if(in_array($value,$GLOBALS['writes'][0],true))throw new Exception('Game-owned setting was stored');
+if(!in_array('Updated',$GLOBALS['writes'][0],true)||$GLOBALS['sent']['server_map']!=='MapUS'||$GLOBALS['sent']['server_players']!==16)throw new Exception('Site label not saved or game-owned setting synced');
+echo "Management create/update validation, credential preservation, game-owned setting protection and sync failure tests passed.\n";

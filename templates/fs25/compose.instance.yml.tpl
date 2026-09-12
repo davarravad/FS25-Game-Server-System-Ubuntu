@@ -37,7 +37,7 @@ services:
       - ./users.conf:/etc/sftp/users.conf:ro
       - ./data/config:/home/{{SFTP_USERNAME}}/FarmingSimulator2025
     ports:
-      - "{{ADMIN_BIND}}{{SFTP_PORT}}:22/tcp"
+      - "{{SFTP_PORT}}:22/tcp"
     restart: unless-stopped
     logging:
       driver: json-file

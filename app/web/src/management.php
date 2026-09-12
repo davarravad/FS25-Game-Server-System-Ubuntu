@@ -8,14 +8,28 @@ function management_require(bool $condition, string $message, int $status = 422)
 
 function management_fields(): array
 {
-    return ['server_name','image_name','server_port','web_port','tls_port','vnc_port','novnc_port','sftp_port','sftp_username','sftp_password','web_username','web_password','server_players','server_region','server_map'];
+    return array_merge(management_editable_fields(), management_game_fields());
+}
+
+// Settings an existing server keeps editing from this site. They configure the container,
+// the site label and management access, never the game itself.
+function management_editable_fields(): array
+{
+    return ['server_name','image_name','server_port','web_port','tls_port','vnc_port','novnc_port','sftp_port','sftp_username','sftp_password','web_username','web_password'];
+}
+
+// Settings that only seed the game's first start. The game admin panel owns them afterwards,
+// so saving an existing server never accepts, stores or syncs new values for them.
+function management_game_fields(): array
+{
+    return ['server_players','server_region','server_map'];
 }
 
 function management_save(array $host, ?array $server): void
 {
     $creating = $server === null;
     $defaults = $server ?? suggested_create_defaults();
-    $fields = management_fields();
+    $fields = $creating ? management_fields() : management_editable_fields();
     $payload = [];
     foreach ($fields as $key) {
         $value = $_POST[$key] ?? $defaults[$key] ?? '';
@@ -25,10 +39,11 @@ function management_save(array $host, ?array $server): void
     $instance = $creating ? (string) ($_POST['instance_id'] ?? $defaults['instance_id']) : (string) $server['instance_id'];
     management_require((bool) preg_match('/^[a-zA-Z0-9_-]{1,64}$/D', $instance), 'Invalid instance ID');
     foreach (['server_name','image_name','sftp_username','sftp_password','web_username','web_password','server_region','server_map'] as $key) {
+        if (!array_key_exists($key, $payload)) continue;
         management_require($payload[$key] !== '' && strlen($payload[$key]) <= 150 && !preg_match('/[\x00-\x1f]/', $payload[$key]), 'Invalid ' . $key);
     }
     management_require(is_safe_sftp_credential($payload['sftp_username']) && is_safe_sftp_credential($payload['sftp_password']), 'SFTP credentials may only contain letters, numbers, dot, dash and underscore');
-    management_require($payload['server_players'] >= 1 && $payload['server_players'] <= 16, 'Players must be between 1 and 16');
+    if ($creating) management_require($payload['server_players'] >= 1 && $payload['server_players'] <= 16, 'Players must be between 1 and 16');
     foreach ($payload as $key => $value) if (str_ends_with($key, '_port')) management_require($value >= 1 && $value <= 65535, 'Ports must be between 1 and 65535');
     $payload['image_name'] = canonical_fs25_image_name($payload['image_name']);
     // Serialize configuration changes on a host so two requests cannot allocate the same ports.
@@ -62,6 +77,7 @@ function management_save(array $host, ?array $server): void
             db()->prepare('INSERT INTO server_instances (' . implode(',', $columns) . ') VALUES (' . implode(',', array_fill(0, count($columns), '?')) . ')')->execute($values);
         } else {
             // Sync the proposed configuration before persisting it. A failed sync leaves saved settings intact.
+            // Game-owned settings (players, region, map) are not part of $payload, so the game admin panel's values survive.
             $result = sync_instance_config_for_server(array_merge($server, $payload));
             management_require((bool) ($result['ok'] ?? false), 'Runtime sync failed; saved settings were kept: ' . ($result['error'] ?? 'Agent did not complete'), 502);
             db()->prepare('UPDATE server_instances SET ' . implode(',', array_map(fn($key) => "$key=?", $fields)) . ' WHERE instance_id=?')->execute(array_merge(array_map(fn($key) => $payload[$key], $fields), [$instance]));
@@ -98,7 +114,7 @@ function central_management(): string
         }
         json_response($result);
     }
-    if ($operation === 'server') json_response(['ok'=>true,'server'=>array_intersect_key($server, array_flip(array_merge(['instance_id'], management_fields()))),'secrets'=>instance_secrets_for_server($server)]);
+    if ($operation === 'server') json_response(['ok'=>true,'server'=>array_intersect_key($server, array_flip(array_merge(['instance_id'], management_editable_fields()))),'secrets'=>instance_secrets_for_server($server),'access'=>['host'=>(string) (resolved_access_endpoint($server)['host'] ?? ''),'sftp_url'=>instance_access_url($server, 'sftp')]]);
     if ($operation === 'create' || $operation === 'save') management_save($host, $operation === 'save' ? $server : null);
     if ($operation === 'host-save') {
         $fields = ['name','agent_url','access_host','shared_game_path','shared_dlc_path','shared_installer_path'];

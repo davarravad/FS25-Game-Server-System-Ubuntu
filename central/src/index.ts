@@ -1,4 +1,4 @@
-import {allowed, cookie, cookieValue, digest, randomToken, readJson, roles, safeMetrics, validId, validScope, type Role} from './security';
+import {allowed, cookie, cookieValue, digest, hmacHex, publicIPv4, randomToken, readJson, roles, safeMetrics, validId, validScope, type Role} from './security';
 import {gameUrl, rewriteGameHtml} from './game-proxy';
 import {distribution} from './releases';
 import {loginPage} from './login';
@@ -102,8 +102,13 @@ async function heartbeat(request: Request, env: Bindings, id: string) {
     for(const key of ['player_count','player_capacity','server_players','game_sampled_at'])if(typeof s[key]==='number'&&Number.isInteger(s[key])&&(s[key] as number)>=0&&(s[key] as number)<=(key==='game_sampled_at'?now()+60:1000))details[key]=s[key] as number;
     return {instance_id:s.instance_id,server_name:s.server_name.slice(0,150),status:typeof s.status === 'string' ? s.status.slice(0,40) : 'unknown',...details};
   });
+  // The heartbeat arrives directly from the node to this Worker, so its connecting IP is the
+  // node's real public address. Remember it as a fallback for links (e.g. per-server SFTP) when
+  // the admin hasn't set, or has misconfigured, that node's Access Host/IP.
+  const detectedIp = request.headers.get('CF-Connecting-IP');
   await env.DB.batch([
     env.DB.prepare('UPDATE nodes SET last_seen=?,snapshot=? WHERE id=?').bind(now(),JSON.stringify({servers,samples}),id),
+    ...(publicIPv4(detectedIp) ? [env.DB.prepare('UPDATE nodes SET detected_public_ip=? WHERE id=?').bind(detectedIp,id)] : []),
     ...(env.NODE_TOKEN_KEY ? [env.DB.prepare('UPDATE nodes SET token_encrypted=? WHERE id=? AND token_hash=?').bind(await sealToken(env.NODE_TOKEN_KEY,id,bearer.slice(7)),id,await digest(bearer.slice(7)))] : []),
     ...samples.map(s => env.DB.prepare('INSERT OR IGNORE INTO samples(node_id,scope,ts,data) VALUES(?,?,?,?)').bind(id,s.scope,s.timestamp,JSON.stringify(s.data)))
   ]);
@@ -145,7 +150,18 @@ async function viewer(request: Request, env: Bindings, url: URL): Promise<Respon
     need(user && allowed(user.role,'admin'),403,'Viewer access revoked');
     const sid = randomToken();
     await env.DB.prepare('INSERT INTO views(hash,session_hash,node_id,host,kind,instance,expires) VALUES(?,?,?,?,?,?,?)').bind(await digest(sid),view.session_hash,view.node_id,view.host,view.kind,view.instance,Math.min(now()+900,user.expires)).run();
-    return redirect(view.kind === 'vnc' ? '/vnc.html?autoconnect=1&resize=remote&encrypt=1&path=websockify' : view.kind === 'panel' && view.instance ? '/?route=server&instance_id='+encodeURIComponent(view.instance) : '/',cookie('__Host-view',sid,900));
+    let target = view.kind === 'panel' && view.instance ? '/?route=server&instance_id='+encodeURIComponent(view.instance) : '/';
+    if (view.kind === 'vnc') {
+      // A Worker cannot relay a WebSocket into a Cloudflare Tunnel: the edge never types the
+      // subrequest as an upgrade, so the node's 101 is held until the idle timeout. noVNC therefore
+      // connects straight to the node gateway hostname, where Access is bypassed for this one path.
+      // Browsers cannot send the gateway headers on a WebSocket, so the node verifies this signed,
+      // instance-bound ticket instead. It expires with the viewer session.
+      const g = await gateway(env,view.node_id), expires = Math.min(now()+900,user.expires), nonce = randomToken().slice(0,32);
+      const ticket = expires+'.'+nonce+'.'+await hmacHex(g.token,'console|'+view.instance+'|'+expires+'|'+nonce);
+      target = '/vnc.html?'+new URLSearchParams({autoconnect:'1',resize:'remote',encrypt:'1',host:new URL(g.origin).hostname,port:'443',path:'central/view/'+view.instance+'/vnc/websockify/'+ticket});
+    }
+    return redirect(target,cookie('__Host-view',sid,900));
   }
   const view = await env.DB.prepare('SELECT v.* FROM views v JOIN nodes n ON n.id=v.node_id WHERE v.hash=? AND v.host=? AND v.expires>? AND n.enabled=1').bind(await digest(cookieValue(request,'__Host-view')),url.hostname,now()).first<View>();
   need(view,401,'Viewer session expired; open it again from the dashboard');
@@ -325,7 +341,10 @@ async function api(request: Request, env: Bindings, url: URL) {
   if(url.pathname==='/api/manage')return management(request,user,async node=>{
     need(await env.DB.prepare('SELECT id FROM nodes WHERE id=? AND enabled=1').bind(node).first(),404,'Node unavailable');
     return gateway(env,node);
-  },(action,target)=>audit(env,user.user_id,action,target));
+  },(action,target)=>audit(env,user.user_id,action,target),async node=>{
+    const row=await env.DB.prepare('SELECT detected_public_ip FROM nodes WHERE id=?').bind(node).first<{detected_public_ip:string|null}>();
+    return row?.detected_public_ip ?? null;
+  });
   need(allowed(user.role,'admin'),403,'Administrator access required');
   if(url.pathname==='/api/nodes/notes'&&['GET','POST'].includes(request.method)){
     const body=request.method==='POST'?await readJson(request,65536):null;

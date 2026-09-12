@@ -44,7 +44,7 @@ function installGuide(){
   const ubuntu=section('Step 1: Prepare Ubuntu');
   para(ubuntu,'Sign in over SSH and bring the host up to date. The timezone matches the existing nodes and is used for save timestamps and logs.');
   code(ubuntu,"sudo apt-get update && sudo apt-get -y full-upgrade && sudo apt-get install -y ca-certificates curl python3 openssl ufw && sudo timedatectl set-timezone America/New_York");
-  para(ubuntu,'Turn on the firewall with SSH allowed. When you create a game server the node agent adds that server’s published ports to UFW itself; because administrative ports are published on loopback only, the game port is the only one that becomes reachable.');
+  para(ubuntu,'Turn on the firewall with SSH allowed. When you create a game server the node agent adds that server’s published ports to UFW itself; because VNC, noVNC and web admin ports are published on loopback only, the game port and that server’s SFTP port are the ones that become reachable.');
   code(ubuntu,"sudo ufw allow OpenSSH && sudo ufw --force enable && sudo ufw status");
   para(ubuntu,'Reboot so Docker installs against the running kernel, then sign back in.');
   code(ubuntu,"sudo reboot");
@@ -139,9 +139,9 @@ function installGuide(){
   para(server,'Open the node and choose Create game server. The node suggests free ports and generates every password; review rather than retype.');
   list(server,[
     ['Server basics:','the name players see, an instance ID (letters, digits, dash, underscore; permanent), player limit up to 16 and the startup mode. Keep Start game automatically unless you are still installing.'],
-    ['Game options:','map, region and crossplay. All of these can be changed in the game admin panel later.'],
+    ['Game options:','map, region and crossplay. These seed the game’s first start only; afterwards change them in the game admin panel. The server’s Settings tab never touches them.'],
     ['Passwords & access:','the join password and in-game admin password; the web panel, SFTP and VNC credentials. Note the VNC and web passwords; you need them in a moment. They are also shown on the server’s Settings tab later.'],
-    ['Advanced settings:','the game port must be reachable from the internet on TCP and UDP. If you have port forwarding, forward the suggested port to this host now. The other ports are administrative and stay on loopback. Leave difficulty, pause, save interval, stats interval and the runtime image at their defaults.']
+    ['Advanced settings:','the game port must be reachable from the internet on TCP and UDP, and the SFTP port is reachable on TCP so third-party SFTP clients can connect to this server directly. If you have port forwarding, forward both suggested ports to this host now. VNC, noVNC and web admin ports are administrative and stay on loopback. Leave difficulty, pause, save interval, stats interval and the runtime image at their defaults.']
   ]);
   para(server,'Create the server. The agent renders its Compose project under /opt/fsg-panel/instances, creates its data folders and opens the game port in UFW. Then open the new server and finish the game setup through its console:');
   list(server,[

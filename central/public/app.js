@@ -153,9 +153,9 @@ function serverCard(node,server){
 
   card.append(head,(me.role==='operator'?element('span',node.name):link(node.name,nodeUrl(node),'text-link')),element('p',server.instance_id,'muted'));
   const game=element('dl',undefined,'server-game-details'),fresh=node.online&&node.enabled&&Number.isFinite(server.game_sampled_at)&&Date.now()/1000-server.game_sampled_at<120;
-  const capacity=server.player_capacity??server.server_players;
+  const capacity=server.player_capacity;
   const players=fresh&&Number.isInteger(server.player_count)?String(server.player_count):'—';
-  for(const [label,value] of [['Game version',server.game_version||'Not reported'],['Players',players+(Number.isInteger(capacity)?' / '+capacity:'')],['Map',server.game_map||server.server_map||'Not reported']]){
+  for(const [label,value] of [['Game version',server.game_version||'Not reported'],['Players',players+(Number.isInteger(capacity)?' / '+capacity:'')],['Map',server.game_map||'Not reported']]){
     const item=element('div');item.append(element('dt',label),element('dd',value));game.append(item);
   }
   card.append(game,element('p',fresh?'Game feed checked '+stamp(server.game_sampled_at):'Live player count unavailable','muted'));
@@ -294,8 +294,24 @@ function nodeEditor(node){
 
 }
 
-function credentialField(container,key,value){
-  managementField(container,key,value??'');
+function accessHostName(value){return String(value||'').trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i,'').split(/[\/?#]/)[0].replace(/:\d+$/,'');}
+
+function sftpSection(node,server,loadCredentials){
+  const s=section('SFTP access');
+  s.append(element('p','Connection details for this server’s SFTP service. Copy each value into a third-party SFTP client or automation tool. This port is published directly, so it needs no VPN or SSH tunnel, but the node’s Access Host/IP must be its real public address or hostname for the host address below to be reachable.'));
+  const message=element('p');message.setAttribute('role','status');
+  const fieldsWrap=element('div',undefined,'edit-form');
+  const fields=[['sftp_host','Host address'],['sftp_port','Port'],['sftp_username','Username'],['sftp_password','Password']];
+  const show=data=>{fieldsWrap.replaceChildren();for(const [key,label] of fields)credentialField(fieldsWrap,key,data[key]==null?'':String(data[key]),label);};
+  show({});s.append(fieldsWrap,message);
+  if(!node.online){message.textContent='Node offline. SFTP details load when the node reports in.';return s;}
+  message.textContent='Loading…';
+  loadCredentials().then(data=>{show(data);message.textContent=data.sftp_host?'':'No access hostname or IP is set for this node. Set it under the node’s Host settings.';}).catch(e=>{message.textContent=e.message;});
+  return s;
+}
+
+function credentialField(container,key,value,labelText){
+  managementField(container,key,value??'',false,labelText);
   const label=container.lastElementChild,input=label.querySelector('input');input.readOnly=true;if(!value)input.placeholder='Not set';
   const reveal=label.querySelector('button');if(reveal)reveal.disabled=!value;
   const copy=button('Copy',async()=>{try{await navigator.clipboard.writeText(value||'');copy.textContent='Copied';}catch{copy.textContent='Copy failed';}finally{setTimeout(()=>{copy.textContent='Copy';},1500);}});copy.disabled=!value;
@@ -388,9 +404,10 @@ async function details(r,version){
   if(me.role!=='viewer')s.append(actions,viewerMessage);
 
   if(server&&me.role==='admin'){
-    let credentialsPromise;const loadCredentials=()=>credentialsPromise??=manageApi(node,'server',server).then(d=>({...d.server,vnc_password:d.secrets?.secrets?.vnc_password}));
+    let credentialsPromise;const loadCredentials=()=>credentialsPromise??=manageApi(node,'server',server).then(async d=>{let host=d.access?.host;if(host===undefined){try{host=accessHostName((await manageApi(node,'inventory')).host?.access_host);}catch{host='';}}return {...d.server,vnc_password:d.secrets?.secrets?.vnc_password,sftp_host:host||''};});
     viewerSection('Game admin','Opens this server’s web admin panel in a new tab. It’s reachable at a public address, so anyone with the link signs in using the web username and password below.',node,server,'web','Open game admin panel',loadCredentials,['web_username','web_password'],msg=>button('Copy public game panel URL',async()=>{try{const result=await api('launch?'+new URLSearchParams({node:node.id,kind:'web',instance:server.instance_id}),{});msg.replaceChildren(element('span','Public game panel: '),link(result.url,result.url));try{await navigator.clipboard.writeText(result.url);msg.append(element('span',' · Copied'));}catch{msg.append(element('span',' · Select the link to copy its address'));}}catch(e){msg.textContent=e.message;}}));
     viewerSection('VNC console','Opens a remote desktop session for this server’s console through the central dashboard. When it connects, enter the VNC password below.',node,server,'vnc','Open VNC console',loadCredentials,['vnc_password']);
+    sftpSection(node,server,loadCredentials);
   }
 
   if(!server){const fleet=section('Game servers on this node'),grid=element('div',undefined,'grid');fleet.append(grid);nodeFleet=grid;for(const item of node.snapshot?.servers||[])grid.append(serverCard(node,item));if(!grid.children.length)empty(grid,'No game servers have been reported. Use Create game server to add one.');}

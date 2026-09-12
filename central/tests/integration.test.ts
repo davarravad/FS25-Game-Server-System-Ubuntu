@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
+import {createHmac} from 'node:crypto';
+import {Miniflare,convertV4MiniflareOptions,WebSocketPair,Response as MiniflareResponse} from 'miniflare';
 import {digest} from '../src/security';
 
 test('D1 heartbeat, CSRF, approval and one-use viewer tickets',async()=>{
   const origin='https://farmservers.sargentweb.com';
-  const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:'test',modules:true,scriptPath:'dist/index.js',compatibilityDate:'2026-09-09',compatibilityFlags:['nodejs_compat'],d1Databases:['DB'],outboundService: async request => { const u=new URL(request.url); assert.equal(u.hostname,'origin-node-1.sargentweb.com'); assert.equal(request.headers.get('X-Central-Token'),'d'.repeat(64)); assert.equal(request.headers.get('CF-Access-Client-Secret'),'db-secret'); if(u.searchParams.get('route')==='api_node_server_action'){assert.ok(['start','stop','restart'].includes((await request.json() as {action:string}).action));return Response.json({ok:true});} if(u.searchParams.get('route')==='api_node_apply_updates'){return Response.json({ok:true,results:[{ok:true,instance_id:'game-1'}]});} assert.equal(request.headers.get('X-Forwarded-Proto'),'https'); if(u.pathname.includes('/web/')){assert.equal(request.headers.get('X-Central-Public'),'web');assert.equal(request.headers.get('X-Central-User'),null);} assert.match(request.headers.get('X-Forwarded-Host') || '',/^(game|console)-/); return new Response('<a href="http://172.20.0.3:18000/feed/map.jpg?code=test&amp;size=512">http://172.20.0.3:18000/feed/map.jpg?code=test&amp;size=512</a>',{headers:{'Content-Type':'text/html','X-Farmservers-Upstream-Origin':'http://172.21.0.3:18000'}}); },bindings:{NODE_TOKEN_KEY:'c'.repeat(64),APP_ORIGIN:origin,BOOTSTRAP_ADMIN_ID:'513527870258151439',NODE_GATEWAYS:JSON.stringify({'node-1':{origin:'https://origin-node-1.sargentweb.com',token:'b'.repeat(64),accessClientId:'test-id',accessClientSecret:'test-secret'}})}}]}));
+  const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:'test',modules:true,scriptPath:'dist/index.js',compatibilityDate:'2026-09-09',compatibilityFlags:['nodejs_compat'],d1Databases:['DB'],outboundService: async request => { const u=new URL(request.url); assert.equal(u.hostname,'origin-node-1.sargentweb.com'); assert.equal(request.headers.get('X-Central-Token'),'d'.repeat(64)); assert.equal(request.headers.get('CF-Access-Client-Secret'),'db-secret'); if(request.headers.get('Upgrade')==='websocket'){ assert.equal(u.pathname,'/central/view/game-1/vnc/websockify'); assert.equal(request.headers.get('Cookie'),null,'Console sockets carry no browser cookies'); assert.match(request.headers.get('X-Forwarded-Host')||'',/^console-/); const pair=new WebSocketPair(); pair[1].accept(); pair[1].addEventListener('message',e=>pair[1].send('echo:'+String(e.data))); return new MiniflareResponse(null,{status:101,webSocket:pair[0]}); } if(u.searchParams.get('route')==='api_node_server_action'){assert.ok(['start','stop','restart'].includes((await request.json() as {action:string}).action));return Response.json({ok:true});} if(u.searchParams.get('route')==='api_node_apply_updates'){return Response.json({ok:true,results:[{ok:true,instance_id:'game-1'}]});} assert.equal(request.headers.get('X-Forwarded-Proto'),'https'); if(u.pathname.includes('/web/')){assert.equal(request.headers.get('X-Central-Public'),'web');assert.equal(request.headers.get('X-Central-User'),null);} assert.match(request.headers.get('X-Forwarded-Host') || '',/^(game|console)-/); return new Response('<a href="http://172.20.0.3:18000/feed/map.jpg?code=test&amp;size=512">http://172.20.0.3:18000/feed/map.jpg?code=test&amp;size=512</a>',{headers:{'Content-Type':'text/html','X-Farmservers-Upstream-Origin':'http://172.21.0.3:18000'}}); },bindings:{NODE_TOKEN_KEY:'c'.repeat(64),APP_ORIGIN:origin,BOOTSTRAP_ADMIN_ID:'513527870258151439',NODE_GATEWAYS:JSON.stringify({'node-1':{origin:'https://origin-node-1.sargentweb.com',token:'b'.repeat(64),accessClientId:'test-id',accessClientSecret:'test-secret'}})}}]}));
   try{
     const db=await mf.getD1Database('DB');
     await db.exec(await readFile('migrations/0001_control_plane.sql','utf8'));
@@ -149,8 +150,20 @@ test('D1 heartbeat, CSRF, approval and one-use viewer tickets',async()=>{
     const consoleOrigin=new URL(consoleLaunch.url).origin;
     assert.equal((await mf.dispatchFetch(consoleOrigin+'/')).status,401);
     const connected=await mf.dispatchFetch(consoleLaunch.url,{redirect:'manual'});assert.equal(connected.status,302);
+    // noVNC is pointed straight at the node gateway with a signed, instance-bound ticket in the socket path.
+    const consolePage=new URL(connected.headers.get('Location')!,consoleOrigin);assert.equal(consolePage.pathname,'/vnc.html');
+    assert.equal(consolePage.searchParams.get('host'),'origin-node-1.sargentweb.com');assert.equal(consolePage.searchParams.get('port'),'443');assert.equal(consolePage.searchParams.get('encrypt'),'1');
+    const ticketPath=consolePage.searchParams.get('path')!;const ticket=ticketPath.match(/^central\/view\/game-1\/vnc\/websockify\/(\d+)\.([a-f0-9]{32})\.([a-f0-9]{64})$/);assert.ok(ticket,ticketPath);
+    assert.ok(Number(ticket![1])>time&&Number(ticket![1])<=time+3600,'Console ticket expires with the viewer session');
+    assert.equal(ticket![3],createHmac('sha256','d'.repeat(64)).update('console|game-1|'+ticket![1]+'|'+ticket![2]).digest('hex'),'Console ticket is signed with the node gateway token');
     assert.equal((await mf.dispatchFetch(consoleLaunch.url,{redirect:'manual'})).status,401);
     assert.equal((await mf.dispatchFetch(consoleOrigin+'/',{headers:{Cookie:connected.headers.get('Set-Cookie')!.split(';')[0]}})).status,200);
+    const viewCookie=connected.headers.get('Set-Cookie')!.split(';')[0];
+    const upgrade=(extra:Record<string,string>={})=>mf.dispatchFetch(consoleOrigin+'/websockify',{headers:{Upgrade:'websocket',Origin:consoleOrigin,Cookie:viewCookie,...extra}});
+    assert.equal((await upgrade({Origin:'https://evil.example'})).status,403);
+    assert.equal((await upgrade({Cookie:'other=1'})).status,401);
+    const socket=await upgrade();assert.equal(socket.status,101);assert.ok(socket.webSocket);
+    const ws=socket.webSocket!;ws.accept();const echoed=new Promise<string>(resolve=>ws.addEventListener('message',e=>resolve(String(e.data))));ws.send('ping');assert.equal(await echoed,'echo:ping');ws.close();
     r=await mf.dispatchFetch(origin+'/api/nodes',{method:'POST',headers,body:JSON.stringify({id:'node-1',name:'Test node'})});
     const rotated=await r.json() as {token:string};assert.notEqual(rotated.token,enrolled.token);
     assert.equal((await mf.dispatchFetch(origin+'/api/heartbeat/node-1',heartbeat)).status,401);
