@@ -36,7 +36,7 @@ if [[ $AUTOSTART_SERVER = "true" ]] || [[ $AUTOSTART_SERVER = "web_only" ]]; the
   if [ -n "$DETECTED_WEBSERVER_IP" ]; then
     runtime_log_write "[Webserver]: Now accessible using: http://${DETECTED_WEBSERVER_IP}:${WEBSERVER_PORT}"
     runtime_log_write "[Webserver]: Username: ${WEB_USERNAME}"
-    runtime_log_write "[Webserver]: Password: ${WEB_PASSWORD}"
+    runtime_log_write "[Webserver]: Password: ******** (shown under the server's settings on the main site)"
     runtime_log_write "Console: Server marked as running..."
     export WEBSERVER_LISTENING_ON="$DETECTED_WEBSERVER_IP"
   else

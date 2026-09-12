@@ -39,6 +39,11 @@ class Telemetry:
             row = conn.execute('SELECT ts, data FROM latest WHERE scope=?', (scope,)).fetchone()
         return {'sampled_at': row[0] if row else None, 'latest': json.loads(row[1]) if row else None}
 
+    def latest_all(self):
+        with self.connect() as conn:
+            rows = conn.execute('SELECT scope, ts, data FROM latest').fetchall()
+        return {scope: {'sampled_at': ts, 'latest': json.loads(data)} for scope, ts, data in rows}
+
     def host(self):
         proc = Path(os.getenv('HOST_PROC_PATH', '/host/proc'))
         cpu = [int(v) for v in (proc / 'stat').read_text().splitlines()[0].split()[1:9]]

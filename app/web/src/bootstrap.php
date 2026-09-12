@@ -2,7 +2,12 @@
 
 declare(strict_types=1);
 
-session_start();
+// Machine routes (node API, central gateway operations, nginx viewer auth subrequests) carry
+// their own authentication headers. Starting a PHP session for them only writes a session file
+// per request and serialises concurrent requests on the session lock.
+if (!preg_match('/^(?:api_|central_)/', (string) ($_GET['route'] ?? ''))) {
+    session_start();
+}
 require_once __DIR__ . '/central.php';
 
 function env_value(string $key, ?string $default = null): ?string
@@ -37,11 +42,30 @@ function db(): PDO
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
     ]);
 
-    ensure_schema($pdo);
-    bootstrap_default_admin($pdo);
-    bootstrap_default_host($pdo);
+    // Schema upgrades and bootstrap rows are idempotent but cost a dozen round trips; run them
+    // once per web container start instead of on every request (including each proxied game
+    // panel asset that nginx authorises through this code).
+    $marker = schema_marker_path();
+    if (!is_file($marker)) {
+        ensure_schema($pdo);
+        bootstrap_default_admin($pdo);
+        bootstrap_default_host($pdo);
+        @touch($marker);
+    }
 
     return $pdo;
+}
+
+function schema_marker_path(): string
+{
+    $identity = implode('|', [
+        'v1',
+        (string) env_value('DB_NAME', ''),
+        (string) env_value('ADMIN_DEFAULT_USERNAME', ''),
+        (string) env_value('AGENT_URL', ''),
+        (string) env_value('DEFAULT_HOST_NAME', ''),
+    ]);
+    return rtrim(sys_get_temp_dir(), '/\\') . '/fsg-panel-bootstrap-' . md5($identity);
 }
 
 function ensure_schema(PDO $pdo): void
@@ -640,6 +664,9 @@ function find_instance_with_host(string $instanceId): ?array
             mh.agent_url,
             mh.access_host,
             mh.agent_token,
+            mh.shared_game_path,
+            mh.shared_dlc_path,
+            mh.shared_installer_path,
             mh.is_enabled
         FROM server_instances si
         LEFT JOIN managed_hosts mh ON mh.id = si.host_id
@@ -737,9 +764,11 @@ function sync_instance_config_for_server(array $server): array
         return ['ok' => false, 'error' => 'Missing instance id'];
     }
 
+    // Only container, network and management-access settings are synced. The in-game name,
+    // player limit, region and map seed the game's first start at creation and are owned by
+    // the game admin panel afterwards; the agent keeps their existing env values untouched.
     return agent_post_for_host($server, '/instance/sync', [
         'instance_id' => $instanceId,
-        'server_name' => (string) ($server['server_name'] ?? $instanceId),
         'image_name' => canonical_fs25_image_name((string) ($server['image_name'] ?? '')),
         'server_port' => (int) ($server['server_port'] ?? 10823),
         'web_port' => (int) ($server['web_port'] ?? 18000),
@@ -751,9 +780,6 @@ function sync_instance_config_for_server(array $server): array
         'sftp_password' => (string) ($server['sftp_password'] ?? 'changeme'),
         'web_username' => (string) ($server['web_username'] ?? 'admin'),
         'web_password' => (string) ($server['web_password'] ?? 'changeme'),
-        'server_players' => (int) ($server['server_players'] ?? 16),
-        'server_region' => (string) ($server['server_region'] ?? 'en'),
-        'server_map' => (string) ($server['server_map'] ?? 'MapUS'),
         'shared_game_path' => (string) ($server['shared_game_path'] ?? '/opt/fs25/game'),
         'shared_dlc_path' => (string) ($server['shared_dlc_path'] ?? '/opt/fs25/dlc'),
         'shared_installer_path' => (string) ($server['shared_installer_path'] ?? '/opt/fs25/installer'),
@@ -846,10 +872,12 @@ function upload_shared_host_file(array $host, string $target, array $file): arra
 
 function instance_upload_targets(): array
 {
+    // The dedicated server reads mods and savegames from its profile folder
+    // (data/config/FarmingSimulator2025), which is also what the per-server SFTP login sees.
     return [
-        'profile' => ['label' => 'Profile Folder', 'relative_path' => 'data/config'],
-        'mods' => ['label' => 'Mods Folder', 'relative_path' => 'data/mods'],
-        'saves' => ['label' => 'Saves Folder', 'relative_path' => 'data/saves'],
+        'profile' => ['label' => 'Profile Folder', 'relative_path' => 'data/config/FarmingSimulator2025'],
+        'mods' => ['label' => 'Mods Folder', 'relative_path' => 'data/config/FarmingSimulator2025/mods'],
+        'saves' => ['label' => 'Savegames (profile root)', 'relative_path' => 'data/config/FarmingSimulator2025'],
         'logs' => ['label' => 'Logs Folder', 'relative_path' => 'data/logs'],
     ];
 }

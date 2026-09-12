@@ -46,14 +46,14 @@ function perform_server_lifecycle_action(array $server, string $action, bool $sy
         return ['ok' => false, 'error' => 'Managed host for this server is missing or disabled.'];
     }
 
-    if ($syncBeforeAction && in_array($action, ['start', 'restart', 'reinstall_game', 'reinstall_sftp'], true)) {
+    if ($syncBeforeAction && in_array($action, ['start', 'restart', 'resync', 'reinstall_game', 'reinstall_sftp'], true)) {
         $sync = sync_instance_config_for_server($server);
         if (!($sync['ok'] ?? false)) {
             return ['ok' => false, 'error' => 'Config sync failed: ' . ($sync['error'] ?? 'Unknown error')];
         }
     }
 
-    $agentTimeout = in_array($action, server_reinstall_actions(), true) ? 120 : 20;
+    $agentTimeout = in_array($action, server_reinstall_actions(), true) ? 120 : (in_array($action, ['resync'], true) ? 60 : 20);
     $agent = agent_post_for_host($server, '/instance/action', [
         'instance_id' => $instanceId,
         'action' => $action,
@@ -81,8 +81,29 @@ function perform_server_lifecycle_action(array $server, string $action, bool $sy
 
 $route = $_GET['route'] ?? 'dashboard';
 
+if ($route === 'api_central_manage') {
+    require __DIR__ . '/../src/management.php';
+    header('Cache-Control: no-store');
+    $route = central_management();
+}
+
+// Central-mode nodes serve machine APIs and authenticated game viewers only.
+if (in_array(strtolower((string) env_value('CENTRAL_MODE', '0')), ['1','true','yes'], true) && !in_array($route, ['central_view_auth','api_central_health','api_node_snapshot','api_node_readiness','api_node_status','api_node_hosts','api_node_servers','api_node_server_action','api_node_apply_updates'], true) && ($_GET['route'] ?? '') !== 'api_central_manage') {
+    if ($route === 'login') {
+        // Older signed updaters probe this URL during the bridge update.
+        header('Content-Type: text/plain; charset=utf-8');
+        echo 'Node backend ready. Manage this node at https://farmservers.sargentweb.com';
+        exit;
+    }
+    header('Location: https://farmservers.sargentweb.com', true, 302);
+    exit;
+}
+
 if ($route === 'central_view_auth') {
-    if (!central_gateway_user()) {
+    $expected = (string) env_value('CENTRAL_GATEWAY_TOKEN', '');
+    $publicWeb = ($_GET['kind'] ?? '') === 'web' && request_header_value('X-Central-Public') === 'web' && strlen($expected) >= 64 && hash_equals($expected, (string) request_header_value('X-Central-Token'));
+    $consoleTicket = ($_GET['kind'] ?? '') === 'vnc' && strtolower((string) request_header_value('Upgrade')) === 'websocket' && central_console_ticket_valid((string) ($_GET['instance'] ?? ''), (string) ($_SERVER['REQUEST_URI'] ?? ''), request_header_value('Origin'));
+    if (!$publicWeb && !$consoleTicket && !central_gateway_user()) {
         http_response_code(403);
         exit;
     }
@@ -102,6 +123,52 @@ if ($route === 'central_view_auth') {
     header('X-Viewer-Upstream: ' . $instance . ':' . $port);
     http_response_code(204);
     exit;
+}
+
+if ($route === 'api_central_health') {
+    header('Content-Type: application/json');
+    header('Cache-Control: no-store');
+    if (!central_gateway_user()) {
+        http_response_code(401);
+        echo json_encode(['error' => 'Unauthorized']);
+    } else {
+        echo json_encode(['node' => (string) env_value('CENTRAL_NODE_ID', '')]);
+    }
+    exit;
+}
+
+if ($route === 'api_node_readiness') {
+    // Read-only inventory for the main site's readiness check: every server on this host with
+    // how its container is wired for the game admin panel and VNC console.
+    if (!node_api_request_authorized()) {
+        json_response(['ok' => false, 'error' => 'Unauthorized'], 401);
+    }
+    session_write_close();
+    header('Cache-Control: no-store');
+    $local = local_host_record();
+    if (!$local) {
+        json_response(['ok' => false, 'error' => 'Local host record unavailable'], 503);
+    }
+    $stmt = db()->prepare('SELECT instance_id, server_name, status, is_enabled FROM server_instances WHERE host_id = ? ORDER BY instance_id ASC');
+    $stmt->execute([(int) $local['id']]);
+    $servers = $stmt->fetchAll();
+    $inspection = $servers
+        ? agent_post_for_host($local, '/instance/inspect', ['instance_ids' => array_values(array_map('strval', array_column($servers, 'instance_id')))], 30)
+        : ['ok' => true, 'containers' => []];
+    $containers = is_array($inspection['containers'] ?? null) ? $inspection['containers'] : [];
+    json_response([
+        'ok' => true,
+        'central_mode' => in_array(strtolower((string) env_value('CENTRAL_MODE', '0')), ['1', 'true', 'yes'], true),
+        'agent_ok' => (bool) ($inspection['ok'] ?? false),
+        'agent_error' => (string) ($inspection['error'] ?? ''),
+        'servers' => array_map(static fn(array $server): array => [
+            'instance_id' => (string) $server['instance_id'],
+            'server_name' => (string) $server['server_name'],
+            'status' => (string) $server['status'],
+            'is_enabled' => (bool) (int) $server['is_enabled'],
+            'container' => $containers[(string) $server['instance_id']] ?? null,
+        ], $servers),
+    ]);
 }
 
 if ($route === 'api_node_snapshot') {
@@ -255,6 +322,49 @@ if ($route === 'api_node_server_action' && $_SERVER['REQUEST_METHOD'] === 'POST'
 
     $result = perform_server_lifecycle_action($server, $action, true);
     json_response($result, ($result['ok'] ?? false) ? 200 : 500);
+}
+
+if ($route === 'api_node_apply_updates' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Central-triggered only: resyncs and force-recreates every enabled server on this
+    // host so infrastructure/template changes (e.g. CENTRAL_MODE network settings) take
+    // effect without SSH access. Deliberately not reachable with a plain NODE_API_TOKEN.
+    if (!central_gateway_user()) {
+        json_response(['ok' => false, 'error' => 'Unauthorized'], 401);
+    }
+
+    $local = local_host_record();
+    if (!$local) {
+        json_response(['ok' => false, 'error' => 'Local host record unavailable'], 503);
+    }
+
+    $rawBody = file_get_contents('php://input');
+    $decodedBody = json_decode($rawBody !== false ? $rawBody : '', true);
+    $requestedInstance = is_array($decodedBody) ? trim((string) ($decodedBody['instance_id'] ?? '')) : '';
+
+    $sql = '
+        SELECT si.*, mh.agent_url, mh.agent_token, mh.shared_game_path, mh.shared_dlc_path, mh.shared_installer_path, mh.is_enabled
+        FROM server_instances si
+        JOIN managed_hosts mh ON mh.id = si.host_id
+        WHERE si.host_id = ? AND mh.is_enabled = 1' . ($requestedInstance !== '' ? ' AND si.instance_id = ?' : '') . '
+        ORDER BY si.instance_id ASC
+    ';
+    $stmt = db()->prepare($sql);
+    $stmt->execute($requestedInstance !== '' ? [(int) $local['id'], $requestedInstance] : [(int) $local['id']]);
+    $servers = $stmt->fetchAll();
+
+    if ($requestedInstance !== '' && !$servers) {
+        json_response(['ok' => false, 'error' => 'Server not found on this host, or disabled.'], 404);
+    }
+
+    $results = array_map(
+        static fn(array $server): array => perform_server_lifecycle_action($server, 'resync', true),
+        $servers
+    );
+
+    json_response([
+        'ok' => !in_array(false, array_column($results, 'ok'), true),
+        'results' => $results,
+    ]);
 }
 
 if ($route === 'telemetry') {
@@ -1354,10 +1464,8 @@ if ($route === 'server_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         'sftp_password' => trim((string) ($_POST['sftp_password'] ?? '')),
         'web_username' => trim((string) ($_POST['web_username'] ?? '')),
         'web_password' => trim((string) ($_POST['web_password'] ?? '')),
-        'server_players' => (int) ($_POST['server_players'] ?? 16),
-        'server_region' => trim((string) ($_POST['server_region'] ?? 'en')),
-        'server_map' => trim((string) ($_POST['server_map'] ?? 'MapUS')),
     ];
+    // Player limit, region and map are not accepted here: the game admin panel owns them after the first start.
 
     if ($payload['server_name'] === '' || $payload['image_name'] === '' || $payload['sftp_username'] === '' || $payload['sftp_password'] === '' || $payload['web_username'] === '' || $payload['web_password'] === '') {
         flash('Server name, image, SFTP credentials, and web admin credentials are required.');
@@ -1380,7 +1488,7 @@ if ($route === 'server_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $stmt = db()->prepare('
         UPDATE server_instances
-        SET server_name = ?, image_name = ?, server_port = ?, web_port = ?, tls_port = ?, vnc_port = ?, novnc_port = ?, sftp_port = ?, sftp_username = ?, sftp_password = ?, web_username = ?, web_password = ?, server_players = ?, server_region = ?, server_map = ?
+        SET server_name = ?, image_name = ?, server_port = ?, web_port = ?, tls_port = ?, vnc_port = ?, novnc_port = ?, sftp_port = ?, sftp_username = ?, sftp_password = ?, web_username = ?, web_password = ?
         WHERE instance_id = ?
     ');
     $stmt->execute([
@@ -1396,9 +1504,6 @@ if ($route === 'server_update' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $payload['sftp_password'],
         $payload['web_username'],
         $payload['web_password'],
-        $payload['server_players'],
-        $payload['server_region'],
-        $payload['server_map'],
         $instanceId,
     ]);
 
@@ -1585,7 +1690,7 @@ if ($route === 'server') {
         <div class="grid two">
             <div class="card">
                 <h2 style="margin-top:0;">Panel Details</h2>
-                <div class="muted">Update the panel-managed settings and runtime sync values for this server.</div>
+                <div class="muted">Update the panel-managed settings and runtime sync values for this server. The in-game server name, passwords, savegame, map, player slots, language, difficulty and intervals are managed in the game's web admin and are never changed from here.</div>
                 <?php $serverImageOptions = fs25_image_options((string) ($server['image_name'] ?? '')); ?>
                 <form method="post" action="/?route=server_update" class="grid form" style="margin-top:18px;">
                     <input type="hidden" name="instance_id" value="<?= h($server['instance_id']) ?>">
@@ -1598,7 +1703,6 @@ if ($route === 'server') {
                             <?php endforeach; ?>
                         </select>
                     </div>
-                    <div><label>Players</label><input name="server_players" type="number" value="<?= h((string) $server['server_players']) ?>"></div>
                     <div><label>Game Port</label><input name="server_port" type="number" value="<?= h((string) $server['server_port']) ?>"></div>
                     <div><label>Admin Web Port</label><input name="web_port" type="number" value="<?= h((string) $server['web_port']) ?>"></div>
                     <div><label>TLS Port</label><input name="tls_port" type="number" value="<?= h((string) ($server['tls_port'] ?? ((int) ($server['web_port'] ?? 18000) + 10000))) ?>"></div>
@@ -1609,8 +1713,6 @@ if ($route === 'server') {
                     <div><label>SFTP Password</label><input name="sftp_password" value="<?= h($server['sftp_password'] ?? 'changeme') ?>"></div>
                     <div><label>Web Username</label><input name="web_username" value="<?= h($server['web_username'] ?? 'admin') ?>"></div>
                     <div><label>Web Password</label><input name="web_password" value="<?= h($server['web_password'] ?? 'changeme') ?>"></div>
-                    <div><label>Region</label><input name="server_region" value="<?= h($server['server_region'] ?? 'en') ?>"></div>
-                    <div><label>Map</label><input name="server_map" value="<?= h($server['server_map'] ?? 'MapUS') ?>"></div>
                     <div style="display:flex;align-items:end;"><button type="submit">Save Panel Details</button></div>
                 </form>
             </div>
@@ -2831,7 +2933,7 @@ curl -X POST \
                         <?php endforeach; ?>
                     </select>
                 </div>
-                <div><label>Players</label><input name="server_players" type="number" value="<?= h((string) $createDefaults['server_players']) ?>"></div>
+                <div><label>Players (first start only)</label><input name="server_players" type="number" value="<?= h((string) $createDefaults['server_players']) ?>"></div>
 
                 <div><label>Game Port</label><input name="server_port" type="number" value="<?= h((string) $createDefaults['server_port']) ?>"></div>
                 <div><label>Admin Web Port</label><input name="web_port" type="number" value="<?= h((string) $createDefaults['web_port']) ?>"></div>
@@ -2848,8 +2950,8 @@ curl -X POST \
                 <div><label>SFTP Username</label><input name="sftp_username" value="<?= h((string) $createDefaults['sftp_username']) ?>"></div>
                 <div><label>SFTP Password</label><input name="sftp_password" value="<?= h((string) $createDefaults['sftp_password']) ?>"></div>
                 <div><label>VNC Password</label><input name="vnc_password" value="<?= h((string) $createDefaults['vnc_password']) ?>"></div>
-                <div><label>Region</label><input name="server_region" value="<?= h((string) $createDefaults['server_region']) ?>"></div>
-                <div><label>Map</label><input name="server_map" value="<?= h((string) $createDefaults['server_map']) ?>"></div>
+                <div><label>Region (first start only)</label><input name="server_region" value="<?= h((string) $createDefaults['server_region']) ?>"></div>
+                <div><label>Map (first start only)</label><input name="server_map" value="<?= h((string) $createDefaults['server_map']) ?>"></div>
                 <div><label>Difficulty</label><input name="server_difficulty" type="number" value="<?= h((string) $createDefaults['server_difficulty']) ?>"></div>
 
                 <div><label>Pause Mode</label><input name="server_pause" type="number" value="<?= h((string) $createDefaults['server_pause']) ?>"></div>

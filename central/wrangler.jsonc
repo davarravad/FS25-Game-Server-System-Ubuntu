@@ -7,6 +7,7 @@
 		"nodejs_compat"
 	],
 	"workers_dev": false,
+	"r2_buckets": [{"binding":"RELEASES","bucket_name":"farmservers-releases"}],
 	"preview_urls": false,
 	"routes": [
 		{
@@ -44,7 +45,8 @@
 	},
 	"triggers": {
 		"crons": [
-			"17 * * * *"
+			"17 * * * *",
+			"*/10 * * * *"
 		]
 	},
 	"observability": {

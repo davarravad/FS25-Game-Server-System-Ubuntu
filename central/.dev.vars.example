@@ -1,4 +1,8 @@
 DISCORD_CLIENT_SECRET=replace-locally-do-not-commit
-# Per-node secrets are distinct from outbound heartbeat credentials.
-# origin must be a dedicated, Access-protected Tunnel hostname, not the public viewer hostname.
-NODE_GATEWAYS={"node1":{"origin":"https://origin-node1.sargentweb.com","token":"replace-with-64-hex-characters","accessClientId":"replace","accessClientSecret":"replace"}}
+# Generate once with openssl rand -hex 32; preserve it to decrypt saved node tokens,
+# gateway credentials, Cloudflare settings and OAuth tokens stored in D1.
+NODE_TOKEN_KEY=replace-with-64-lowercase-hex-characters
+# Base64 SPKI Ed25519 public key matching the release signing key (docs/NODE-DISTRIBUTION.md).
+RELEASE_PUBLIC_KEY=replace-with-base64-public-key
+# Legacy only: gateways are now saved per node in D1 from the site. Leave unset on new deployments.
+# NODE_GATEWAYS={"node1":{"origin":"https://origin-node1.sargentweb.com","token":"replace-with-64-hex-characters","accessClientId":"replace","accessClientSecret":"replace"}}

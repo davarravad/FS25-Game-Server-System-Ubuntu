@@ -25,7 +25,7 @@ def main():
             data = json.loads(payload)
             if data.get('version') != 1:
                 raise ValueError('Unsupported node API')
-            request = urllib.request.Request(origin + '/api/heartbeat/' + urllib.parse.quote(node, safe=''), data=payload, headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'}, method='POST')
+            request = urllib.request.Request(origin + '/api/heartbeat/' + urllib.parse.quote(node, safe=''), data=payload, headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', 'User-Agent': 'Farmservers-Node/1.0 (+https://farmservers.sargentweb.com)'}, method='POST')
             # A redirect must never send the credential to another endpoint.
             class NoRedirect(urllib.request.HTTPRedirectHandler):
                 def redirect_request(self, *args, **kwargs):

@@ -22,12 +22,32 @@ export function validId(value: unknown): value is string {
 export function validScope(value: unknown): value is string {
   return typeof value === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(value);
 }
+// True for a dotted-quad IPv4 literal that is not private, loopback, link-local or multicast/reserved —
+// i.e. an address that is plausibly reachable from the public internet.
+export function publicIPv4(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const m = value.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!m) return false;
+  const parts = m.slice(1).map(Number);
+  if (parts.some(p => p > 255)) return false;
+  const [a, b] = parts;
+  if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
+  if (a === 169 && b === 254) return false;
+  if (a === 172 && b >= 16 && b <= 31) return false;
+  if (a === 192 && b === 168) return false;
+  if (a === 100 && b >= 64 && b <= 127) return false; // RFC 6598 carrier-grade NAT (Starlink, cellular, some cable/fiber ISPs)
+  return true;
+}
 export function safeMetrics(value: unknown): Record<string, number | null> {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   return Object.fromEntries(['cpu_percent','memory_used_bytes','memory_limit_bytes','disk_used_bytes','disk_limit_bytes','network_in_bytes_sec','network_out_bytes_sec','uptime_seconds'].map(key => {
     const n = source[key];
     return [key, typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1e18 ? n : null];
   }));
+}
+export async function hmacHex(key: string, message: string): Promise<string> {
+  const k = await crypto.subtle.importKey('raw', new TextEncoder().encode(key), {name: 'HMAC', hash: 'SHA-256'}, false, ['sign']);
+  return Array.from(new Uint8Array(await crypto.subtle.sign('HMAC', k, new TextEncoder().encode(message))), b => b.toString(16).padStart(2, '0')).join('');
 }
 export async function readJson(request: Request, limit = 262144): Promise<Record<string, unknown>> {
   const reader = request.body?.getReader();
