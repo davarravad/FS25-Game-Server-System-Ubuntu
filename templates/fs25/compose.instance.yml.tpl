@@ -38,7 +38,7 @@ services:
       - ./data/config/FarmingSimulator2025:/home/{{SFTP_USERNAME}}/FarmingSimulator2025
 {{SFTP_KEY_VOLUMES}}
     ports:
-      - "{{ADMIN_BIND}}{{SFTP_PORT}}:22/tcp"
+      - "{{SFTP_PORT}}:22/tcp"
     restart: unless-stopped
     logging:
       driver: json-file
