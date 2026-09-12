@@ -12,5 +12,5 @@ function render_telemetry(array $targets, string $title): void {
     <div class="telemetry-grid"></div>
     <p class="telemetry-note">Samples collected in the background every ~30 seconds. Disk scans every 5 minutes. History retained for 30 days; longer views show bucket averages. Host disk measures the instances filesystem; server disk measures its instance folder. Server CPU: 100% = one logical core. Network rates exclude host loopback and Docker bridge interfaces; server rates measure the game container.</p>
 </section>
-<?php } ?>
+<?php }
 

@@ -1,0 +1,11 @@
+CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('pending','viewer','operator','admin')), created INTEGER NOT NULL);
+CREATE TABLE oauth_states (hash TEXT PRIMARY KEY, expires INTEGER NOT NULL);
+CREATE TABLE sessions (hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), csrf TEXT NOT NULL, expires INTEGER NOT NULL);
+CREATE INDEX sessions_expiry ON sessions(expires);
+CREATE TABLE nodes (id TEXT PRIMARY KEY, name TEXT NOT NULL, token_hash TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, last_seen INTEGER, snapshot TEXT);
+CREATE TABLE samples (node_id TEXT NOT NULL REFERENCES nodes(id), scope TEXT NOT NULL, ts INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(node_id,scope,ts));
+CREATE INDEX samples_expiry ON samples(ts);
+CREATE TABLE tickets (hash TEXT PRIMARY KEY, session_hash TEXT NOT NULL, node_id TEXT NOT NULL, host TEXT NOT NULL, kind TEXT NOT NULL, instance TEXT NOT NULL, expires INTEGER NOT NULL);
+CREATE TABLE views (hash TEXT PRIMARY KEY, session_hash TEXT NOT NULL, node_id TEXT NOT NULL, host TEXT NOT NULL, kind TEXT NOT NULL, instance TEXT NOT NULL, expires INTEGER NOT NULL);
+CREATE TABLE audit (id INTEGER PRIMARY KEY, ts INTEGER NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, target TEXT NOT NULL);
+CREATE INDEX audit_expiry ON audit(ts);

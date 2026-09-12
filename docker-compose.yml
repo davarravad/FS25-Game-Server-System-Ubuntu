@@ -17,6 +17,10 @@ services:
       APP_ENV: ${APP_ENV}
       APP_URL: ${APP_URL}
       APP_KEY: ${APP_KEY}
+      NODE_API_TOKEN: ${NODE_API_TOKEN:-}
+      NODE_NAME: ${NODE_NAME:-FS25 Node}
+      NODE_SLUG: ${NODE_SLUG:-fs25-node}
+      CENTRAL_GATEWAY_TOKEN: ${CENTRAL_GATEWAY_TOKEN:-}
       SESSION_SECRET: ${SESSION_SECRET}
       DB_HOST: ${DB_HOST}
       DB_PORT: ${DB_PORT}
@@ -50,7 +54,7 @@ services:
     restart: unless-stopped
     logging: *json-log-rotation
     ports:
-      - "${PANEL_PORT}:80"
+      - "${PANEL_BIND_ADDRESS:-0.0.0.0}:${PANEL_PORT}:80"
     volumes:
       - ./app/web:/var/www/html:ro
       - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
@@ -58,6 +62,7 @@ services:
       - web
     networks:
       - panel
+      - management
 
   db:
     image: mariadb:11.8
@@ -95,6 +100,7 @@ services:
       FS25_RUNTIME_RELEASETAG: ${FS25_RUNTIME_RELEASETAG:-local}
       FS25_RUNTIME_TARGETARCH: ${FS25_RUNTIME_TARGETARCH:-amd64}
       HOST_FIREWALL_MODE: ${HOST_FIREWALL_MODE:-auto}
+      CENTRAL_MODE: ${CENTRAL_MODE:-0}
       HOST_FIREWALL_HELPER_IMAGE: ${HOST_FIREWALL_HELPER_IMAGE:-ubuntu:24.04}
       TZ: ${TZ}
     volumes:
@@ -112,6 +118,24 @@ services:
     networks:
       - panel
 
+  publisher:
+    profiles: [central]
+    build:
+      context: .
+      dockerfile: docker/publisher/Dockerfile
+    restart: unless-stopped
+    logging: *json-log-rotation
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      CENTRAL_URL: ${CENTRAL_URL:-https://farmservers.sargentweb.com}
+      CENTRAL_NODE_ID: ${CENTRAL_NODE_ID:-}
+      CENTRAL_NODE_TOKEN: ${CENTRAL_NODE_TOKEN:-}
+      NODE_API_TOKEN: ${NODE_API_TOKEN:-}
+    depends_on: [nginx]
+    networks: [panel]
+
   admin-sftp:
     image: atmoz/sftp:alpine
     container_name: fsg-panel-admin-sftp
@@ -119,7 +143,7 @@ services:
     logging: *json-log-rotation
     command: "${ADMIN_SFTP_USERNAME}:${ADMIN_SFTP_PASSWORD}:1000:1000:panel"
     ports:
-      - "${ADMIN_SFTP_PORT}:22"
+      - "${PANEL_BIND_ADDRESS:-0.0.0.0}:${ADMIN_SFTP_PORT}:22"
     volumes:
       - /opt:/home/${ADMIN_SFTP_USERNAME}/panel/opt
       - ${INSTANCE_BASE_PATH}:/home/${ADMIN_SFTP_USERNAME}/panel/instances
@@ -134,5 +158,8 @@ volumes:
   db_data:
 
 networks:
+  management:
+    name: fsg-management
+    driver: bridge
   panel:
     driver: bridge

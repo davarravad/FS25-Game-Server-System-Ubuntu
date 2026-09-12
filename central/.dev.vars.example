@@ -1,0 +1,4 @@
+DISCORD_CLIENT_SECRET=replace-locally-do-not-commit
+# Per-node secrets are distinct from outbound heartbeat credentials.
+# origin must be a dedicated, Access-protected Tunnel hostname, not the public viewer hostname.
+NODE_GATEWAYS={"node1":{"origin":"https://origin-node1.sargentweb.com","token":"replace-with-64-hex-characters","accessClientId":"replace","accessClientSecret":"replace"}}

@@ -24,6 +24,11 @@
         const capacity=key==='memory_used_bytes' ? data?.latest?.memory_limit_bytes : (key==='disk_used_bytes' && host ? data?.latest?.disk_limit_bytes : null);
         const max=Math.max(key==='cpu_percent' ? 100 : 1,capacity||0,...values)*1.08;
         ctx.font='10px system-ui';ctx.lineWidth=1;
+        if (!values.length) {
+          ctx.fillStyle='#93a6c0'; ctx.textAlign='center';
+          ctx.fillText('Waiting for resource samples', width/2, height/2);
+          return;
+        }
         for(let i=0;i<=3;i++){const y=top+(bottom-top)*i/3;ctx.strokeStyle='#27364b';ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(right,y);ctx.stroke();ctx.fillStyle='#93a6c0';ctx.fillText(format(max*(1-i/3)),0,y+4);}
         ctx.fillStyle='#93a6c0';ctx.fillText(new Date(start*1000).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}),left,154);
         ctx.textAlign='right';ctx.fillText('Now',right,154);ctx.textAlign='left';
@@ -36,14 +41,33 @@
       });
     }
     async function refresh() {
-      clearTimeout(timer); if(paused || document.hidden || !target.value)return;
+      clearTimeout(timer); if(paused || document.hidden)return;
+      if (!target.value) { status.textContent='No enabled hosts. Add or enable a host in Managed Hosts to begin monitoring.'; return; }
       controller?.abort(); const active=new AbortController(); controller=active;
       const timeout=setTimeout(()=>active.abort(),15000);
-      try {const response=await fetch(`/?route=telemetry&${target.value}&hours=${hours}`,{signal:active.signal,cache:'no-store'});if(!response.ok)throw Error('Metrics unavailable');const payload=await response.json();if(controller!==active)return;if(!payload.ok)throw Error(payload.error||'Metrics unavailable');data=payload;render();status.textContent=payload.sampled_at ? `${Date.now()/1000-payload.sampled_at>90?'Stale data · ':'Live · '}Last sample ${new Date(payload.sampled_at*1000).toLocaleString()}` : 'No history yet. Samples will appear after the agent starts collecting.';}
-      catch(error){if(controller===active && !paused && !document.hidden)status.textContent='Unable to refresh metrics. Retrying in 30 seconds; any displayed values are from the last successful refresh.';}
+      try {
+        const response=await fetch(`/?route=telemetry&${target.value}&hours=${hours}`,{signal:active.signal,cache:'no-store'});
+        if (response.redirected && new URL(response.url).searchParams.get('route') === 'login') {
+          throw Error('Your session has expired. Sign in again to view resource data.');
+        }
+        let payload;
+        try { payload=await response.json(); }
+        catch (_) { throw Error('The panel returned an invalid metrics response. Check the PHP web container logs for warnings or errors.'); }
+        if(controller!==active)return;
+        if(!response.ok || !payload.ok)throw Error(payload.error || `Metrics request failed (HTTP ${response.status}).`);
+        data=payload;render();
+        status.textContent=payload.sampled_at ? `${Date.now()/1000-payload.sampled_at>90?'Stale data · ':'Live · '}Last sample ${new Date(payload.sampled_at*1000).toLocaleString()}` : 'No history yet. Samples will appear after the agent starts collecting.';
+        status.dataset.state='ready';
+      }
+      catch(error){
+        if(controller===active && !paused && !document.hidden) {
+          status.dataset.state='error';
+          status.textContent=`${error.name === 'AbortError' ? 'The metrics request timed out.' : error.message} Retrying in 30 seconds.${data ? ' Displayed values are from the last successful refresh.' : ''}`;
+        }
+      }
       finally{clearTimeout(timeout);if(controller===active)timer=setTimeout(refresh,30000);}
     }
-    target.addEventListener('change',()=>{data=null;render();refresh();});
+    target.addEventListener('change',()=>{controller?.abort();controller=null;data=null;render();status.textContent=paused?'Live updates paused':'Loading resource data…';refresh();});
     root.querySelectorAll('[data-hours]').forEach(button=>button.addEventListener('click',()=>{hours=Number(button.dataset.hours);root.querySelectorAll('[data-hours]').forEach(b=>b.setAttribute('aria-pressed',String(b===button)));refresh();}));
     root.querySelector('[data-metric-pause]').addEventListener('click',event=>{paused=!paused;event.target.textContent=paused?'Resume live':'Pause live';if(paused){controller?.abort();clearTimeout(timer);status.textContent='Live updates paused';}else refresh();});
     document.addEventListener('visibilitychange',()=>{if(document.hidden){controller?.abort();clearTimeout(timer);}else refresh();});
