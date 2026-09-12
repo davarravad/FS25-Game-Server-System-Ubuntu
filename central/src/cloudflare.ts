@@ -5,7 +5,7 @@ import {oauthAccessToken,OAuthRefreshBusy} from './cloudflare-oauth';
 
 type EnvCF={DB:D1Database;NODE_TOKEN_KEY:string;BOOTSTRAP_ADMIN_ID:string};
 type Settings={account:string;zone:string;domain:string;token:string;oauth?:boolean};
-type Connection={name:string;hostname:string;account:string;zone:string;port:number;revision:string;gatewayToken:string;tunnelId?:string;tunnelToken?:string;serviceId?:string;clientId?:string;clientSecret?:string;expires?:string;verificationAttempts?:number;appId?:string};
+type Connection={name:string;hostname:string;account:string;zone:string;port:number;revision:string;gatewayToken:string;tunnelId?:string;tunnelToken?:string;serviceId?:string;clientId?:string;clientSecret?:string;expires?:string;verificationAttempts?:number;appId?:string;consoleAppId?:string};
 type Row={node_id:string;encrypted:string;stage:string;error:string|null;updated:number};
 const json=(data:unknown,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'no-store'}});
 const now=()=>Math.floor(Date.now()/1000);
@@ -33,6 +33,20 @@ async function list<T>(s:Settings,path:string):Promise<T[]>{
   }
   throw new SetupError('Cloudflare resource list is too large to reconcile safely.');
 }
+// Console WebSocket upgrades reach the node through a Worker subrequest, and Cloudflare Access
+// never completes an upgrade on that path: the node answers 101 but the response is held until
+// the idle timeout. Each node therefore gets a second, more specific Access application that
+// bypasses Access for the console socket path only. The node still requires the gateway token
+// there, so the path is not public. Access prefers the most specific path, so no ordering is needed.
+export const consoleBypassPath='/central/view/*/vnc/websockify';
+type AccessApp={id:string;name:string;domain:string};
+async function ensureConsoleBypass(s:Settings,c:Connection,apps:AccessApp[]):Promise<string>{
+  const domain=c.hostname+consoleBypassPath, name=c.name+'-console';
+  const existing=apps.find(a=>a.domain===domain);
+  if(existing && existing.name!==name)throw new SetupError('This hostname already has an Access application for the console path. Remove the conflicting configuration in Cloudflare, then retry.');
+  const body={name,domain,type:'self_hosted',session_duration:'24h',app_launcher_visible:false,policies:[{name,decision:'bypass',include:[{everyone:{}}]}]};
+  return (await cf<{id:string}>(s,accessAppsPath(s)+(existing?'/'+existing.id:''),existing?'PUT':'POST',body)).id;
+}
 export async function settings(env:EnvCF){
   const row=await env.DB.prepare('SELECT encrypted,enabled FROM cloudflare_settings WHERE id=1').first<{encrypted:string;enabled:number}>();
   return row?{value:JSON.parse(await openToken(env.NODE_TOKEN_KEY,'cloudflare-settings',row.encrypted)) as Settings,enabled:!!row.enabled}:null;
@@ -45,11 +59,45 @@ export async function provisionGameDomain(env:EnvCF,hostname:string){
   const path='/accounts/'+s.account+'/workers/domains';
   const domains=await list<{hostname:string;service:string}>(s,path);
   const existing=domains.find(d=>d.hostname===hostname);
-  if(existing){if(existing.service!=='farmservers')throw new SetupError('This hostname belongs to another Worker. Existing routing was left unchanged.');return;}
+  if(existing){
+    if(existing.service!=='farmservers')throw new SetupError('This hostname belongs to another Worker. Existing routing was left unchanged.');
+    return hostnameResolves(hostname);
+  }
   const records=await list<{id:string}>(s,'/zones/'+s.zone+'/dns_records?name='+encodeURIComponent(hostname));
   if(records.length)throw new SetupError('This hostname already has a DNS record. Existing DNS was left unchanged.');
   try{await cf(s,path,'PUT',{hostname,service:'farmservers',zone_id:s.zone});}
   catch{throw new SetupError('Could not provision the game hostname. Grant the Cloudflare connection Workers Scripts Write permission, then retry.');}
+  return hostnameResolves(hostname);
+}
+// Attaching a Worker custom domain makes Cloudflare publish proxied A and AAAA records for the
+// hostname, but on a lag that can run to minutes, and the two can appear at different times. Those
+// records are managed by the custom domain: the DNS records API does not list them and refuses to
+// create them by hand (code 81062). So readiness is judged by real resolution over DNS-over-HTTPS,
+// and both address families must answer. A resolver asked before publication caches NXDOMAIN for
+// the zone's negative TTL (30 minutes), which is why a hostname is never handed to a browser early.
+export async function hostnameResolves(hostname:string):Promise<boolean>{
+  for(const [type,code] of [['A',1],['AAAA',28]] as const){
+    try{
+      const response=await fetch('https://cloudflare-dns.com/dns-query?name='+encodeURIComponent(hostname)+'&type='+type,{headers:{accept:'application/dns-json'},signal:AbortSignal.timeout(10000)});
+      const data=await response.json<{Status:number;Answer?:{type:number}[]}>();
+      if(data.Status!==0||!data.Answer?.some(a=>a.type===code))return false;
+    }catch{return false;}
+  }
+  return true;
+}
+// Readiness repair: (re)create the console bypass application for a node right now instead of
+// waiting for its next connection poll. Refuses while a setup step holds the lease.
+export async function repairConsoleBypass(env:EnvCF,nodeId:string):Promise<string>{
+  const saved=await settings(env);
+  if(!saved?.enabled)throw new SetupError('Cloudflare automation is not connected. Connect it on the Cloudflare page first.');
+  const s=saved.value;if(s.oauth)s.token=await oauthAccessToken(env);
+  const row=await env.DB.prepare('SELECT encrypted FROM node_connections WHERE node_id=? AND lease_until<?').bind(nodeId,now()).first<{encrypted:string}>();
+  if(!row)throw new SetupError('This node has no automated connection record, or its setup is running right now. Use Retry setup on the Cloudflare page if it failed.');
+  const c=JSON.parse(await openToken(env.NODE_TOKEN_KEY,'connection:'+nodeId,row.encrypted)) as Connection;
+  if(!c.hostname||!c.name)throw new SetupError('The node connection has no gateway hostname yet; let setup finish first.');
+  c.consoleAppId=await ensureConsoleBypass(s,c,await list<AccessApp>(s,accessAppsPath(s)));
+  await env.DB.prepare('UPDATE node_connections SET encrypted=?,updated=? WHERE node_id=?').bind(await sealToken(env.NODE_TOKEN_KEY,'connection:'+nodeId,JSON.stringify(c)),now(),nodeId).run();
+  return 'Console bypass application is in place for '+c.hostname+'. Run the check again to confirm the live probe.';
 }
 export async function cloudflareAdmin(request:Request,env:EnvCF){
   const path=new URL(request.url).pathname;
@@ -109,6 +157,7 @@ async function step(env:EnvCF,s:Settings,c:Connection,stage:string):Promise<stri
     if(existing && existing.name!==c.name)throw new SetupError('This hostname already has an Access application. Choose a new node ID or remove the conflicting configuration in Cloudflare.');
     const body={name:c.name,domain:c.hostname,type:'self_hosted',session_duration:'24h',app_launcher_visible:false,service_auth_401_redirect:true,policies:[{name:c.name,decision:'non_identity',include:[{service_token:{token_id:c.serviceId}}]}]};
     c.appId=(await cf<{id:string}>(s,accessAppsPath(s)+(existing?'/'+existing.id:''),existing?'PUT':'POST',body)).id;
+    c.consoleAppId=await ensureConsoleBypass(s,c,apps);
     return 'route';
   }
   if(stage==='route'){
@@ -127,6 +176,8 @@ async function step(env:EnvCF,s:Settings,c:Connection,stage:string):Promise<stri
     if(typeof c.tunnelToken!=='string'||!c.tunnelToken.length)throw new SetupError('Cloudflare did not return a tunnel token.');
     return 'installing';
   }
+  // Nodes provisioned before the console bypass existed gain it on their next poll.
+  if(stage==='ready' && !c.consoleAppId)c.consoleAppId=await ensureConsoleBypass(s,c,await list<AccessApp>(s,accessAppsPath(s)));
   if(stage==='ready' && (!c.expires || Date.parse(c.expires)<Date.now()+30*86400000)){
     const renewed=await cf<{expires_at:string}>(s,base+'/access/service_tokens/'+c.serviceId+'/refresh','POST');
     if(!renewed.expires_at || !Number.isFinite(Date.parse(renewed.expires_at)))throw new SetupError('Cloudflare did not return the renewed credential expiry.');

@@ -4,11 +4,12 @@ import {distribution} from './releases';
 import {loginPage} from './login';
 import {sealToken, openToken} from './node-tokens';
 import {notifications} from './notifications';
-import {cloudflareAdmin,nodeConnection,provisionGameDomain} from './cloudflare';
+import {cloudflareAdmin,nodeConnection,provisionGameDomain,repairConsoleBypass} from './cloudflare';
 import {cloudflareOAuth} from './cloudflare-oauth';
 import {readGateway, saveGateway, validGateway, type Gateway} from './gateways';
 import {management} from './management';
 import {gameNode,gameAdmin} from './game-sync';
+import {fleetReadiness} from './readiness';
 
 type Bindings = Env & { DISCORD_CLIENT_SECRET: string; NODE_GATEWAYS: string; RELEASE_PUBLIC_KEY: string; NODE_TOKEN_KEY: string };
 type Session = {hash: string; user_id: string; name: string; avatar_url: string|null; role: Role; csrf: string; expires: number};
@@ -115,6 +116,27 @@ async function heartbeat(request: Request, env: Bindings, id: string) {
   return reply({ok:true,interval_seconds:30});
 }
 type View = {hash:string;session_hash:string;node_id:string;host:string;kind:string;instance:string;expires:number};
+// Allocates the stable hostname for a game server's console or game admin panel, attaches it to
+// this Worker, and returns it only once Cloudflare has published both of its DNS records.
+async function ensureGameEndpoint(env:Bindings,node:string,instance:string,kind:'vnc'|'web'):Promise<string>{
+  await env.DB.prepare('INSERT OR IGNORE INTO game_slots(node_id,instance) VALUES(?,?)').bind(node,instance).run();
+  const slot=await env.DB.prepare('SELECT id FROM game_slots WHERE node_id=? AND instance=?').bind(node,instance).first<{id:number}>();
+  const host=(kind==='web'?'game-':'console-')+'fs25-'+String(slot!.id).padStart(4,'0')+'.sargentweb.com';
+  await env.DB.prepare('INSERT INTO game_endpoints(host,node_id,instance,kind) VALUES(?,?,?,?) ON CONFLICT(node_id,instance,kind) DO UPDATE SET host=excluded.host,ready=CASE WHEN host=excluded.host THEN ready ELSE 0 END').bind(host,node,instance,kind).run();
+  const endpoint=await env.DB.prepare('SELECT ready FROM game_endpoints WHERE host=?').bind(host).first<{ready:number}>();
+  const pending='Cloudflare is still creating DNS records for '+host+'. This usually takes a minute or two; open it again shortly.';
+  if(!endpoint?.ready){
+    let dnsReady:boolean;
+    try{dnsReady=await provisionGameDomain(env,host);}catch(e){throw new HttpError(503,e instanceof Error?e.message:'Hostname setup failed');}
+    // The hostname is not marked ready, nor handed to a browser, until Cloudflare has published
+    // both DNS records; a browser sent there earlier would cache NXDOMAIN for up to an hour.
+    need(dnsReady,503,pending);
+    await env.DB.prepare('UPDATE game_endpoints SET ready=1 WHERE host=?').bind(host).run();
+  }
+  // A hostname that has been handed out before is never gated again: the readiness check
+  // reports DNS trouble separately, and a gate here would take working consoles down.
+  return host;
+}
 async function launch(request: Request, env: Bindings, url: URL) {
   const user = await auth(request,env,'admin');
   const node = url.searchParams.get('node') || '', kind = url.searchParams.get('kind') || 'panel', instance = url.searchParams.get('instance') || '';
@@ -124,15 +146,7 @@ async function launch(request: Request, env: Bindings, url: URL) {
   await gateway(env,node);
   const row=await env.DB.prepare('SELECT snapshot FROM nodes WHERE id=?').bind(node).first<{snapshot:string|null}>();
   need(row?.snapshot&&JSON.parse(row.snapshot).servers?.some((s:{instance_id:string})=>s.instance_id===instance),404,'Game server unavailable');
-  await env.DB.prepare('INSERT OR IGNORE INTO game_slots(node_id,instance) VALUES(?,?)').bind(node,instance).run();
-  const slot=await env.DB.prepare('SELECT id FROM game_slots WHERE node_id=? AND instance=?').bind(node,instance).first<{id:number}>();
-  const host=(kind==='web'?'game-':'console-')+'fs25-'+String(slot!.id).padStart(4,'0')+'.sargentweb.com';
-  await env.DB.prepare('INSERT INTO game_endpoints(host,node_id,instance,kind) VALUES(?,?,?,?) ON CONFLICT(node_id,instance,kind) DO UPDATE SET host=excluded.host,ready=CASE WHEN host=excluded.host THEN ready ELSE 0 END').bind(host,node,instance,kind).run();
-  const endpoint=await env.DB.prepare('SELECT ready FROM game_endpoints WHERE host=?').bind(host).first<{ready:number}>();
-  if(!endpoint?.ready){
-    try{await provisionGameDomain(env,host);}catch(e){throw new HttpError(503,e instanceof Error?e.message:'Hostname setup failed');}
-    await env.DB.prepare('UPDATE game_endpoints SET ready=1 WHERE host=?').bind(host).run();
-  }
+  const host=await ensureGameEndpoint(env,node,instance,kind as 'vnc'|'web');
   if(kind==='web'){await audit(env,user.user_id,'viewer.public-web',node+'/'+instance);return reply({url:'https://'+host+'/',public:true});}
   const ticket = randomToken();
   await env.DB.prepare('INSERT INTO tickets(hash,session_hash,node_id,host,kind,instance,expires) VALUES(?,?,?,?,?,?,?)').bind(await digest(ticket),user.hash,node,host,kind,instance,now()+60).run();
@@ -298,6 +312,29 @@ async function api(request: Request, env: Bindings, url: URL) {
     const jobs=(await env.DB.prepare('SELECT * FROM node_updates WHERE node_id=? ORDER BY created DESC,rowid DESC LIMIT 20').bind(id).all()).results;
     const succeeded=await env.DB.prepare("SELECT version FROM node_updates WHERE node_id=? AND status='succeeded' ORDER BY updated DESC,rowid DESC LIMIT 1").bind(id).first<{version:string}>();
     return reply({installed_version:node.installed_version || succeeded?.version || null,version_source:node.installed_version?'reported':succeeded?'successful_update':'unknown',releases,jobs});
+  }
+  if (url.pathname === '/api/readiness' && request.method === 'POST') {
+    need(user.role==='admin',403,'Administrator access required');
+    const report=await fleetReadiness(env,user.user_id);
+    await audit(env,user.user_id,'fleet.readiness',report.nodes.length+' node(s)');
+    return reply(report);
+  }
+  if (url.pathname === '/api/readiness/repair' && request.method === 'POST') {
+    need(user.role==='admin',403,'Administrator access required');
+    const body=await readJson(request,4096);
+    need(validId(body.node)&&['console-bypass','provision-hostname'].includes(String(body.action)),422,'Invalid repair');
+    need(await env.DB.prepare('SELECT id FROM nodes WHERE id=? AND enabled=1').bind(body.node).first(),404,'Node unavailable');
+    let message:string;
+    if(body.action==='console-bypass'){
+      try{message=await repairConsoleBypass(env,body.node);}catch(e){throw new HttpError(503,e instanceof Error?e.message:'Repair failed');}
+    }else{
+      need(validScope(body.instance)&&['vnc','web'].includes(String(body.kind)),422,'Invalid hostname repair');
+      const row=await env.DB.prepare('SELECT snapshot FROM nodes WHERE id=?').bind(body.node).first<{snapshot:string|null}>();
+      need(row?.snapshot&&JSON.parse(row.snapshot).servers?.some((s:{instance_id:string})=>s.instance_id===body.instance),404,'Game server unavailable');
+      message=(await ensureGameEndpoint(env,body.node,body.instance,body.kind as 'vnc'|'web'))+' is provisioned with both DNS records.';
+    }
+    await audit(env,user.user_id,'readiness.repair',body.node+'/'+body.action+(body.instance?'/'+body.instance:''));
+    return reply({ok:true,message});
   }
   if (url.pathname === '/api/nodes' && request.method === 'GET') {
     const {results} = await env.DB.prepare('SELECT id,name,enabled,last_seen,snapshot FROM nodes ORDER BY name').all<{id:string;name:string;enabled:number;last_seen:number|null;snapshot:string|null}>();
@@ -507,6 +544,8 @@ export default {
       headers.set('Strict-Transport-Security','max-age=31536000');
       return new Response(response.body,{status:response.status,headers});
     } catch (error) {
+      // Expected failures carry their own status; anything else is a defect worth seeing in the tail.
+      if (!(error instanceof HttpError)) console.error('Unhandled request error', error);
       return reply({error:error instanceof HttpError ? error.message : 'Request failed; check service configuration'},error instanceof HttpError ? error.status : 500);
     }
   },

@@ -57,6 +57,8 @@ def request(config, operation, body=None, raw=False, method=None, limit=8*1024*1
     data = body if raw else json.dumps(body, separators=(',', ':')).encode() if body is not None else None
     req = urllib.request.Request(SITE+operation, data=data, method=method, headers={
         'Authorization': 'Bearer '+config['token'], 'X-Node-ID': config['node'],
+        # Cloudflare bot protection blocks Python's default User-Agent with HTTP 403.
+        'User-Agent': 'Farmservers-Node/1.0 (+https://farmservers.sargentweb.com)',
         'Content-Type': 'application/octet-stream' if raw else 'application/json'})
     with urllib.request.build_opener(NoRedirect()).open(req, timeout=120) as response:
         data = response.read(limit+1)

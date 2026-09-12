@@ -17,6 +17,16 @@ class GameSyncTests(unittest.TestCase):
         for name,data in [('VERSION',b'1.2.3.0'),('x64/FarmingSimulator2025Game.exe',b'game'),('FarmingSimulator2025.exe',b'launcher'),('dedicatedServer.exe',b'server'),('data/map.xml',b'map')]:
             path=root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(data)
 
+    def test_requests_identify_the_node_software(self):
+        # Cloudflare bot protection answers Python's default User-Agent with HTTP 403.
+        seen={}
+        class Opener:
+            def open(self,req,timeout):
+                seen.update(req.headers);raise ValueError('stop')
+        with patch.object(sync.urllib.request,'build_opener',lambda *handlers:Opener()),self.assertRaises(ValueError):
+            sync.request({'token':'t','node':'n'},'poll',{})
+        self.assertEqual(seen.get('User-agent'),'Farmservers-Node/1.0 (+https://farmservers.sargentweb.com)')
+
     def test_manifest_excludes_node_specific_data(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)/'game';self.make_game(root)

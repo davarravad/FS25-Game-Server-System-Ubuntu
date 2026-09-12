@@ -88,7 +88,7 @@ if ($route === 'api_central_manage') {
 }
 
 // Central-mode nodes serve machine APIs and authenticated game viewers only.
-if (in_array(strtolower((string) env_value('CENTRAL_MODE', '0')), ['1','true','yes'], true) && !in_array($route, ['central_view_auth','api_central_health','api_node_snapshot','api_node_status','api_node_hosts','api_node_servers','api_node_server_action','api_node_apply_updates'], true) && ($_GET['route'] ?? '') !== 'api_central_manage') {
+if (in_array(strtolower((string) env_value('CENTRAL_MODE', '0')), ['1','true','yes'], true) && !in_array($route, ['central_view_auth','api_central_health','api_node_snapshot','api_node_readiness','api_node_status','api_node_hosts','api_node_servers','api_node_server_action','api_node_apply_updates'], true) && ($_GET['route'] ?? '') !== 'api_central_manage') {
     if ($route === 'login') {
         // Older signed updaters probe this URL during the bridge update.
         header('Content-Type: text/plain; charset=utf-8');
@@ -135,6 +135,40 @@ if ($route === 'api_central_health') {
         echo json_encode(['node' => (string) env_value('CENTRAL_NODE_ID', '')]);
     }
     exit;
+}
+
+if ($route === 'api_node_readiness') {
+    // Read-only inventory for the main site's readiness check: every server on this host with
+    // how its container is wired for the game admin panel and VNC console.
+    if (!node_api_request_authorized()) {
+        json_response(['ok' => false, 'error' => 'Unauthorized'], 401);
+    }
+    session_write_close();
+    header('Cache-Control: no-store');
+    $local = local_host_record();
+    if (!$local) {
+        json_response(['ok' => false, 'error' => 'Local host record unavailable'], 503);
+    }
+    $stmt = db()->prepare('SELECT instance_id, server_name, status, is_enabled FROM server_instances WHERE host_id = ? ORDER BY instance_id ASC');
+    $stmt->execute([(int) $local['id']]);
+    $servers = $stmt->fetchAll();
+    $inspection = $servers
+        ? agent_post_for_host($local, '/instance/inspect', ['instance_ids' => array_values(array_map('strval', array_column($servers, 'instance_id')))], 30)
+        : ['ok' => true, 'containers' => []];
+    $containers = is_array($inspection['containers'] ?? null) ? $inspection['containers'] : [];
+    json_response([
+        'ok' => true,
+        'central_mode' => in_array(strtolower((string) env_value('CENTRAL_MODE', '0')), ['1', 'true', 'yes'], true),
+        'agent_ok' => (bool) ($inspection['ok'] ?? false),
+        'agent_error' => (string) ($inspection['error'] ?? ''),
+        'servers' => array_map(static fn(array $server): array => [
+            'instance_id' => (string) $server['instance_id'],
+            'server_name' => (string) $server['server_name'],
+            'status' => (string) $server['status'],
+            'is_enabled' => (bool) (int) $server['is_enabled'],
+            'container' => $containers[(string) $server['instance_id']] ?? null,
+        ], $servers),
+    ]);
 }
 
 if ($route === 'api_node_snapshot') {

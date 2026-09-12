@@ -19,7 +19,10 @@ async function refreshLive(){
     if(route().type==='game-status')liveChanged=false;
     if(liveChanged&&!$('fleet-switcher')?.open){
       const settingsPage=['node','server'].includes(route().type)&&['settings','create','logs','connection'].includes(new URLSearchParams(location.search).get('tab'));
-      if(route().type!=='game-status'&&!$('charts')&&!settingsPage&&!editDirty&&!dirty&&!$('page').contains(document.activeElement)){
+      // The Node updates page refreshes its own data every few seconds and holds readiness
+      // results and repair controls the administrator is reading; never rebuild it underneath them.
+      const selfRefreshing=route().type==='setup';
+      if(route().type!=='game-status'&&!$('charts')&&!settingsPage&&!selfRefreshing&&!editDirty&&!dirty&&!$('page').contains(document.activeElement)){
         liveChanged=false;await render();
       }else{
         banner.append(element('p','Updates are available. This page will stay as it is until you load them.'),button('Load latest changes',async()=>{if((editDirty||dirty)&&!confirm('Discard unsaved edits and load the latest changes?'))return;editDirty=false;dirty=false;editActive=false;liveChanged=false;await load();void refreshLive();}));

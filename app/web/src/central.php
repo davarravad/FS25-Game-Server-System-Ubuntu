@@ -13,6 +13,28 @@ function central_gateway_user(): ?array
     return ['id' => 0, 'username' => 'Discord ' . $id, 'discord_id' => $id, 'role' => $role];
 }
 
+/**
+ * Browser console sockets connect straight to this node's gateway hostname, where Cloudflare
+ * Access is bypassed for that one path, because a Worker cannot relay a WebSocket into a
+ * Cloudflare Tunnel. Browsers cannot send the gateway headers on a WebSocket, so the main site
+ * signs a ticket into the socket path instead:
+ * /central/view/<instance>/vnc/websockify/<expires>.<nonce>.<hmac>
+ * The HMAC is keyed by the gateway token and bound to the instance and the viewer session expiry.
+ */
+function central_console_ticket_valid(string $instance, string $requestUri, ?string $origin): bool
+{
+    $token = (string) env_value('CENTRAL_GATEWAY_TOKEN', '');
+    $path = (string) parse_url($requestUri, PHP_URL_PATH);
+    if (strlen($token) < 64 || !preg_match('#^/central/view/([a-zA-Z0-9_-]+)/vnc/websockify/([0-9]{1,12})\.([a-f0-9]{32})\.([a-f0-9]{64})$#D', $path, $m)) {
+        return false;
+    }
+    if ($m[1] !== $instance || (int) $m[2] <= time() || !is_string($origin) || !preg_match('#^https://[a-z0-9.-]+\.sargentweb\.com$#D', $origin)) {
+        return false;
+    }
+    $expected = hash_hmac('sha256', 'console|' . $instance . '|' . $m[2] . '|' . $m[3], $token);
+    return hash_equals($expected, $m[4]);
+}
+
 function central_snapshot(): array
 {
     $host = local_host_record();

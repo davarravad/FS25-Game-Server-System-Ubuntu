@@ -4,7 +4,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 
 const source=readFileSync(new URL('../public/live.js',import.meta.url),'utf8');
-for(const [type,tab] of [['node','settings'],['server','settings'],['node','create'],['node','connection'],['server','logs']])test(`${type} ${tab} never rebuild automatically after live revisions`,async()=>{
+for(const [type,tab] of [['node','settings'],['server','settings'],['node','create'],['node','connection'],['server','logs'],['setup','']])test(`${type} ${tab||'page'} never rebuild automatically after live revisions`,async()=>{
   const state=fixture(type,'?tab='+tab);
   await state.refresh();
   await state.refresh();

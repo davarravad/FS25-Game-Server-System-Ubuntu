@@ -13,6 +13,7 @@ import time
 from contextlib import suppress
 from pathlib import Path
 from game_details import collect as collect_game_details
+from container_setup import inspect_setup
 
 from flask import Flask, jsonify, request, g
 
@@ -1009,6 +1010,17 @@ def get_telemetry():
     if hours not in (1, 6, 24, 168, 720):
         return jsonify({"ok": False, "error": "Invalid range"}), 400
     return jsonify(telemetry.read(scope, hours))
+
+
+@app.route("/instance/inspect", methods=["POST"])
+def instance_inspect():
+    # Read-only: how each game container is wired for main-site panels and VNC (state,
+    # management network membership, loopback-only administrative ports).
+    payload = request.get_json(silent=True) or {}
+    instance_ids = payload.get("instance_ids")
+    if not isinstance(instance_ids, list) or len(instance_ids) > 200 or not all(isinstance(i, str) and safe_instance_id(i) for i in instance_ids):
+        return jsonify({"ok": False, "error": "Invalid instance list"}), 400
+    return jsonify({"ok": True, "containers": {i: inspect_setup(run_command, i) for i in instance_ids}})
 
 
 @app.before_request
