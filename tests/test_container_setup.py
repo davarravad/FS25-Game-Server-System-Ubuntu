@@ -15,7 +15,8 @@ def inspect_output(running=True, networks=('fsg-management', 'fs25-001_default')
         'HostConfig': {'PortBindings': bindings if bindings is not None else {
             '5900/tcp': [{'HostIp': '127.0.0.1', 'HostPort': '5901'}],
             '6080/tcp': [{'HostIp': '127.0.0.1', 'HostPort': '6081'}],
-            '18000/tcp': [{'HostIp': '127.0.0.1', 'HostPort': '18000'}],
+            '18000/tcp': [{'HostIp': '', 'HostPort': '18000'}],
+            '28000/tcp': [{'HostIp': '', 'HostPort': '28000'}],
             '10823/tcp': [{'HostIp': '', 'HostPort': '10823'}],
             '10823/udp': [{'HostIp': '', 'HostPort': '10823'}],
         }},
@@ -35,6 +36,7 @@ class ContainerSetupTests(unittest.TestCase):
         summary = module.summarize(inspect_output(running=False, networks=('fs25-001_default',), bindings={
             '5900/tcp': [{'HostIp': '0.0.0.0', 'HostPort': '5901'}],
             '6080/tcp': [{'HostIp': '', 'HostPort': '6081'}],
+            '18000/tcp': [{'HostIp': '', 'HostPort': '18000'}],
             '10823/tcp': [{'HostIp': '', 'HostPort': '10823'}],
         }), 'fs25-001')
         self.assertFalse(summary['running'])

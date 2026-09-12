@@ -6,7 +6,7 @@ import {sealToken, openToken} from './node-tokens';
 import {notifications} from './notifications';
 import {cloudflareAdmin,nodeConnection,provisionGameDomain,repairConsoleBypass} from './cloudflare';
 import {cloudflareOAuth} from './cloudflare-oauth';
-import {readGateway, saveGateway, validGateway, type Gateway} from './gateways';
+import {cachedGateway, readGateway, saveGateway, validGateway, type Gateway} from './gateways';
 import {management} from './management';
 import {gameNode,gameAdmin} from './game-sync';
 import {fleetReadiness} from './readiness';
@@ -34,12 +34,30 @@ async function auth(request: Request, env: Bindings, role: Role = 'viewer') {
   return user;
 }
 async function gateway(env: Bindings, id: string): Promise<Gateway> {
-  let stored;
-  try { stored=await readGateway(env,id); }
+  let stored: Gateway|null;
+  try { stored=await cachedGateway(env,id); }
   catch { throw new HttpError(503,'Saved gateway credentials could not be opened. Check NODE_TOKEN_KEY.'); }
-  need(stored.gateway,503,'Open this node’s Gateway settings and save its tunnel URL and credentials.');
-  return stored.gateway;
+  need(stored,503,'Open this node’s Gateway settings and save its tunnel URL and credentials.');
+  return stored;
 }
+type Endpoint={node_id:string;instance:string;kind:string};
+// Public game-panel hostnames are looked up on every request, including each asset a browser
+// loads and every poll from a Discord bot. The answer only changes with a heartbeat or an admin
+// action, so it is remembered per isolate for a short while; misses are remembered briefly too.
+const endpoints=new Map<string,{endpoint:Endpoint|null;until:number}>();
+async function publicEndpoint(env:Bindings,host:string):Promise<Endpoint|null>{
+  const hit=endpoints.get(host);
+  if(hit&&hit.until>Date.now())return hit.endpoint;
+  const row=await env.DB.prepare('SELECT e.node_id,e.instance,e.kind,n.snapshot FROM game_endpoints e JOIN nodes n ON n.id=e.node_id WHERE e.host=? AND e.ready=1 AND n.enabled=1').bind(host).first<Endpoint&{snapshot:string|null}>();
+  let endpoint:Endpoint|null=null;
+  if(row?.snapshot){
+    try{if(JSON.parse(row.snapshot).servers?.some((s:{instance_id:string})=>s.instance_id===row.instance))endpoint={node_id:row.node_id,instance:row.instance,kind:row.kind};}
+    catch{ /* A malformed snapshot is treated as an unavailable server. */ }
+  }
+  endpoints.set(host,{endpoint,until:Date.now()+(endpoint?20000:5000)});
+  return endpoint;
+}
+const cacheableAsset=(pathname:string)=>/\.(?:css|js|mjs|png|jpe?g|gif|svg|ico|webp|woff2?|ttf|eot|otf)$/i.test(pathname)&&!pathname.startsWith('/feed/');
 function gatewayHeaders(g: Gateway, user: Session): Headers {
   return new Headers({'X-Central-Token':g.token,'X-Central-User':user.user_id,'X-Central-Role':user.role,'CF-Access-Client-Id':g.accessClientId,'CF-Access-Client-Secret':g.accessClientSecret});
 }
@@ -110,7 +128,9 @@ async function heartbeat(request: Request, env: Bindings, id: string) {
   await env.DB.batch([
     env.DB.prepare('UPDATE nodes SET last_seen=?,snapshot=? WHERE id=?').bind(now(),JSON.stringify({servers,samples}),id),
     ...(publicIPv4(detectedIp) ? [env.DB.prepare('UPDATE nodes SET detected_public_ip=? WHERE id=?').bind(detectedIp,id)] : []),
-    ...(env.NODE_TOKEN_KEY ? [env.DB.prepare('UPDATE nodes SET token_encrypted=? WHERE id=? AND token_hash=?').bind(await sealToken(env.NODE_TOKEN_KEY,id,bearer.slice(7)),id,await digest(bearer.slice(7)))] : []),
+    // Nodes enrolled before token storage existed publish their token here once; later
+    // heartbeats leave the stored value alone instead of re-encrypting it every 30 seconds.
+    ...(env.NODE_TOKEN_KEY ? [env.DB.prepare('UPDATE nodes SET token_encrypted=? WHERE id=? AND token_hash=? AND token_encrypted IS NULL').bind(await sealToken(env.NODE_TOKEN_KEY,id,bearer.slice(7)),id,await digest(bearer.slice(7)))] : []),
     ...samples.map(s => env.DB.prepare('INSERT OR IGNORE INTO samples(node_id,scope,ts,data) VALUES(?,?,?,?)').bind(id,s.scope,s.timestamp,JSON.stringify(s.data)))
   ]);
   return reply({ok:true,interval_seconds:30});
@@ -118,14 +138,17 @@ async function heartbeat(request: Request, env: Bindings, id: string) {
 type View = {hash:string;session_hash:string;node_id:string;host:string;kind:string;instance:string;expires:number};
 // Allocates the stable hostname for a game server's console or game admin panel, attaches it to
 // this Worker, and returns it only once Cloudflare has published both of its DNS records.
-async function ensureGameEndpoint(env:Bindings,node:string,instance:string,kind:'vnc'|'web'):Promise<string>{
+async function ensureGameEndpoint(env:Bindings,node:string,instance:string,kind:'vnc'|'web',recheck=false):Promise<string>{
   await env.DB.prepare('INSERT OR IGNORE INTO game_slots(node_id,instance) VALUES(?,?)').bind(node,instance).run();
   const slot=await env.DB.prepare('SELECT id FROM game_slots WHERE node_id=? AND instance=?').bind(node,instance).first<{id:number}>();
   const host=(kind==='web'?'game-':'console-')+'fs25-'+String(slot!.id).padStart(4,'0')+'.sargentweb.com';
   await env.DB.prepare('INSERT INTO game_endpoints(host,node_id,instance,kind) VALUES(?,?,?,?) ON CONFLICT(node_id,instance,kind) DO UPDATE SET host=excluded.host,ready=CASE WHEN host=excluded.host THEN ready ELSE 0 END').bind(host,node,instance,kind).run();
   const endpoint=await env.DB.prepare('SELECT ready FROM game_endpoints WHERE host=?').bind(host).first<{ready:number}>();
   const pending='Cloudflare is still creating DNS records for '+host+'. This usually takes a minute or two; open it again shortly.';
-  if(!endpoint?.ready){
+  // A hostname that has been handed out before is never gated again on launch: the readiness
+  // check reports DNS trouble separately, and a gate here would take working consoles down.
+  // A readiness repair asks for a real re-check, which also re-attaches a detached domain.
+  if(!endpoint?.ready||recheck){
     let dnsReady:boolean;
     try{dnsReady=await provisionGameDomain(env,host);}catch(e){throw new HttpError(503,e instanceof Error?e.message:'Hostname setup failed');}
     // The hostname is not marked ready, nor handed to a browser, until Cloudflare has published
@@ -133,9 +156,25 @@ async function ensureGameEndpoint(env:Bindings,node:string,instance:string,kind:
     need(dnsReady,503,pending);
     await env.DB.prepare('UPDATE game_endpoints SET ready=1 WHERE host=?').bind(host).run();
   }
-  // A hostname that has been handed out before is never gated again: the readiness check
-  // reports DNS trouble separately, and a gate here would take working consoles down.
   return host;
+}
+// Public game-panel and console hostnames are created as soon as a server appears in a node's
+// heartbeat, so bots and players have a working address before an admin ever opens it. Each run
+// provisions a few at most, keeping well inside the Worker's subrequest budget.
+async function provisionPendingEndpoints(env:Bindings){
+  const nodes=(await env.DB.prepare('SELECT id,snapshot FROM nodes WHERE enabled=1 AND last_seen>?').bind(now()-900).all<{id:string;snapshot:string|null}>()).results;
+  const ready=new Set((await env.DB.prepare('SELECT node_id,instance,kind FROM game_endpoints WHERE ready=1').all<{node_id:string;instance:string;kind:string}>()).results.map(e=>e.node_id+'/'+e.instance+'/'+e.kind));
+  let budget=4;
+  for(const node of nodes){
+    let servers:{instance_id:string}[]=[];
+    try{servers=JSON.parse(node.snapshot||'{}').servers||[];}catch{continue;}
+    for(const server of servers)for(const kind of ['web','vnc'] as const){
+      if(budget<=0||!validScope(server.instance_id)||ready.has(node.id+'/'+server.instance_id+'/'+kind))continue;
+      budget--;
+      try{await ensureGameEndpoint(env,node.id,server.instance_id,kind);}
+      catch{ /* Not ready yet or automation unavailable; the readiness page explains and the next run retries. */ }
+    }
+  }
 }
 async function launch(request: Request, env: Bindings, url: URL) {
   const user = await auth(request,env,'admin');
@@ -189,9 +228,13 @@ async function viewer(request: Request, env: Bindings, url: URL): Promise<Respon
   }
   return proxyViewer(request,env,url,view,user);
 }
-async function proxyViewer(request:Request,env:Bindings,url:URL,view:View,user:Session|null):Promise<Response>{
+async function proxyViewer(request:Request,env:Bindings,url:URL,view:View,user:Session|null,ctx?:ExecutionContext):Promise<Response>{
   const websocket = request.headers.get('Upgrade')?.toLowerCase() === 'websocket';
   need(!websocket||!!user,403,'Console access requires dashboard sign-in');
+  // The public game panel's stylesheets, scripts, fonts and images never depend on the visitor,
+  // so they are served from the edge cache instead of crossing the tunnel for every page view.
+  const cacheable=view.kind==='web'&&!user&&request.method==='GET'&&cacheableAsset(url.pathname);
+  if(cacheable){const hit=await caches.default.match(request);if(hit)return hit;}
   if (websocket || !['GET','HEAD'].includes(request.method)) {
     // Same-origin form navigations (e.g. the game panel's own login form) omit the
     // Origin header entirely per the Fetch spec; Sec-Fetch-Site still reports them
@@ -254,8 +297,16 @@ async function proxyViewer(request:Request,env:Bindings,url:URL,view:View,user:S
     out.set('Location',url.origin+pathname+destination.search+destination.hash);
   }
   out.set('Cache-Control','no-store');out.set('Referrer-Policy','no-referrer');out.set('X-Content-Type-Options','nosniff');out.set('Content-Security-Policy',"frame-ancestors 'none'");
+  const html=upstream.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() === 'text/html';
+  if(cacheable&&upstream.status===200&&!html&&!upstream.headers.getSetCookie().length){
+    out.set('Cache-Control','public, max-age=600');
+    const asset=new Response(upstream.body,{status:200,headers:out});
+    const store=caches.default.put(request,asset.clone());
+    if(ctx)ctx.waitUntil(store);else await store;
+    return asset;
+  }
   const response = new Response(upstream.body,{status:upstream.status,headers:out});
-  if (gameOrigin && upstream.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() === 'text/html'
+  if (gameOrigin && html
       && !upstream.headers.has('Content-Disposition') && upstream.status !== 206 && request.method !== 'HEAD') {
     return rewriteGameHtml(response,url.origin,gameOrigin);
   }
@@ -331,7 +382,7 @@ async function api(request: Request, env: Bindings, url: URL) {
       need(validScope(body.instance)&&['vnc','web'].includes(String(body.kind)),422,'Invalid hostname repair');
       const row=await env.DB.prepare('SELECT snapshot FROM nodes WHERE id=?').bind(body.node).first<{snapshot:string|null}>();
       need(row?.snapshot&&JSON.parse(row.snapshot).servers?.some((s:{instance_id:string})=>s.instance_id===body.instance),404,'Game server unavailable');
-      message=(await ensureGameEndpoint(env,body.node,body.instance,body.kind as 'vnc'|'web'))+' is provisioned with both DNS records.';
+      message=(await ensureGameEndpoint(env,body.node,body.instance,body.kind as 'vnc'|'web',true))+' is provisioned with both DNS records.';
     }
     await audit(env,user.user_id,'readiness.repair',body.node+'/'+body.action+(body.instance?'/'+body.instance:''));
     return reply({ok:true,message});
@@ -503,14 +554,14 @@ async function api(request: Request, env: Bindings, url: URL) {
 }
 
 export default {
-  async fetch(request: Request, env: Bindings): Promise<Response> {
+  async fetch(request: Request, env: Bindings, ctx: ExecutionContext): Promise<Response> {
     try {
       const url = new URL(request.url);
       if(url.origin!==env.APP_ORIGIN&&/^(game|console)-[a-z0-9-]+\.sargentweb\.com$/.test(url.hostname)){
-        const endpoint=await env.DB.prepare('SELECT e.*,n.snapshot FROM game_endpoints e JOIN nodes n ON n.id=e.node_id WHERE e.host=? AND e.ready=1 AND n.enabled=1').bind(url.hostname).first<{node_id:string;instance:string;kind:string;snapshot:string|null}>();
-        need(endpoint&&endpoint.snapshot&&JSON.parse(endpoint.snapshot).servers?.some((s:{instance_id:string})=>s.instance_id===endpoint.instance),404,'Game server unavailable');
+        const endpoint=await publicEndpoint(env,url.hostname);
+        need(endpoint,404,'Game server unavailable');
         if(endpoint.kind==='vnc')return await viewer(request,env,url);
-        return await proxyViewer(request,env,url,{hash:'',session_hash:'',node_id:endpoint.node_id,host:url.hostname,kind:'web',instance:endpoint.instance,expires:0},null);
+        return await proxyViewer(request,env,url,{hash:'',session_hash:'',node_id:endpoint.node_id,host:url.hostname,kind:'web',instance:endpoint.instance,expires:0},null,ctx);
       }
       if (url.hostname.endsWith('.'+new URL(env.APP_ORIGIN).hostname) && /^view-[a-f0-9]{24}\./.test(url.hostname)) return await viewer(request,env,url);
       need(url.origin === env.APP_ORIGIN,404,'Unknown host');
@@ -549,7 +600,8 @@ export default {
       return reply({error:error instanceof HttpError ? error.message : 'Request failed; check service configuration'},error instanceof HttpError ? error.status : 500);
     }
   },
-  async scheduled(_event: ScheduledController, env: Bindings) {
+  async scheduled(event: ScheduledController, env: Bindings) {
+    if(event.cron==='*/10 * * * *'){await provisionPendingEndpoints(env);return;}
     await env.DB.batch([
       ...['oauth_states','sessions','tickets','views'].map(table => env.DB.prepare(`DELETE FROM ${table} WHERE expires<?`).bind(now())),
       env.DB.prepare('DELETE FROM samples WHERE ts<?').bind(now()-30*86400),

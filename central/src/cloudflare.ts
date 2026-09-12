@@ -5,7 +5,7 @@ import {oauthAccessToken,OAuthRefreshBusy} from './cloudflare-oauth';
 
 type EnvCF={DB:D1Database;NODE_TOKEN_KEY:string;BOOTSTRAP_ADMIN_ID:string};
 type Settings={account:string;zone:string;domain:string;token:string;oauth?:boolean};
-type Connection={name:string;hostname:string;account:string;zone:string;port:number;revision:string;gatewayToken:string;tunnelId?:string;tunnelToken?:string;serviceId?:string;clientId?:string;clientSecret?:string;expires?:string;verificationAttempts?:number;appId?:string;consoleAppId?:string};
+type Connection={name:string;hostname:string;account:string;zone:string;port:number;revision:string;gatewayToken:string;tunnelId?:string;tunnelToken?:string;serviceId?:string;clientId?:string;clientSecret?:string;expires?:string;verificationAttempts?:number;appId?:string;consoleAppId?:string;consolePath?:string;tokenFailures?:number};
 type Row={node_id:string;encrypted:string;stage:string;error:string|null;updated:number};
 const json=(data:unknown,status=200)=>Response.json(data,{status,headers:{'Cache-Control':'no-store'}});
 const now=()=>Math.floor(Date.now()/1000);
@@ -38,15 +38,23 @@ async function list<T>(s:Settings,path:string):Promise<T[]>{
 // the idle timeout. Each node therefore gets a second, more specific Access application that
 // bypasses Access for the console socket path only. The node still requires the gateway token
 // there, so the path is not public. Access prefers the most specific path, so no ordering is needed.
-export const consoleBypassPath='/central/view/*/vnc/websockify';
+// Access application paths are not prefix matches: the socket path always carries a signed ticket
+// segment after /websockify, so the application must end in a wildcard to cover it.
+export const consoleBypassPath='/central/view/*/vnc/websockify/*';
+const legacyConsoleBypassPath='/central/view/*/vnc/websockify';
+// Readiness probes the bypass with a well-formed but invalid ticket, exercising the real path shape.
+export const consoleProbePath='/central/view/readiness-check/vnc/websockify/0.'+'0'.repeat(32)+'.'+'0'.repeat(64);
 type AccessApp={id:string;name:string;domain:string};
 async function ensureConsoleBypass(s:Settings,c:Connection,apps:AccessApp[]):Promise<string>{
   const domain=c.hostname+consoleBypassPath, name=c.name+'-console';
-  const existing=apps.find(a=>a.domain===domain);
+  const existing=apps.find(a=>a.domain===domain)||apps.find(a=>a.domain===c.hostname+legacyConsoleBypassPath);
   if(existing && existing.name!==name)throw new SetupError('This hostname already has an Access application for the console path. Remove the conflicting configuration in Cloudflare, then retry.');
   const body={name,domain,type:'self_hosted',session_duration:'24h',app_launcher_visible:false,policies:[{name,decision:'bypass',include:[{everyone:{}}]}]};
-  return (await cf<{id:string}>(s,accessAppsPath(s)+(existing?'/'+existing.id:''),existing?'PUT':'POST',body)).id;
+  const id=(await cf<{id:string}>(s,accessAppsPath(s)+(existing?'/'+existing.id:''),existing?'PUT':'POST',body)).id;
+  c.consolePath=consoleBypassPath;
+  return id;
 }
+const consoleBypassCurrent=(c:Connection)=>!!c.consoleAppId&&c.consolePath===consoleBypassPath;
 export async function settings(env:EnvCF){
   const row=await env.DB.prepare('SELECT encrypted,enabled FROM cloudflare_settings WHERE id=1').first<{encrypted:string;enabled:number}>();
   return row?{value:JSON.parse(await openToken(env.NODE_TOKEN_KEY,'cloudflare-settings',row.encrypted)) as Settings,enabled:!!row.enabled}:null;
@@ -76,14 +84,14 @@ export async function provisionGameDomain(env:EnvCF,hostname:string){
 // and both address families must answer. A resolver asked before publication caches NXDOMAIN for
 // the zone's negative TTL (30 minutes), which is why a hostname is never handed to a browser early.
 export async function hostnameResolves(hostname:string):Promise<boolean>{
-  for(const [type,code] of [['A',1],['AAAA',28]] as const){
+  const answers=await Promise.all(([['A',1],['AAAA',28]] as const).map(async([type,code])=>{
     try{
       const response=await fetch('https://cloudflare-dns.com/dns-query?name='+encodeURIComponent(hostname)+'&type='+type,{headers:{accept:'application/dns-json'},signal:AbortSignal.timeout(10000)});
       const data=await response.json<{Status:number;Answer?:{type:number}[]}>();
-      if(data.Status!==0||!data.Answer?.some(a=>a.type===code))return false;
+      return data.Status===0&&!!data.Answer?.some(a=>a.type===code);
     }catch{return false;}
-  }
-  return true;
+  }));
+  return answers.every(Boolean);
 }
 // Readiness repair: (re)create the console bypass application for a node right now instead of
 // waiting for its next connection poll. Refuses while a setup step holds the lease.
@@ -124,8 +132,10 @@ export async function cloudflareAdmin(request:Request,env:EnvCF){
     }
     if(path==='/api/cloudflare/retry' && request.method==='POST'){
       const body=await readJson(request,4096);if(!validId(body.id))return json({error:'Invalid node'},422);
-      const existing=await env.DB.prepare('SELECT encrypted FROM node_connections WHERE node_id=? AND lease_until<?').bind(body.id,now()).first<{encrypted:string}>();
-      if(!existing)return json({error:'Setup is not available for retry.'},409);
+      // Only a failed setup is retried: rotating the revision of a healthy node would make it
+      // recreate its connector and web container, dropping the tunnel for nothing.
+      const existing=await env.DB.prepare('SELECT encrypted FROM node_connections WHERE node_id=? AND lease_until<? AND error IS NOT NULL').bind(body.id,now()).first<{encrypted:string}>();
+      if(!existing)return json({error:'No failed setup exists, or setup is currently running.'},409);
       const c=JSON.parse(await openToken(env.NODE_TOKEN_KEY,'connection:'+body.id,existing.encrypted)) as Connection;c.revision=crypto.randomUUID();c.verificationAttempts=0;
       const row=await env.DB.prepare('UPDATE node_connections SET error=NULL,encrypted=? WHERE node_id=? AND lease_until<? RETURNING node_id').bind(await sealToken(env.NODE_TOKEN_KEY,'connection:'+body.id,JSON.stringify(c)),body.id,now()).first();
       return row?json({ok:true}):json({error:'No failed setup exists, or setup is currently running.'},409);
@@ -134,6 +144,7 @@ export async function cloudflareAdmin(request:Request,env:EnvCF){
   }catch(e){return json({error:e instanceof SetupError?e.message:'Cloudflare settings could not be opened or saved. Check the database migration and NODE_TOKEN_KEY.'},503);}
 }
 
+const credentialRenewalDue=(c:Connection)=>!c.expires || Date.parse(c.expires)<Date.now()+30*86400000;
 // One recoverable step per authenticated node poll; leases prevent overlapping API mutations.
 async function step(env:EnvCF,s:Settings,c:Connection,stage:string):Promise<string>{
   const base='/accounts/'+c.account;
@@ -176,9 +187,10 @@ async function step(env:EnvCF,s:Settings,c:Connection,stage:string):Promise<stri
     if(typeof c.tunnelToken!=='string'||!c.tunnelToken.length)throw new SetupError('Cloudflare did not return a tunnel token.');
     return 'installing';
   }
-  // Nodes provisioned before the console bypass existed gain it on their next poll.
-  if(stage==='ready' && !c.consoleAppId)c.consoleAppId=await ensureConsoleBypass(s,c,await list<AccessApp>(s,accessAppsPath(s)));
-  if(stage==='ready' && (!c.expires || Date.parse(c.expires)<Date.now()+30*86400000)){
+  // Nodes provisioned before the console bypass existed, or with its previous path, are brought
+  // up to date on their next poll.
+  if(stage==='ready' && !consoleBypassCurrent(c))c.consoleAppId=await ensureConsoleBypass(s,c,await list<AccessApp>(s,accessAppsPath(s)));
+  if(stage==='ready' && credentialRenewalDue(c)){
     const renewed=await cf<{expires_at:string}>(s,base+'/access/service_tokens/'+c.serviceId+'/refresh','POST');
     if(!renewed.expires_at || !Number.isFinite(Date.parse(renewed.expires_at)))throw new SetupError('Cloudflare did not return the renewed credential expiry.');
     c.expires=renewed.expires_at;
@@ -227,11 +239,21 @@ export async function nodeConnection(request:Request,env:EnvCF){
         if(c.verificationAttempts>=10)throw new SetupError('Protected node health check failed. '+detail);
       }
     }else {
-      if(configured.value.oauth){
-        try{configured.value.token=await oauthAccessToken(env);}
-        catch(e){if(e instanceof OAuthRefreshBusy)throw e;throw new SetupError('Cloudflare authorization needs attention. Reconnect with Cloudflare, then retry setup.');}
+      // A ready node only needs the Cloudflare API for occasional maintenance, so its polls do
+      // not fetch an access token at all; and a transient token failure is retried on later polls
+      // instead of parking the node in an error state that needs a manual retry.
+      const needsApi=stage!=='ready'||!consoleBypassCurrent(c)||credentialRenewalDue(c);
+      let authorized=true;
+      if(needsApi&&configured.value.oauth){
+        try{configured.value.token=await oauthAccessToken(env);c.tokenFailures=0;}
+        catch(e){
+          if(e instanceof OAuthRefreshBusy)throw e;
+          c.tokenFailures=(c.tokenFailures||0)+1;
+          if(c.tokenFailures>=3)throw new SetupError('Cloudflare authorization needs attention. Reconnect with Cloudflare, then retry setup.');
+          authorized=false;
+        }
       }
-      stage=await step(env,configured.value,c,stage);
+      if(authorized)stage=await step(env,configured.value,c,stage);
     }
     await env.DB.prepare('UPDATE node_connections SET encrypted=?,stage=?,updated=? WHERE node_id=? AND lease=?').bind(await sealToken(env.NODE_TOKEN_KEY,'connection:'+id,JSON.stringify(c)),stage,now(),id,lease).run();
     return json({connection:['installing','verifying','ready'].includes(stage)?{revision:c.revision,gatewayToken:c.gatewayToken,tunnelToken:c.tunnelToken}:null});

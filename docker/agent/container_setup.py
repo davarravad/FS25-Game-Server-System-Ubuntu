@@ -1,15 +1,16 @@
 """Summarise how a game server container is wired for main-site game panels and VNC.
 
 The main site opens game admin panels and the VNC console through the node's nginx, which
-reaches each game container by name on the management network and expects the administrative
-ports to be published on loopback only. This module reduces `docker inspect` output to the
-facts the readiness check needs.
+reaches each game container by name on the management network. Only the desktop console ports
+(VNC and noVNC) must be published on loopback; the game admin panel, game port and SFTP port are
+public by design. This module reduces `docker inspect` output to the facts the readiness check
+needs.
 """
 import json
 from typing import Callable, Optional
 
 MANAGEMENT_NETWORK = "fsg-management"
-GAME_PORT = "10823"
+CONSOLE_PORTS = {"5900", "6080"}
 LOOPBACK_ADDRESSES = {"127.0.0.1", "::1"}
 
 
@@ -30,7 +31,7 @@ def summarize(inspect: Optional[dict], name: str) -> dict:
     bindings = (inspect.get("HostConfig") or {}).get("PortBindings") or {}
     exposed = []
     for port, targets in bindings.items():
-        if str(port).split("/")[0] == GAME_PORT:
+        if str(port).split("/")[0] not in CONSOLE_PORTS:
             continue
         for target in targets or []:
             host_ip = str((target or {}).get("HostIp") or "")

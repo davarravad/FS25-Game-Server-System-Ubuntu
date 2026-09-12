@@ -15,7 +15,7 @@ test('fleet readiness reports node connection, console bypass, release, hostname
     const url=new URL(req.url);probes.push(url.pathname+url.search);
     if(url.hostname==='cloudflare-dns.com'){const name=url.searchParams.get('name')!,type=url.searchParams.get('type')!;return Response.json(name==='console-fs25-0001.sargentweb.com'||(name==='game-fs25-0001.sargentweb.com'&&type==='AAAA')?{Status:0,Answer:[{name,type:type==='A'?1:28,TTL:300,data:'x'}]}:{Status:3});}
     assert.equal(url.hostname,'origin-node-1.sargentweb.com');
-    if(url.pathname==='/central/view/readiness-check/vnc/websockify'){assert.equal(req.headers.get('CF-Access-Client-Secret'),null,'The bypass probe must not present Access credentials');return new Response('forbidden',{status:bypassStatus});}
+    if(url.pathname.startsWith('/central/view/readiness-check/vnc/websockify/')){assert.equal(req.headers.get('CF-Access-Client-Secret'),null,'The bypass probe must not present Access credentials');return new Response('forbidden',{status:bypassStatus});}
     assert.equal(req.headers.get('X-Central-Token'),'a'.repeat(64));assert.equal(req.headers.get('CF-Access-Client-Secret'),'secret');assert.equal(req.headers.get('X-Central-Role'),'admin');
     if(url.searchParams.get('route')==='api_central_health')return Response.json({node:'node-1'});
     if(url.searchParams.get('route')==='api_node_readiness'){

@@ -9,6 +9,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from contextlib import suppress
 from pathlib import Path
@@ -33,6 +34,12 @@ SFTP_GID = int(os.getenv("SFTP_GID", "1000"))
 HOST_FIREWALL_MODE = os.getenv("HOST_FIREWALL_MODE", "auto").strip().lower()
 HOST_FIREWALL_HELPER_IMAGE = os.getenv("HOST_FIREWALL_HELPER_IMAGE", "ubuntu:24.04").strip() or "ubuntu:24.04"
 COMPOSE_COMMAND = None
+SFTP_KEYS_DIR_NAME = "sftp-keys"
+PROFILE_RELATIVE_PATH = "data/config/FarmingSimulator2025"
+
+
+def central_mode() -> bool:
+    return os.getenv("CENTRAL_MODE", "0").strip().lower() in {"1", "true", "yes"}
 
 
 def require_auth():
@@ -190,11 +197,16 @@ def apply_permissions(path: Path, recursive: bool = True):
         with suppress(PermissionError, OSError):
             os.chmod(target, 0o775 if target.is_dir() else 0o664)
 
+    if path.name == SFTP_KEYS_DIR_NAME:
+        return
+
     set_perms(path)
 
     if recursive and path.is_dir():
         for root, dirs, files in os.walk(path):
             root_path = Path(root)
+            # SFTP host keys must stay root-only, or sshd refuses to load them.
+            dirs[:] = [name for name in dirs if name != SFTP_KEYS_DIR_NAME]
             set_perms(root_path)
             for name in dirs:
                 set_perms(root_path / name)
@@ -268,12 +280,14 @@ def build_instance_values(instance_id: str, payload: dict, existing_env: dict | 
 
     return {
         "INSTANCE_ID": instance_id,
-        # Applied to VNC, noVNC, web admin and TLS only. The per-server SFTP port stays
-        # published like the game port so third-party SFTP clients can reach it directly;
-        # see compose.instance.yml.tpl.
-        "ADMIN_BIND": "127.0.0.1:" if os.getenv("CENTRAL_MODE", "0") == "1" else "",
-        "MANAGEMENT_SERVICE_NETWORK": "    networks: [default, management]" if os.getenv("CENTRAL_MODE", "0") == "1" else "",
-        "MANAGEMENT_NETWORK": "networks:\n  management:\n    external: true\n    name: fsg-management" if os.getenv("CENTRAL_MODE", "0") == "1" else "",
+        # Loopback-only publishing applies to VNC and noVNC: the desktop console is reachable
+        # only through the main site. The game admin panel (web and TLS), the game port and the
+        # per-server SFTP port stay public so players, bots and SFTP clients reach them directly.
+        "ADMIN_BIND": "127.0.0.1:" if central_mode() else "",
+        "WEB_BIND": "",
+        "SFTP_KEY_VOLUMES": "",
+        "MANAGEMENT_SERVICE_NETWORK": "    networks: [default, management]" if central_mode() else "",
+        "MANAGEMENT_NETWORK": "networks:\n  management:\n    external: true\n    name: fsg-management" if central_mode() else "",
         "SERVER_NAME": current("SERVER_NAME", instance_id),
         "SERVER_PASSWORD": current("SERVER_PASSWORD", ""),
         "SERVER_ADMIN": current("SERVER_ADMIN", ""),
@@ -307,7 +321,35 @@ def build_instance_values(instance_id: str, payload: dict, existing_env: dict | 
     }
 
 
+def ensure_sftp_host_keys(instance_dir: Path) -> str:
+    """Keep one SSH host key pair per server so SFTP clients never see a changed-key warning
+    after the SFTP container is recreated. Returns the compose volume lines to mount them."""
+    keys_dir = instance_dir / SFTP_KEYS_DIR_NAME
+    keys_dir.mkdir(parents=True, exist_ok=True)
+    with suppress(OSError):
+        os.chmod(keys_dir, 0o700)
+    volumes = []
+    for algorithm in ("ed25519", "rsa"):
+        key = keys_dir / f"ssh_host_{algorithm}_key"
+        if not key.exists():
+            result = run_command([
+                "docker", "run", "--rm", "--entrypoint", "ssh-keygen",
+                "-v", f"{keys_dir}:/keys", "atmoz/sftp:alpine",
+                "-q", "-t", algorithm, "-f", f"/keys/{key.name}", "-N", "",
+            ], timeout=180)
+            if result["code"] != 0 or not key.exists():
+                append_runtime_log(instance_dir.name, f"Console: Could not create a persistent SFTP {algorithm} host key; the SFTP container will generate a temporary one.")
+                continue
+        for path in (key, key.with_name(key.name + ".pub")):
+            with suppress(OSError):
+                os.chmod(path, 0o600 if path == key else 0o644)
+        volumes.append(f"      - ./{SFTP_KEYS_DIR_NAME}/{key.name}:/etc/ssh/{key.name}:ro")
+    return "\n".join(volumes)
+
+
 def render_instance_files(instance_dir: Path, values: dict, write_env: bool = False):
+    create_instance_data_dirs(instance_dir)
+    values = {**values, "SFTP_KEY_VOLUMES": ensure_sftp_host_keys(instance_dir)}
     compose_tpl = (TEMPLATE_DIR / "compose.instance.yml.tpl").read_text(encoding="utf-8")
     write_file(instance_dir / "compose.yml", render_template(compose_tpl, values))
     write_file(
@@ -323,7 +365,9 @@ def render_instance_files(instance_dir: Path, values: dict, write_env: bool = Fa
 
 
 def create_instance_data_dirs(instance_dir: Path):
-    for sub in ["data/config", "data/mods", "data/logs", "data/saves"]:
+    # The profile folder is bind-mounted into the SFTP container, so it must exist before
+    # compose starts or Docker would create it owned by root.
+    for sub in ["data/config", PROFILE_RELATIVE_PATH, "data/mods", "data/logs", "data/saves"]:
         (instance_dir / sub).mkdir(parents=True, exist_ok=True)
 
 
@@ -357,7 +401,8 @@ def read_runtime_log(instance_id: str, max_lines: int = 400) -> str:
     lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
     if max_lines > 0:
         lines = lines[-max_lines:]
-    return "\n".join(lines)
+    # Older runtime images wrote the web admin password into this log; never hand it out.
+    return "\n".join(re.sub(r"(\[Webserver\]: Password: ).*", r"\1********", line) for line in lines)
 
 
 def parse_port_number(value) -> int | None:
@@ -1012,6 +1057,12 @@ def get_telemetry():
     return jsonify(telemetry.read(scope, hours))
 
 
+@app.post("/telemetry/latest")
+def get_latest_telemetry():
+    # One call for the heartbeat publisher instead of one aggregation query per server.
+    return jsonify({"ok": True, "scopes": telemetry.latest_all()})
+
+
 @app.route("/instance/inspect", methods=["POST"])
 def instance_inspect():
     # Read-only: how each game container is wired for main-site panels and VNC (state,
@@ -1083,11 +1134,15 @@ def create_instance():
 
     ensure_shared_storage(payload)
 
-    create_instance_data_dirs(instance_dir)
-    apply_permissions(instance_dir, recursive=True)
-
-    render_instance_files(instance_dir, values, write_env=True)
-    write_instance_state(instance_id, False)
+    try:
+        create_instance_data_dirs(instance_dir)
+        apply_permissions(instance_dir, recursive=True)
+        render_instance_files(instance_dir, values, write_env=True)
+        write_instance_state(instance_id, False)
+    except Exception as exc:
+        # A half-written folder would make every later create of this ID fail with 409.
+        remove_path_tree(instance_dir)
+        return jsonify({"ok": False, "error": f"Instance files could not be created: {exc}"}), 500
     append_runtime_log(instance_id, "Console: Server created.")
     firewall = sync_public_port_access(instance_id, next_values=values)
     try:
@@ -1209,7 +1264,9 @@ def instance_action():
     action_map = {
         "start": compose_cmd("-f", str(compose_file), "up", "-d"),
         "stop": compose_cmd("-f", str(compose_file), "stop"),
-        "restart": compose_cmd("-f", str(compose_file), "restart"),
+        # `compose restart` keeps the existing containers, so edited ports, credentials or the
+        # image would never take effect; recreating applies the synced configuration every time.
+        "restart": compose_cmd("-f", str(compose_file), "up", "-d", "--force-recreate"),
         "pull": compose_cmd("-f", str(compose_file), "pull"),
         "rebuild": compose_cmd("-f", str(compose_file), "up", "-d", "--force-recreate"),
         "resync": compose_cmd("-f", str(compose_file), "up", "-d", "--force-recreate"),
@@ -1291,12 +1348,10 @@ def delete_instance():
             cwd=str(instance_dir),
             timeout=30,
         )
-        if compose_down_result["code"] != 0 and not compose_down_result.get("timed_out"):
-            return jsonify({
-                "ok": False,
-                "error": (compose_down_result.get("stderr") or compose_down_result.get("stdout") or "Failed to stop instance containers").strip(),
-                "result": {"compose_down": compose_down_result},
-            }), 500
+        if compose_down_result["code"] != 0:
+            # A hung or failed compose down must not leave the named containers behind, or the
+            # same instance ID could never be created again.
+            run_command(["docker", "rm", "-f", instance_id, f"{instance_id}-sftp"], timeout=60)
 
     firewall = sync_public_port_access(instance_id, next_values={}, current_values=existing_env)
     cleanup = remove_path_tree(instance_dir)
@@ -1362,9 +1417,9 @@ def upload_instance_file():
         return jsonify({"ok": False, "error": "invalid filename"}), 400
 
     target_map = {
-        "profile": "data/config",
-        "mods": "data/mods",
-        "saves": "data/saves",
+        "profile": PROFILE_RELATIVE_PATH,
+        "mods": PROFILE_RELATIVE_PATH + "/mods",
+        "saves": PROFILE_RELATIVE_PATH,
         "config": "data/config",
         "logs": "data/logs",
     }
@@ -1659,5 +1714,7 @@ def upload_host_file_chunk():
 
 if __name__ == "__main__":
     telemetry.start()
-    restore_desired_instances()
+    # Bringing every instance back after a reboot can take minutes; the API (and its health
+    # check) must not wait for it.
+    threading.Thread(target=restore_desired_instances, name="restore-instances", daemon=True).start()
     app.run(host="0.0.0.0", port=8081)

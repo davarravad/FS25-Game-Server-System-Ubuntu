@@ -4,6 +4,8 @@ New launches provision individual Worker Custom Domains instead of relying on th
 
 Game admin opens a public URL without a dashboard session or expiring ticket. Share it with **Copy public game panel URL**. The game's own web login remains responsible for access to its administration controls. Public requests receive only the gateway permission needed for that instance's game web service; they do not receive a dashboard identity. Game cookies remain on the individual game's hostname.
 
+Hostnames are provisioned automatically: a Worker cron runs every ten minutes and creates the `game-` and `console-` hostnames for every server in a connected node's latest heartbeat (a few per run), so bots and players have a working address before an administrator ever opens the panel. Opening a panel from the dashboard still provisions on demand. On the public hostname the Worker remembers the endpoint lookup and the node gateway for a short while and serves the panel's stylesheets, scripts, fonts and images from the edge cache, so a page load or a bot poll crosses the tunnel once for the page or feed itself rather than once per asset. The node's own web admin port is also published directly on the node (the game's HTTP and TLS ports), which gives bots the shortest path when the node's public address is known.
+
 VNC remains dashboard-admin-only, with one-use launch tickets and expiring sessions. Disabling a node or removing a server from its snapshot also disables its public endpoint. Existing legacy viewer links should be reopened from the dashboard.
 
 ## Rollout

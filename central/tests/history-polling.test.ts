@@ -10,7 +10,7 @@ for(const [name,hidden,focused,pending,expected] of [
   let historyCalls=0,requests=0;
   const updates:{state:string;message:string;ping:boolean}[]=[];
   const status={textContent:''};
-  const context:any={pending,document:{hidden,hasFocus:()=>focused},refreshHistory:async()=>{historyCalls++;},refreshTelemetry:null,redrawFleet:null,me:{role:'admin'},nodes:[],AbortSignal,Date,
+  const context:any={pending,document:{hidden,hasFocus:()=>focused},refreshHistory:async()=>{historyCalls++;},refreshTelemetry:null,redrawFleet:null,me:{role:'admin'},nodes:[],AbortSignal,Date,route:()=>({type:'node',id:'pilot'}),historyStamp:'',historyAt:0,
     setLiveStatus:(state:string,message:string,ping=false)=>updates.push({state,message,ping}),
     api:async(path:string)=>{requests++;return path==='me'?{role:'admin',name:'Preview'}:{nodes:[]};},updateAccountAvatar:()=>{},$:(id:string)=>id==='page'?{querySelector:()=>null}:status};
   runInNewContext(refresh,context);await context.refresh();

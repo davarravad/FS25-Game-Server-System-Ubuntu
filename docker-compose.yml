@@ -21,8 +21,6 @@ services:
       NODE_NAME: ${NODE_NAME:-FS25 Node}
       NODE_SLUG: ${NODE_SLUG:-fs25-node}
       CENTRAL_GATEWAY_TOKEN: ${CENTRAL_GATEWAY_TOKEN:-}
-      CENTRAL_NODE_ID: ${CENTRAL_NODE_ID:-}
-      CENTRAL_MODE: "1"
       SESSION_SECRET: ${SESSION_SECRET}
       DB_HOST: ${DB_HOST}
       DB_PORT: ${DB_PORT}
@@ -102,7 +100,9 @@ services:
       FS25_RUNTIME_RELEASETAG: ${FS25_RUNTIME_RELEASETAG:-local}
       FS25_RUNTIME_TARGETARCH: ${FS25_RUNTIME_TARGETARCH:-amd64}
       HOST_FIREWALL_MODE: ${HOST_FIREWALL_MODE:-auto}
-      CENTRAL_MODE: ${CENTRAL_MODE:-0}
+      # Must match the web service: game servers join the management network and bind their
+      # desktop console ports to loopback so the main site can reach them through the tunnel.
+      CENTRAL_MODE: ${CENTRAL_MODE:-1}
       HOST_FIREWALL_HELPER_IMAGE: ${HOST_FIREWALL_HELPER_IMAGE:-ubuntu:24.04}
       TZ: ${TZ}
     volumes:

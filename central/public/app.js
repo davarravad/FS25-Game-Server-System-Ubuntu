@@ -1,6 +1,6 @@
 'use strict';
 
-let me, nodes=[], hours=1, pending=false, pageVersion=0, redrawFleet, refreshTelemetry, refreshHistory, dirty=false;
+let me, nodes=[], hours=1, pending=false, pageVersion=0, redrawFleet, refreshTelemetry, refreshHistory, dirty=false, historyStamp='', historyAt=0;
 
 const $=id=>document.getElementById(id);
 
@@ -343,11 +343,11 @@ async function historyPanel(node,scope,version){
 
   for(const [value,label] of [[1,'Last hour'],[6,'6 hours'],[24,'24 hours'],[168,'7 days'],[720,'30 days']]){const o=element('option',label);o.value=value;range.append(o);}range.value=hours;
 
-  const chart=element('div',undefined,'grid'),historyStatus=element('p',undefined,'muted');historyStatus.setAttribute('role','status');chart.id='charts';toolbar.append(element('p','Checks every second while this page is active. New node readings arrive about every 30 seconds.'),range);s.append(toolbar,historyStatus,chart);
+  const chart=element('div',undefined,'grid'),historyStatus=element('p',undefined,'muted');historyStatus.setAttribute('role','status');chart.id='charts';toolbar.append(element('p','Updates as soon as the node publishes a new reading, about every 30 seconds.'),range);s.append(toolbar,historyStatus,chart);
 
   let requestVersion=0;
 
-  const draw=async()=>{const request=++requestVersion;try{const data=await api('history?'+new URLSearchParams({node:node.id,scope,hours}),undefined,{signal:AbortSignal.timeout(15000)});if(version===pageVersion&&request===requestVersion&&chart.isConnected){historyStatus.textContent='';charts(data.points,sample(nodes.find(n=>n.id===node.id),scope));}}catch(e){if(request===requestVersion&&chart.isConnected)historyStatus.textContent='History update failed. Keeping the last readings; retrying automatically.';}};
+  const draw=async()=>{const request=++requestVersion;try{const data=await api('history?'+new URLSearchParams({node:node.id,scope,hours}),undefined,{signal:AbortSignal.timeout(15000)});if(version===pageVersion&&request===requestVersion&&chart.isConnected){const current=nodes.find(n=>n.id===node.id);historyStamp=String(current?.snapshot?.samples?.find(s=>s.scope===scope)?.timestamp??'');historyAt=Date.now();historyStatus.textContent='';charts(data.points,sample(current,scope));}}catch(e){if(request===requestVersion&&chart.isConnected)historyStatus.textContent='History update failed. Keeping the last readings; retrying automatically.';}};
 
   refreshHistory=draw;range.onchange=()=>{hours=Number(range.value);void draw();};await draw();
 
@@ -502,7 +502,12 @@ async function refresh(){
 
     if(refreshTelemetry)refreshTelemetry();
 
-    if(refreshHistory)await refreshHistory();
+    if(refreshHistory){
+      // History only changes when the node publishes a new sample (about every 30 seconds),
+      // so the chart query waits for a new reading instead of running on every poll.
+      const r=route(),scope=r.type==='server'?r.instance:'host',stamp=String(nodes.find(n=>n.id===r.id)?.snapshot?.samples?.find(s=>s.scope===scope)?.timestamp??'');
+      if(stamp!==historyStamp||Date.now()-historyAt>=30000){historyStamp=stamp;historyAt=Date.now();await refreshHistory();}
+    }
 
     const currentSummary=$('page').querySelector('.summary');
 
@@ -526,4 +531,4 @@ window.addEventListener('pageshow',event=>{if(event.persisted){document.body.hid
 
   setupHeader();setupLive();if(me.role==='operator'&&!['servers','server'].includes(route().type)){location.replace('/servers');return;}await load();const query=new URLSearchParams(location.search);if(query.has('launch')){history.replaceState(null,'','/');await openViewer(query.get('launch'),query.get('kind')||'panel',query.get('instance')||'');}
 
-}catch(e){document.body.hidden=false;$('message').textContent=e.message;}let lastPoll=0;setInterval(()=>{const interval=refreshHistory?1000:5000;if(Date.now()-lastPoll>=interval){lastPoll=Date.now();void refresh();}},1000);})();
+}catch(e){document.body.hidden=false;$('message').textContent=e.message;}setInterval(()=>void refresh(),5000);})();

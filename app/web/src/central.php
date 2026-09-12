@@ -41,8 +41,22 @@ function central_snapshot(): array
     $samples = [];
     $servers = [];
     $keys = array_fill_keys(['cpu_percent', 'memory_used_bytes', 'memory_limit_bytes', 'disk_used_bytes', 'disk_limit_bytes', 'network_in_bytes_sec', 'network_out_bytes_sec', 'uptime_seconds'], true);
-    $collect = static function (array $host, string $scope) use (&$samples, $keys): ?array {
-        $result = telemetry_for_host($host, $scope, 1);
+    // One agent call returns the latest reading for every scope; agents without it are asked
+    // per scope as before.
+    $latestByScope = null;
+    if ($host && (int) $host['is_enabled'] && function_exists('agent_post_for_host')) {
+        $bulk = agent_post_for_host($host, '/telemetry/latest', [], 10);
+        if (($bulk['ok'] ?? false) && is_array($bulk['scopes'] ?? null)) {
+            $latestByScope = $bulk['scopes'];
+        }
+    }
+    $collect = static function (array $host, string $scope) use (&$samples, $keys, $latestByScope): ?array {
+        if ($latestByScope !== null) {
+            $entry = $latestByScope[$scope] ?? null;
+            $result = is_array($entry) ? ['ok' => true, 'latest' => $entry['latest'] ?? null, 'sampled_at' => $entry['sampled_at'] ?? 0] : ['ok' => false];
+        } else {
+            $result = telemetry_for_host($host, $scope, 1);
+        }
         if (($result['ok'] ?? false) && is_array($result['latest'] ?? null) && (int) ($result['sampled_at'] ?? 0) >= time() - 3600) {
             $samples[] = ['scope' => $scope, 'timestamp' => (int) $result['sampled_at'], 'data' => array_intersect_key($result['latest'], $keys)];
             return (int) $result['sampled_at'] >= time() - 120 ? $result['latest'] : null;

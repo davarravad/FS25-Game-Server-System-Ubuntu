@@ -1,6 +1,6 @@
 import {readGateway, type Gateway} from './gateways';
 import {openToken} from './node-tokens';
-import {hostnameResolves} from './cloudflare';
+import {consoleProbePath,hostnameResolves} from './cloudflare';
 
 // Fleet readiness: one report answering "can every game server on every node be opened through
 // the main-site game admin panel and VNC console right now, and if not, what needs doing?"
@@ -26,8 +26,9 @@ export async function fleetReadiness(env:Env,actor:string):Promise<{generated:nu
   const latest=(await env.DB.prepare('SELECT version FROM releases WHERE enabled=1').all<{version:string}>()).results.map(r=>r.version).sort(compareVersions).pop()||null;
   const nodes=(await env.DB.prepare('SELECT id,name,last_seen,snapshot,installed_version FROM nodes WHERE enabled=1 ORDER BY name LIMIT 50').all<{id:string;name:string;last_seen:number|null;snapshot:string|null;installed_version:string|null}>()).results;
   const endpoints=(await env.DB.prepare('SELECT host,node_id,instance,kind,ready FROM game_endpoints').all<Endpoint>()).results;
-  const report:NodeReport[]=[];
-  for(const node of nodes){
+  // Nodes are checked concurrently; each node's probes stay sequential so one slow node cannot
+  // multiply its own subrequests.
+  const report=await Promise.all(nodes.map(async node=>{
     const checks:Check[]=[],servers:ServerReport[]=[];
     const online=node.last_seen!==null&&now-node.last_seen<120;
     const connectionTab:Repair={label:'Open Connection & access',href:'/nodes/'+encodeURIComponent(node.id)+'?tab=connection'};
@@ -60,7 +61,7 @@ export async function fleetReadiness(env:Env,actor:string):Promise<{generated:nu
 
       // Without Access credentials the request must get past Access and be refused by the node's
       // own gateway-token check (403). A 401 or redirect means Access still challenges this path.
-      const bypass=await probe(gateway.origin+'/central/view/readiness-check/vnc/websockify',{headers:{Upgrade:'websocket'}},10000);
+      const bypass=await probe(gateway.origin+consoleProbePath,{headers:{Upgrade:'websocket'}},10000);
       checks.push(bypass?.status===403?check('Console path bypass','pass','Access lets console sockets through; the node still requires the gateway token.'):check('Console path bypass','fail',bypass?'Access answered HTTP '+bypass.status+' on the console socket path; the bypass application is missing or not effective.':'No answer on the console socket path.',bypassRepair));
 
       const inspect=await probe(gateway.origin+'/?route=api_node_readiness',{headers},30000);
@@ -87,16 +88,16 @@ export async function fleetReadiness(env:Env,actor:string):Promise<{generated:nu
           sc.push(c.admin_ports_loopback?check('Admin ports','pass','Published on loopback only.'):check('Admin ports','fail','Published publicly: '+c.exposed_admin_ports.join(', ')+'. Recreating the container binds them to loopback.',recreate));
         }
       }
-      for(const [kind,label] of [['vnc','VNC console'],['web','Game admin']] as const){
+      sc.push(...await Promise.all(([['vnc','VNC console'],['web','Game admin']] as const).map(async([kind,label])=>{
         const endpoint=endpoints.find(e=>e.node_id===node.id&&e.instance===server.instance_id&&e.kind===kind);
         const provision=(text:string):Repair=>({label:text,api:'readiness/repair',body:{node:node.id,action:'provision-hostname',instance:server.instance_id,kind}});
-        if(!endpoint)sc.push(check(label,'warn','Hostname not created yet; it is provisioned the first time this is opened from the dashboard.',provision('Provision hostname now')));
-        else if(!endpoint.ready)sc.push(check(label,'warn',endpoint.host+' is waiting for Cloudflare DNS.',provision('Re-check DNS')));
-        else sc.push(await hostnameResolves(endpoint.host)?check(label,'pass',endpoint.host+' resolves over IPv4 and IPv6.'):check(label,'fail',endpoint.host+' does not resolve on both IPv4 and IPv6 yet. Cloudflare publishes custom-domain DNS on a lag; re-check in a few minutes.',provision('Re-check DNS')));
-      }
+        if(!endpoint)return check(label,'warn','Hostname not created yet; it is provisioned automatically within a few minutes of the server appearing, or now with the button.',provision('Provision hostname now'));
+        if(!endpoint.ready)return check(label,'warn',endpoint.host+' is waiting for Cloudflare DNS.',provision('Re-check DNS'));
+        return await hostnameResolves(endpoint.host)?check(label,'pass',endpoint.host+' resolves over IPv4 and IPv6.'):check(label,'fail',endpoint.host+' does not resolve on both IPv4 and IPv6 yet. Cloudflare publishes custom-domain DNS on a lag; re-check in a few minutes.',provision('Re-check DNS'));
+      })));
       servers.push({instance_id:server.instance_id,server_name:server.server_name,checks:sc});
     }
-    report.push({id:node.id,name:node.name,online,checks,servers});
-  }
+    return {id:node.id,name:node.name,online,checks,servers};
+  }));
   return {generated:now,nodes:report};
 }

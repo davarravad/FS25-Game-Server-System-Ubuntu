@@ -6,7 +6,8 @@ function setupLive(){
   document.addEventListener('input',event=>{if(me.role==='admin'&&event.target.closest('#page form, #users')){editDirty=true;editActive=true;void refreshLive();}});
   document.addEventListener('focusin',event=>{if(me.role==='admin'&&event.target.closest('#page form, #users')){editActive=true;void refreshLive();}});
   document.addEventListener('focusout',()=>{setTimeout(()=>{editActive=!!document.activeElement?.closest('#page form, #users');},0);});
-  void refreshLive();setInterval(()=>void refreshLive(),5000);
+  // Presence leases last 20 seconds on the server; refreshing every 10 keeps them alive.
+  void refreshLive();setInterval(()=>void refreshLive(),10000);
 }
 async function refreshLive(){
   if(!['admin','viewer'].includes(me.role)||liveBusy||document.hidden)return;liveBusy=true;

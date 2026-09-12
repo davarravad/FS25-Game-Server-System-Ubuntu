@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "central-preview",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["central/tests/preview.mjs"],
+      "port": 8766
+    }
+  ]
+}

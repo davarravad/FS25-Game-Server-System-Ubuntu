@@ -81,10 +81,10 @@ function nodeSoftware(node){
         contents.append(progress);
         const status=job.id+job.status;if(previousStatus&&status!==previousStatus)message.textContent=labels[job.status];previousStatus=status;
       }else contents.append(element('p','No update jobs for this node yet.','muted'));
-      contents.append(element('p','Update status refreshes every 5 seconds.','muted'));
+      contents.append(element('p','Update status refreshes every 15 seconds.','muted'));
     }catch(e){message.textContent=e.message+' — retrying automatically.';}finally{loading=false;}
   };
-  const timer=setInterval(()=>{if(!panel.isConnected){clearInterval(timer);return;}void refresh();},5000);
+  const timer=setInterval(()=>{if(!panel.isConnected){clearInterval(timer);return;}void refresh();},15000);
   void refresh();
 }
 
@@ -112,7 +112,7 @@ async function software(){
   for(const label of ['Node','Version','Status','Queued','Last updated','Actions']){const cell=element('th',label);cell.scope='col';heading.append(cell);}head.append(heading);const rows=element('tbody');table.append(element('caption','Node update history'),head,rows);wrap.append(table);
   const more=button('Load more',async()=>{pages++;try{await refresh();}catch(e){pages--;message.textContent=e.message;}}),manual=button('Refresh update status',()=>refresh().catch(e=>{message.textContent=e.message;}));
   const historySection=element('div',undefined,'update-section');
-  historySection.append(element('p','History of update jobs queued by either action above, across all nodes. Refreshes automatically every 5 seconds.','muted'),manual);
+  historySection.append(element('p','History of update jobs queued by either action above, across all nodes. Refreshes automatically every 15 seconds.','muted'),manual);
   panel.append(latestLabel,allSection,formSection,withdrawSection,message,historySection,historyStatus,wrap,more);
   let pages=1,latest='',loading=false,acting=false;
   const controls=disabled=>{for(const control of [all,queue,withdraw,more,manual])control.disabled=disabled;};
@@ -132,7 +132,7 @@ async function software(){
         if(job.status==='failed')actions.append(element('span','Inspect node logs before retrying.','muted'));
         row.append(name,element('td',job.version),status,element('td',stamp(job.created)),element('td',stamp(job.updated)),actions);row.title='Process ID: '+job.id;return row;
       }));
-      historyStatus.textContent=jobs.length?'Showing '+jobs.length+' updates · newest first · refreshes every 5 seconds.':'No update jobs yet.';more.hidden=!cursor;
+      historyStatus.textContent=jobs.length?'Showing '+jobs.length+' updates · newest first · refreshes every 15 seconds.':'No update jobs yet.';more.hidden=!cursor;
     }finally{loading=false;controls(acting);all.disabled=acting||!latest;queue.disabled=acting||!node.value||!release.value;withdraw.disabled=acting||!release.value;}
   };
   const run=async action=>{if(acting||loading)return;acting=true;controls(true);try{message.textContent=await action();}catch(e){message.textContent=e.message;}finally{acting=false;await refresh().catch(e=>{message.textContent=e.message;});}};
@@ -141,6 +141,6 @@ async function software(){
   withdraw.onclick=()=>{if(release.value&&confirm('Withdraw '+release.value+'? New downloads stop and queued jobs fail.'))void run(async()=>{await api('distribution/withdraw',{version:release.value});return 'Release withdrawn.';});};
   panel.refreshUpdates=refresh;
   readinessPanel();
-  const timer=setInterval(()=>{if(!panel.isConnected){clearInterval(timer);return;}if(!document.hidden&&!acting)void refresh().catch(e=>{message.textContent=e.message+' — retrying automatically.';});},5000);
+  const timer=setInterval(()=>{if(!panel.isConnected){clearInterval(timer);return;}if(!document.hidden&&!acting)void refresh().catch(e=>{message.textContent=e.message+' — retrying automatically.';});},15000);
   await refresh();
 }

@@ -27,8 +27,8 @@ function setupHeader(){
       if(!data.length)$('notifications-list').append(element('p','No current issues or recent updates.'));
     }catch(e){$('notification-status').textContent='Notifications unavailable: '+e.message;}finally{busy=false;}
   }
-  if(me.role==='operator'){for(const item of document.querySelectorAll('[data-nav],.nav-group'))item.hidden=item.dataset.nav!=='servers';$('notifications-menu').hidden=true;document.querySelector('.brand').href='/servers';return;}
-  void refreshNotices();setInterval(refreshNotices,5000);
+  if(me.role==='operator'){for(const item of document.querySelectorAll('[data-nav],.nav-group'))item.hidden=item.dataset.nav!=='servers';$('notifications-menu').hidden=true;document.querySelector('.navbar-brand').href='/servers';return;}
+  void refreshNotices();setInterval(refreshNotices,20000);
 }
 async function userManagement(){
   title('Users & permissions','Approve Discord users and control what they can access.','users');

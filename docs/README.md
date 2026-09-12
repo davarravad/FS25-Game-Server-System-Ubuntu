@@ -58,7 +58,7 @@ Set each with `npx wrangler secret put NAME` from `central/`. For local developm
 | `RELEASE_PUBLIC_KEY` | Base64 SPKI Ed25519 public key that nodes pin for signed releases. Do not rotate casually. |
 | `NODE_GATEWAYS` | Legacy only. Per-node gateway JSON used before gateways moved to D1; leave unset on new deployments. |
 
-Non-secret settings are in `central/wrangler.jsonc`: `APP_ORIGIN`, `DISCORD_CLIENT_ID`, `BOOTSTRAP_ADMIN_ID`, the D1 and R2 bindings, routes and the hourly cleanup cron.
+Non-secret settings are in `central/wrangler.jsonc`: `APP_ORIGIN`, `DISCORD_CLIENT_ID`, `BOOTSTRAP_ADMIN_ID`, the D1 and R2 bindings, routes and two crons: hourly cleanup of expired rows, and a ten-minute pass that provisions public game-panel and console hostnames for every server reported by a connected node (see [GAME-PANEL-URLS.md](GAME-PANEL-URLS.md)).
 
 ## Release and deploy
 

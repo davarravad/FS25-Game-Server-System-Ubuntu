@@ -28,4 +28,16 @@ export async function readGateway(env:Store,id:string):Promise<{gateway:Gateway|
 export async function saveGateway(env:Store,id:string,gateway:Gateway){
   const encrypted=await sealToken(env.NODE_TOKEN_KEY,'gateway:'+id,JSON.stringify(gateway));
   await env.DB.prepare('UPDATE nodes SET gateway_encrypted=? WHERE id=?').bind(encrypted,id).run();
+  forgetGateway(id);
 }
+// Every proxied game-panel request needs the node gateway; decrypting it from D1 each time is
+// the largest fixed cost on that path, so opened gateways are kept per isolate for a short while.
+const opened=new Map<string,{gateway:Gateway;until:number}>();
+export async function cachedGateway(env:Store,id:string):Promise<Gateway|null>{
+  const hit=opened.get(id);
+  if(hit&&hit.until>Date.now())return hit.gateway;
+  const {gateway}=await readGateway(env,id);
+  if(gateway)opened.set(id,{gateway,until:Date.now()+30000});
+  return gateway;
+}
+export function forgetGateway(id:string){opened.delete(id);}

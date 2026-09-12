@@ -83,7 +83,7 @@ function management_save(array $host, ?array $server): void
             db()->prepare('UPDATE server_instances SET ' . implode(',', array_map(fn($key) => "$key=?", $fields)) . ' WHERE instance_id=?')->execute(array_merge(array_map(fn($key) => $payload[$key], $fields), [$instance]));
         }
     } finally { db()->query("SELECT RELEASE_LOCK('central-server-management')"); }
-    json_response(['ok' => true, 'instance_id' => $instance, 'message' => $creating ? 'Server created.' : 'Settings saved and runtime configuration synced.']);
+    json_response(['ok' => true, 'instance_id' => $instance, 'message' => $creating ? 'Server created.' : 'Settings saved and runtime configuration synced. Restart the server to apply them to a running game.']);
 }
 
 // Returns an existing JSON/stream route only after enforcing the central operation policy.
