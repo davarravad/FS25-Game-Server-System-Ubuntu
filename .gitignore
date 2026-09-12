@@ -1,3 +1,4 @@
+<<<<<<< Updated upstream
 .env
 .env.*
 !.env.example
@@ -16,3 +17,7 @@ secrets/
 *.key
 *.sqlite3*
 .update-state/
+=======
+/central/.wrangler
+/central/node_modules
+>>>>>>> Stashed changes
