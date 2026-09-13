@@ -121,8 +121,10 @@ async function managementPage(node,server,tab){
 }
 function managementSecrets(parent,values){const box=element('details'),heading=element('summary','Connection credentials');box.append(heading);for(const [key,value] of Object.entries(values)){const form=element('div',undefined,'edit-form');managementField(form,key,value);for(const input of form.querySelectorAll('input'))input.readOnly=true;box.append(form);}parent.append(box);}
 function managementLogs(panel,node,server){
+  const heading=panel.querySelector('h2'),headingRow=element('div',undefined,'log-panel-heading'),statusPills=element('div',undefined,'log-status-pills');
+  panel.insertBefore(headingRow,heading);headingRow.append(heading,statusPills);
   const tabsNav=element('div',undefined,'management-tabs log-view-tabs');tabsNav.setAttribute('role','tablist');tabsNav.setAttribute('aria-label','Log views');
-  const message=element('p'),state=element('p'),containers=element('div');
+  const message=element('p',undefined,'log-updated');message.setAttribute('role','status');
   const docker=element('input');docker.type='checkbox';const dockerLabel=element('label',undefined,'log-docker-toggle');dockerLabel.append(docker,element('span','Include Docker logs'));
   const consoleOutput=element('pre'),dockerOutput=element('pre'),gameOutput=element('pre'),sftpOutput=element('pre');
   for(const [output,name] of [[consoleOutput,'Console log'],[dockerOutput,'Docker log'],[gameOutput,'Game server log'],[sftpOutput,'SFTP log']]){output.className='log-output';output.tabIndex=0;output.setAttribute('role','region');output.setAttribute('aria-label',name);}
@@ -131,27 +133,39 @@ function managementLogs(panel,node,server){
   gameSection.append(gameOutput);
   sftpSection.append(sftpOutput);
   const views={console:{section:consoleSection,button:null},game:{section:gameSection,button:null},sftp:{section:sftpSection,button:null}};
-  let activeView='console',busy=false;
-  const updateLog=(output,text)=>{if(output.textContent===text)return;const top=output.scrollTop,left=output.scrollLeft;output.textContent=text;output.scrollTop=top;output.scrollLeft=left;};
+  let activeView='console',busy=false,lastUpdated=null;
+  const updateLog=(output,text)=>{
+    if(output.textContent===text)return;
+    const atBottom=!output.dataset.loaded||output.scrollTop+output.clientHeight>=output.scrollHeight-4,left=output.scrollLeft;
+    output.textContent=text;output.dataset.loaded='1';output.scrollLeft=left;
+    if(atBottom)output.scrollTop=output.scrollHeight;
+  };
+  const updateMessage=()=>{message.textContent=lastUpdated?'Updated '+timeAgo(Date.now()-lastUpdated):'';};
   const refresh=async()=>{if(busy||!panel.isConnected||document.hidden)return;busy=true;try{
       const data=await manageApi(node,'live',server,undefined,{include_docker_logs:docker.checked?'1':'0',include_sftp_logs:activeView==='sftp'?'1':'0',include_game_log:activeView==='game'?'1':'0'});
       if(!panel.isConnected)return;
-      const all=data.metrics?.containers||[];
-      state.textContent=data.metrics?.runtime_state?.label+' — '+data.metrics?.runtime_state?.detail;
-      const shown=activeView==='sftp'?all.filter(c=>c.service==='sftp'):all;
-      containers.replaceChildren(...shown.map(c=>element('p',`${c.service}: ${c.status}${c.health?' · '+c.health:''}${c.exit_code!=null?' · exit '+c.exit_code:''}`)));
+      const all=data.metrics?.containers||[],runtimeState=data.metrics?.runtime_state||{};
+      const statePill=element('span',runtimeState.label||'Unknown','badge '+(runtimeState.state==='online'?'good':'warning'));
+      if(runtimeState.detail)statePill.title=runtimeState.detail;
+      const containerPills=all.map(c=>{
+        const pill=element('span',`${c.service}: ${c.status}`,'badge '+(c.running?'good':'warning')),details=[c.health,c.exit_code!=null?'exit '+c.exit_code:''].filter(Boolean).join(' · ');
+        if(details)pill.title=details;
+        return pill;
+      });
+      statusPills.replaceChildren(statePill,...containerPills);
       updateLog(consoleOutput,data.log_output||'No console log.');
       dockerOutput.hidden=!docker.checked;updateLog(dockerOutput,data.docker_log_output||'');
       if(activeView==='game')updateLog(gameOutput,data.game_log_output||'No game server log.');
       if(activeView==='sftp')updateLog(sftpOutput,data.sftp_log_output||'No SFTP log.');
-      message.textContent='Updated '+new Date().toLocaleTimeString();
+      lastUpdated=Date.now();updateMessage();
     }catch(e){message.textContent=e.message;}finally{busy=false;}};
   const showView=view=>{activeView=view;for(const [key,v] of Object.entries(views)){v.section.hidden=key!==view;v.button.setAttribute('aria-current',key===view?'page':'false');}dockerLabel.hidden=view!=='console';void refresh();};
   for(const [key,label] of [['console','Console'],['game','Game Server'],['sftp','SFTP']]){const b=button(label,()=>showView(key));b.setAttribute('role','tab');views[key].button=b;tabsNav.append(b);}
   const toolbar=element('div',undefined,'actions');toolbar.append(button('Refresh logs',refresh));
-  panel.append(toolbar,message,state,containers,dockerLabel,tabsNav,consoleSection,gameSection,sftpSection);
+  panel.append(toolbar,dockerLabel,tabsNav,consoleSection,gameSection,sftpSection,message);
   docker.onchange=refresh;showView('console');
-  const timer=setInterval(()=>{if(!panel.isConnected){clearInterval(timer);return;}void refresh();},5000);
+  const dataTimer=setInterval(()=>{if(!panel.isConnected){clearInterval(dataTimer);return;}void refresh();},5000);
+  const clockTimer=setInterval(()=>{if(!panel.isConnected){clearInterval(clockTimer);return;}updateMessage();},5000);
 }
 function managementFiles(panel,node,server){
   const controls=element('div',undefined,'actions'),target=element('select');target.setAttribute('aria-label','File location');for(const value of server?['profile','mods','saves','logs']:['game','dlc','installer']){const o=element('option',value);o.value=value;target.append(o);}

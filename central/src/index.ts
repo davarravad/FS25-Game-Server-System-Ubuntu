@@ -75,6 +75,9 @@ async function oauth(request: Request, env: Bindings, url: URL) {
   const state = url.searchParams.get('state') || '';
   need(/^[a-f0-9]{64}$/.test(state) && state === cookieValue(request,'__Host-oauth'), 400, 'Invalid login state');
   const valid = await env.DB.prepare('DELETE FROM oauth_states WHERE hash=? AND expires>? RETURNING hash').bind(await digest(state), now()).first();
+  // Cancelling the Discord consent screen redirects here with `error=access_denied` and no
+  // `code`. Send the user back to the home page instead of surfacing a raw JSON error.
+  if (url.searchParams.has('error')) return redirect(env.APP_ORIGIN+'/', cookie('__Host-oauth','',0));
   need(valid && url.searchParams.get('code'), 400, 'Login expired; sign in again');
   const tokenResult = await fetch('https://discord.com/api/oauth2/token', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:new URLSearchParams({client_id:env.DISCORD_CLIENT_ID,client_secret:env.DISCORD_CLIENT_SECRET,grant_type:'authorization_code',code:url.searchParams.get('code')!,redirect_uri:env.APP_ORIGIN+'/auth/callback'}), signal:AbortSignal.timeout(15000)});
   need(tokenResult.ok, 502, 'Discord login exchange failed');

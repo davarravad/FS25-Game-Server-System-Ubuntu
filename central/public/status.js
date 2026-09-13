@@ -39,7 +39,7 @@ async function statusPage(){
   const filterLabel=element('label');const filterBox=element('input');filterBox.type='checkbox';filterLabel.append(filterBox,document.createTextNode(' Show only issues'));
   toolbar.append(run,filterLabel);
   const status=element('p');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
-  const wrap=element('div',undefined,'update-table-wrap'),table=element('table',undefined,'update-table'),head=element('thead'),headRow=element('tr');
+  const wrap=element('div',undefined,'update-table-wrap'),table=element('table',undefined,'update-table findings-table'),head=element('thead'),headRow=element('tr');
   for(const label of ['Node','Server','Check','Status','Detail','Fix'])headRow.append(element('th',label));
   head.append(headRow);const rows=element('tbody');table.append(element('caption','Every check across your fleet.'),head,rows);wrap.append(table);
   panel.append(toolbar,status,wrap);
