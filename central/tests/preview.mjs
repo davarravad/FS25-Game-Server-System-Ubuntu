@@ -63,6 +63,17 @@ createServer(async(req,res)=>{
     if(req.method==='POST'){
       let raw='';for await(const chunk of req)raw+=chunk;const body=JSON.parse(raw||'{}');
       if(path==='/api/live'){res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify({...data[path],revision:Math.floor(Date.now()/15000)}));return;}
+      if(path==='/api/readiness'){
+        const pass=(name,detail)=>({name,state:'pass',detail});
+        const fail=(name,detail,repair)=>({name,state:'fail',detail,repair});
+        res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify({generated:time,nodes:[
+          {id:'pilot',name:'Ubuntu pilot',online:true,checks:[pass('Cloudflare connection','Gateway credentials are saved.'),pass('Access application','Node application and console bypass application are recorded.'),pass('Gateway reachable','The node answered through its tunnel.'),pass('Console path bypass','Access lets console sockets through; the node still requires the gateway token.'),pass('Node software','Running v1.0.0.')],servers:[
+            {instance_id:'game-1',server_name:'Riverbend Springs',checks:[pass('Container','Running.'),pass('Management network','Reachable from the node gateway.'),pass('Admin ports','Published on loopback only.'),pass('SFTP container','Running.'),pass('Game port','Published on 10823 as configured.'),pass('Web admin port','Published on 18000 as configured.'),pass('TLS port','Published on 28000 as configured.'),fail('SFTP port','Configured for 2222 (tcp) but the container publishes 2299. Recreating the server applies the configured port.',{label:'Recreate server container',api:'nodes/apply-updates',body:{node:'pilot',instance_id:'game-1'},confirm:'Recreate the container for Riverbend Springs? The game server restarts and its players are disconnected.'}),pass('VNC console','console-fs25-0001.sargentweb.com resolves over IPv4 and IPv6.'),pass('Game admin','game-fs25-0001.sargentweb.com resolves over IPv4 and IPv6.')]},
+            {instance_id:'game-2',server_name:'Weekend farm',checks:[pass('Container','Running.'),pass('Management network','Reachable from the node gateway.'),pass('Admin ports','Published on loopback only.'),pass('SFTP container','Running.'),pass('Game port','Published on 10824 as configured.'),pass('Web admin port','Published on 18001 as configured.'),pass('TLS port','Published on 28001 as configured.'),pass('SFTP port','Published on 2223 as configured.'),pass('VNC console','console-fs25-0002.sargentweb.com resolves over IPv4 and IPv6.'),pass('Game admin','game-fs25-0002.sargentweb.com resolves over IPv4 and IPv6.')]}
+          ]},
+          {id:'north',name:'North farm',online:false,checks:[fail('Cloudflare connection','No gateway saved. Enable Cloudflare automation and let the node connect.',{label:'Open Connection & access',href:'/nodes/north?tab=connection'}),pass('Node software','Running v1.0.0.')],servers:[]}
+        ]}));return;
+      }
       if(path==='/api/notifications/read')for(const notice of notices)if(body.ids.includes(notice.id))notice.read=true;
       if(path==='/api/nodes/update'){const node=nodes.find(n=>n.id===body.id);Object.assign(node,{name:body.name,enabled:body.enabled?1:0});}
       if(path==='/api/nodes'){if(!nodes.some(n=>n.id===body.id))nodes.push({id:body.id,name:body.name,enabled:1,online:false,last_seen:null,snapshot:null});res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify({id:body.id,notice:'Node created.'}));return;}
@@ -73,8 +84,8 @@ createServer(async(req,res)=>{
     }
     res.writeHead(path in data?200:404,{'Content-Type':'application/json'}).end(JSON.stringify(data[path]||{error:'Fixture endpoint unavailable'}));return;
   }
-  const name=path==='/'||path==='/setup.html'||/^\/(nodes|servers|access|users|cloudflare|setup|install|game-status)(\/|$)/.test(path)?'index.html':path.slice(1);
-  if(!['favicon.svg','favicon-32.png','apple-touch-icon.png','fs-farmservers-logo.svg','fs-farmservers-logo.png','index.html','live.js','game-status.js','install.js','management.js','app.js','cloudflare.js','account.js','charts.js','software.js','style.css','node-distribution.txt','central-setup.txt'].includes(name)){res.writeHead(404).end();return;}
+  const name=path==='/'||path==='/setup.html'||/^\/(nodes|servers|access|users|cloudflare|setup|install|game-status|status)(\/|$)/.test(path)?'index.html':path.slice(1);
+  if(!['favicon.svg','favicon-32.png','apple-touch-icon.png','fs-farmservers-logo.svg','fs-farmservers-logo.png','index.html','live.js','game-status.js','status.js','install.js','management.js','app.js','cloudflare.js','account.js','charts.js','software.js','style.css','node-distribution.txt','central-setup.txt'].includes(name)){res.writeHead(404).end();return;}
   const type=name.endsWith('.svg')?'image/svg+xml':name.endsWith('.png')?'image/png':name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':name.endsWith('.html')?'text/html':'text/plain';
   res.writeHead(200,{'Content-Type':type+'; charset=utf-8'}).end(await readFile(new URL('../public/'+name,import.meta.url)));
 }).listen(Number(process.env.PREVIEW_PORT||8766),'127.0.0.1',()=>console.log('Synthetic dashboard: http://127.0.0.1:8766'));

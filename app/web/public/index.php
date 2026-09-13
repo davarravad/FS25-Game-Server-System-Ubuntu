@@ -139,7 +139,8 @@ if ($route === 'api_central_health') {
 
 if ($route === 'api_node_readiness') {
     // Read-only inventory for the main site's readiness check: every server on this host with
-    // how its container is wired for the game admin panel and VNC console.
+    // how its container is wired for the game admin panel and VNC console, plus whether its
+    // public ports (game, web admin, TLS, SFTP) are actually published and firewalled as configured.
     if (!node_api_request_authorized()) {
         json_response(['ok' => false, 'error' => 'Unauthorized'], 401);
     }
@@ -1177,6 +1178,24 @@ if ($route === 'server_live') {
             'log_lines' => 400,
         ]);
     }
+    $includeSftpLogs = (string) ($_GET['include_sftp_logs'] ?? '0') === '1';
+    $sftpLogsAgent = ['ok' => false, 'result' => ['stdout' => 'SFTP logs disabled.']];
+    if ($includeSftpLogs) {
+        $sftpLogsAgent = agent_post_for_host($server, '/instance/action', [
+            'instance_id' => $instanceId,
+            'action' => 'sftp_logs',
+            'log_lines' => 400,
+        ]);
+    }
+    $includeGameLog = (string) ($_GET['include_game_log'] ?? '0') === '1';
+    $gameLogAgent = ['ok' => false, 'result' => ['stdout' => 'Game server log disabled.']];
+    if ($includeGameLog) {
+        $gameLogAgent = agent_post_for_host($server, '/instance/action', [
+            'instance_id' => $instanceId,
+            'action' => 'game_log',
+            'log_lines' => 400,
+        ]);
+    }
     $metrics = ($metricsResult['metrics'] ?? []);
 
     json_response([
@@ -1220,6 +1239,14 @@ if ($route === 'server_live') {
             ? (string) ($dockerLogsAgent['result']['stdout'] ?? ($dockerLogsAgent['result']['stderr'] ?? 'No Docker logs returned'))
             : 'Docker logs disabled.',
         'docker_logs_enabled' => $includeDockerLogs,
+        'sftp_log_output' => $includeSftpLogs
+            ? (string) ($sftpLogsAgent['result']['stdout'] ?? ($sftpLogsAgent['result']['stderr'] ?? 'No SFTP logs returned'))
+            : 'SFTP logs disabled.',
+        'sftp_logs_enabled' => $includeSftpLogs,
+        'game_log_output' => $includeGameLog
+            ? (string) ($gameLogAgent['result']['stdout'] ?? ($gameLogAgent['result']['stderr'] ?? 'No game server log returned'))
+            : 'Game server log disabled.',
+        'game_log_enabled' => $includeGameLog,
     ]);
 }
 
@@ -1259,6 +1286,16 @@ if ($route === 'logs') {
         'Container runtime: ' . $runtimeStatus,
         'Metrics query: ' . (($metricsResult['ok'] ?? false) ? 'ok' : 'failed'),
     ];
+    $containerList = is_array($metrics['containers'] ?? null) ? $metrics['containers'] : [];
+    $sftpContainerStatus = 'unknown';
+    foreach ($containerList as $container) {
+        if (($container['service'] ?? '') === 'sftp') {
+            $sftpContainerStatus = (string) ($container['status'] ?? 'unknown')
+                . (isset($container['health']) && $container['health'] !== '' ? ' · ' . $container['health'] : '')
+                . (($container['exit_code'] ?? null) !== null ? ' · exit ' . $container['exit_code'] : '');
+            break;
+        }
+    }
     ?><!doctype html>
     <html lang="en">
     <head>
@@ -1286,6 +1323,10 @@ if ($route === 'logs') {
             .status-value { margin-top: 6px; font-size: 18px; font-weight: 700; }
             .toggle-row { margin-top: 14px; display: flex; align-items: center; gap: 10px; }
             .toggle-row input { width: 16px; height: 16px; }
+            .log-tabs { display: flex; gap: 10px; flex-wrap: wrap; }
+            .log-tab { padding: 10px 14px; border-radius: 8px; border: 1px solid #243041; background: #121826; color: #f2f4f8; cursor: pointer; font: inherit; }
+            .log-tab[aria-current="page"] { border-color: #2563eb; background: #16233a; }
+            .log-tab-section[hidden] { display: none; }
         </style>
     <link rel="stylesheet" href="/assets/telemetry.css?v=2">
 <script defer src="/assets/telemetry.js?v=2"></script>
@@ -1324,25 +1365,50 @@ if ($route === 'logs') {
                         <div class="status-label">RAM</div>
                         <div class="status-value"><?= h(number_format((float) ($metrics['memory_percent'] ?? 0), 1)) ?>%</div>
                     </div>
+                    <div class="status-tile">
+                        <div class="status-label">SFTP container</div>
+                        <div class="status-value" id="sftp-status-value"><?= h($sftpContainerStatus) ?></div>
+                    </div>
                 </div>
                 <div class="stack muted" style="margin-top:12px;">
                     <?php foreach ($statusSummary as $line): ?>
                         <div><?= h($line) ?></div>
                     <?php endforeach; ?>
                 </div>
-                <label class="toggle-row muted">
-                    <input id="docker-live-toggle" type="checkbox" <?= $includeDockerLogs ? 'checked' : '' ?>>
-                    Live Docker logs (refreshes every 3 seconds)
-                </label>
             </div>
-            <div class="grid">
+            <div class="log-tabs" role="tablist" aria-label="Log views">
+                <button type="button" class="log-tab" id="tab-console" role="tab" aria-current="page">Console</button>
+                <button type="button" class="log-tab" id="tab-gameserver" role="tab" aria-current="false">Game Server</button>
+                <button type="button" class="log-tab" id="tab-sftp" role="tab" aria-current="false">SFTP</button>
+            </div>
+            <div class="log-tab-section" id="section-console">
                 <div class="card">
-                    <div class="muted" style="margin-bottom:10px;">Runtime lifecycle log</div>
-                    <pre id="lifecycle-log-view"><?= h($logOutput) ?></pre>
+                    <label class="toggle-row muted">
+                        <input id="docker-live-toggle" type="checkbox" <?= $includeDockerLogs ? 'checked' : '' ?>>
+                        Live Docker logs (refreshes every 3 seconds)
+                    </label>
                 </div>
+                <div class="grid">
+                    <div class="card">
+                        <div class="muted" style="margin-bottom:10px;">Console log</div>
+                        <pre id="lifecycle-log-view"><?= h($logOutput) ?></pre>
+                    </div>
+                    <div class="card">
+                        <div class="muted" style="margin-bottom:10px;">Docker container log (fs25)</div>
+                        <pre id="docker-log-view"><?= h($dockerLogOutput) ?></pre>
+                    </div>
+                </div>
+            </div>
+            <div class="log-tab-section" id="section-gameserver" hidden>
                 <div class="card">
-                    <div class="muted" style="margin-bottom:10px;">Docker container log (fs25)</div>
-                    <pre id="docker-log-view"><?= h($dockerLogOutput) ?></pre>
+                    <div class="muted" style="margin-bottom:10px;">Game server log (log.txt)</div>
+                    <pre id="gameserver-log-view">Game server log disabled.</pre>
+                </div>
+            </div>
+            <div class="log-tab-section" id="section-sftp" hidden>
+                <div class="card">
+                    <div class="muted" style="margin-bottom:10px;">SFTP container log</div>
+                    <pre id="sftp-log-view">SFTP logs disabled.</pre>
                 </div>
             </div>
         </div>
@@ -1351,7 +1417,30 @@ if ($route === 'logs') {
         const instanceId = <?= json_encode($instanceId) ?>;
         const lifecycleLogView = document.getElementById('lifecycle-log-view');
         const dockerLogView = document.getElementById('docker-log-view');
+        const gameServerLogView = document.getElementById('gameserver-log-view');
+        const sftpLogView = document.getElementById('sftp-log-view');
+        const sftpStatusValue = document.getElementById('sftp-status-value');
         const dockerToggle = document.getElementById('docker-live-toggle');
+        const tabConsole = document.getElementById('tab-console');
+        const tabGameServer = document.getElementById('tab-gameserver');
+        const tabSftp = document.getElementById('tab-sftp');
+        const sectionConsole = document.getElementById('section-console');
+        const sectionGameServer = document.getElementById('section-gameserver');
+        const sectionSftp = document.getElementById('section-sftp');
+        let activeTab = 'console';
+        const showTab = (tab) => {
+            activeTab = tab;
+            sectionConsole.hidden = tab !== 'console';
+            sectionGameServer.hidden = tab !== 'gameserver';
+            sectionSftp.hidden = tab !== 'sftp';
+            tabConsole.setAttribute('aria-current', tab === 'console' ? 'page' : 'false');
+            tabGameServer.setAttribute('aria-current', tab === 'gameserver' ? 'page' : 'false');
+            tabSftp.setAttribute('aria-current', tab === 'sftp' ? 'page' : 'false');
+            void refreshLiveLogs();
+        };
+        tabConsole.addEventListener('click', () => showTab('console'));
+        tabGameServer.addEventListener('click', () => showTab('gameserver'));
+        tabSftp.addEventListener('click', () => showTab('sftp'));
 
         if (dockerToggle) {
             dockerToggle.addEventListener('change', () => {
@@ -1376,6 +1465,8 @@ if ($route === 'logs') {
             const url = new URL('/?route=server_live', window.location.origin);
             url.searchParams.set('instance_id', instanceId);
             url.searchParams.set('include_docker_logs', dockerToggle && dockerToggle.checked ? '1' : '0');
+            url.searchParams.set('include_sftp_logs', activeTab === 'sftp' ? '1' : '0');
+            url.searchParams.set('include_game_log', activeTab === 'gameserver' ? '1' : '0');
             try {
                 const response = await fetch(url.toString(), {
                     method: 'GET',
@@ -1389,8 +1480,21 @@ if ($route === 'logs') {
                 if (!payload || payload.ok !== true) {
                     return;
                 }
-                renderLogText(lifecycleLogView, payload.log_output || 'No runtime logs returned');
+                renderLogText(lifecycleLogView, payload.log_output || 'No console log returned');
                 renderLogText(dockerLogView, payload.docker_log_output || 'No Docker logs returned');
+                if (activeTab === 'gameserver') {
+                    renderLogText(gameServerLogView, payload.game_log_output || 'No game server log returned');
+                }
+                if (activeTab === 'sftp') {
+                    renderLogText(sftpLogView, payload.sftp_log_output || 'No SFTP logs returned');
+                }
+                const containers = payload.metrics && Array.isArray(payload.metrics.containers) ? payload.metrics.containers : [];
+                const sftpContainer = containers.find((c) => c.service === 'sftp');
+                if (sftpContainer && sftpStatusValue) {
+                    sftpStatusValue.textContent = sftpContainer.status
+                        + (sftpContainer.health ? ' · ' + sftpContainer.health : '')
+                        + (sftpContainer.exit_code !== null && sftpContainer.exit_code !== undefined ? ' · exit ' + sftpContainer.exit_code : '');
+                }
             } catch (error) {
                 console.error('Failed to refresh logs', error);
             } finally { logsBusy = false; }

@@ -405,6 +405,45 @@ def read_runtime_log(instance_id: str, max_lines: int = 400) -> str:
     return "\n".join(re.sub(r"(\[Webserver\]: Password: ).*", r"\1********", line) for line in lines)
 
 
+def latest_game_log_path(instance_dir: Path) -> Path | None:
+    """The dedicated server writes a new timestamped session log (log_YYYY-MM-DD_HH-MM-SS.txt) on
+    every run, directly inside its real profile folder -- one level below the SFTP/config mount
+    root, at .../FarmingSimulator2025/FarmingSimulator2025 -- instead of keeping one file current.
+    Also check the mount root itself, then fall back to a flat log.txt, for older instances."""
+    for logs_dir in (
+        instance_dir / PROFILE_RELATIVE_PATH / "FarmingSimulator2025",
+        instance_dir / PROFILE_RELATIVE_PATH,
+    ):
+        candidates = [p for p in logs_dir.glob("log_*.txt") if p.is_file()] if logs_dir.is_dir() else []
+        if candidates:
+            return max(candidates, key=lambda p: p.stat().st_mtime)
+    legacy = instance_dir / PROFILE_RELATIVE_PATH / "log.txt"
+    return legacy if legacy.exists() else None
+
+
+def read_game_log(instance_dir: Path, max_lines: int = 400) -> str:
+    """The dedicated server's own latest session log, written directly inside the game's
+    profile folder (never the panel-generated console log in read_runtime_log above)."""
+    log_path = latest_game_log_path(instance_dir)
+    if log_path is None:
+        return "No game log has been written yet."
+
+    # A single session log is never truncated mid-run, so only read its tail.
+    tail_bytes = 2 * 1024 * 1024
+    size = log_path.stat().st_size
+    with log_path.open("rb") as handle:
+        if size > tail_bytes:
+            handle.seek(size - tail_bytes)
+        data = handle.read()
+    text = data.decode("utf-8", errors="replace")
+    lines = text.splitlines()
+    if size > tail_bytes and lines:
+        lines = lines[1:]
+    if max_lines > 0:
+        lines = lines[-max_lines:]
+    return "\n".join(lines)
+
+
 def parse_port_number(value) -> int | None:
     try:
         port = int(str(value).strip())
@@ -450,6 +489,36 @@ def public_port_rules(values: dict | None) -> list[tuple[int, str, str]]:
         rules.append((port, proto, label))
 
     return rules
+
+
+# Container-side port for each public role: fixed for the game port (SERVER_PORT is only the
+# host side) and the SFTP port (always 22 inside atmoz/sftp), identity-mapped for web/tls.
+PORT_ROLE_CONTAINER_PORT = {"game": "10823", "sftp": "22"}
+PORT_ROLE_CONTAINER = {"game": "fs25", "web": "fs25", "tls": "fs25", "sftp": "sftp"}
+
+
+def published_port_checks(values: dict | None, fs25_ports: dict, sftp_ports: dict, firewall: dict | None) -> list[dict]:
+    """Compare each publicly-reachable port this server is configured for (game, web admin,
+    TLS and SFTP) against what the containers actually publish right now, plus whether the
+    host firewall allows it. Catches the case a port was changed in settings but the container
+    was never recreated, so it is still bound to the old value."""
+    grouped: dict[str, dict] = {}
+    for port, proto, label in public_port_rules(values):
+        entry = grouped.setdefault(label, {"label": label, "port": port, "protocols": []})
+        container_port = PORT_ROLE_CONTAINER_PORT.get(label, str(port))
+        ports_source = sftp_ports if PORT_ROLE_CONTAINER.get(label) == "sftp" else fs25_ports
+        bound_hosts = [
+            binding["host_port"]
+            for binding in ports_source.get(f"{container_port}/{proto}", [])
+            if binding.get("host_port")
+        ]
+        entry["protocols"].append({
+            "proto": proto,
+            "published": str(port) in bound_hosts,
+            "actual_ports": sorted(set(bound_hosts)),
+            "firewall_ok": None if firewall is None else (port, proto) in firewall["allowed"],
+        })
+    return list(grouped.values())
 
 
 def custom_server_port(values: dict | None) -> int | None:
@@ -615,6 +684,48 @@ def sync_public_port_access(instance_id: str, next_values: dict | None = None, c
         "status": "unchanged",
         "message": "Host firewall rules already matched the server public ports.",
     }
+
+
+UFW_RULE_PATTERN = re.compile(r"^\s*(\d{1,5})(?:/(tcp|udp))?\s+ALLOW\b", re.IGNORECASE)
+
+
+def read_host_firewall_state() -> dict | None:
+    """Read-only companion to sync_public_port_access: what the host firewall currently
+    allows, so the readiness check can tell "configured" apart from "actually reachable"
+    instead of only ever re-applying rules blind. Returns None when UFW does not manage this
+    host (automation disabled, or UFW missing/inactive), meaning port reachability cannot be
+    audited here and callers should not fail a check over it."""
+    if HOST_FIREWALL_MODE in {"", "off", "disabled", "false", "0"}:
+        return None
+
+    ufw_check = run_host_namespace_shell("command -v ufw >/dev/null 2>&1")
+    if ufw_check["code"] != 0:
+        return None
+
+    status_result = run_host_namespace_shell("ufw status")
+    if status_result["code"] != 0:
+        return None
+    status_text = status_result.get("stdout") or ""
+    status_lines = status_text.splitlines()
+    if not status_lines or "inactive" in status_lines[0].lower():
+        return None
+
+    allowed: set[tuple[int, str]] = set()
+    for line in status_text.splitlines():
+        match = UFW_RULE_PATTERN.match(line)
+        if not match:
+            continue
+        port = parse_port_number(match.group(1))
+        if port is None:
+            continue
+        proto = (match.group(2) or "").lower()
+        if proto:
+            allowed.add((port, proto))
+        else:
+            allowed.add((port, "tcp"))
+            allowed.add((port, "udp"))
+
+    return {"active": True, "allowed": allowed}
 
 
 def safe_upload_name(filename: str) -> bool:
@@ -1065,13 +1176,31 @@ def get_latest_telemetry():
 
 @app.route("/instance/inspect", methods=["POST"])
 def instance_inspect():
-    # Read-only: how each game container is wired for main-site panels and VNC (state,
-    # management network membership, loopback-only administrative ports).
+    # Read-only: how each game server is wired for main-site panels, VNC and its public ports
+    # (game, web admin, TLS, SFTP): container state, management network membership, loopback-only
+    # administrative ports, and whether each public port is actually published and firewalled as
+    # its .env says it should be.
     payload = request.get_json(silent=True) or {}
     instance_ids = payload.get("instance_ids")
     if not isinstance(instance_ids, list) or len(instance_ids) > 200 or not all(isinstance(i, str) and safe_instance_id(i) for i in instance_ids):
         return jsonify({"ok": False, "error": "Invalid instance list"}), 400
-    return jsonify({"ok": True, "containers": {i: inspect_setup(run_command, i) for i in instance_ids}})
+
+    firewall = read_host_firewall_state()
+    containers = {}
+    for instance_id in instance_ids:
+        fs25 = inspect_setup(run_command, instance_id)
+        sftp = inspect_setup(run_command, f"{instance_id}-sftp")
+        env = read_env_file(INSTANCE_BASE_PATH / instance_id / ".env")
+        containers[instance_id] = {
+            **fs25,
+            "sftp": sftp,
+            "port_checks": published_port_checks(env, fs25.get("ports", {}), sftp.get("ports", {}), firewall),
+        }
+    return jsonify({
+        "ok": True,
+        "containers": containers,
+        "firewall_managed": firewall is not None,
+    })
 
 
 @app.before_request
@@ -1284,6 +1413,9 @@ def instance_action():
     if action == "logs":
         return jsonify({"ok": True, "result": {"stdout": read_runtime_log(instance_id)}})
 
+    if action == "game_log":
+        return jsonify({"ok": True, "result": {"stdout": read_game_log(instance_dir, log_lines)}})
+
     if action == "docker_logs":
         docker_logs_result = run_command(
             compose_cmd("-f", str(compose_file), "logs", "--no-color", "--tail", str(log_lines), "fs25"),
@@ -1296,6 +1428,19 @@ def instance_action():
         if docker_logs_result["code"] != 0:
             response["error"] = (docker_logs_result.get("stderr") or docker_logs_result.get("stdout") or "Command failed").strip()
         return jsonify(response), (200 if docker_logs_result["code"] == 0 else 500)
+
+    if action == "sftp_logs":
+        sftp_logs_result = run_command(
+            compose_cmd("-f", str(compose_file), "logs", "--no-color", "--tail", str(log_lines), "sftp"),
+            cwd=str(instance_dir),
+        )
+        response = {
+            "ok": sftp_logs_result["code"] == 0,
+            "result": sftp_logs_result,
+        }
+        if sftp_logs_result["code"] != 0:
+            response["error"] = (sftp_logs_result.get("stderr") or sftp_logs_result.get("stdout") or "Command failed").strip()
+        return jsonify(response), (200 if sftp_logs_result["code"] == 0 else 500)
 
     if action not in action_map:
         return jsonify({"ok": False, "error": "unsupported action"}), 400

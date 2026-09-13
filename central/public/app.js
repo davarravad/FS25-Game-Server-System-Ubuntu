@@ -72,7 +72,7 @@ function route(){
 
   if(parts[0]==='servers'&&parts.length===3)return {type:'server',id:parts[1],instance:parts[2]};
 
-  if(['servers','access','users','cloudflare','setup','install','game-status'].includes(parts[0])&&parts.length===1)return {type:parts[0]};
+  if(['servers','access','users','cloudflare','setup','install','game-status','status'].includes(parts[0])&&parts.length===1)return {type:parts[0]};
 
   if(parts[0]==='setup.html')return {type:'setup'};
 
@@ -473,6 +473,8 @@ async function render(){
   else if(r.type==='users')await userManagement();
 
   else if(r.type==='game-status')await gameStatusPage();
+
+  else if(r.type==='status')await statusPage();
 
   else if(r.type==='cloudflare')await cloudflarePage();
 

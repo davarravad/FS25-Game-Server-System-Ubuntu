@@ -238,9 +238,14 @@ async function proxyViewer(request:Request,env:Bindings,url:URL,view:View,user:S
   if (websocket || !['GET','HEAD'].includes(request.method)) {
     // Same-origin form navigations (e.g. the game panel's own login form) omit the
     // Origin header entirely per the Fetch spec; Sec-Fetch-Site still reports them
-    // accurately and is sent by all modern browsers, so prefer it when present.
+    // accurately and is sent by all modern browsers, so prefer it when present. A
+    // browser can never forge a cross-site request without either header identifying
+    // the true origin, so a request carrying neither (e.g. non-browser automation
+    // signing in to the public game admin panel) cannot be a cross-site attack and is
+    // allowed through; only a present-but-mismatched Origin is rejected.
     const site = request.headers.get('Sec-Fetch-Site');
-    const sameOrigin = site ? (site === 'same-origin' || site === 'none') : request.headers.get('Origin') === url.origin;
+    const origin = request.headers.get('Origin');
+    const sameOrigin = site ? (site === 'same-origin' || site === 'none') : (origin === null || origin === url.origin);
     need(sameOrigin,403,'Invalid viewer origin');
   }
   const g = await gateway(env,view.node_id), headers = user?gatewayHeaders(g,user):new Headers({'X-Central-Token':g.token,'X-Central-Public':'web','CF-Access-Client-Id':g.accessClientId,'CF-Access-Client-Secret':g.accessClientSecret});
@@ -577,8 +582,8 @@ export default {
           const user=await session(env,await digest(cookieValue(request,'__Host-farmservers')));
           if (!user || !allowed(user.role,'viewer')) response=loginPage(!!user);
           else {
-            if(['/cloudflare','/users','/setup','/setup.html','/install','/game-status'].includes(url.pathname.replace(/\/$/,'')))need(user.role==='admin',403,'Administrator access required');
-            const appPage = /^\/(?:nodes(?:\/[a-z0-9-]+)?|servers(?:\/[a-z0-9-]+\/[a-zA-Z0-9_-]+)?|access|users|cloudflare|setup|install|game-status)\/?$/.test(url.pathname) || url.pathname === '/setup.html';
+            if(['/cloudflare','/users','/setup','/setup.html','/install','/game-status','/status'].includes(url.pathname.replace(/\/$/,'')))need(user.role==='admin',403,'Administrator access required');
+            const appPage = /^\/(?:nodes(?:\/[a-z0-9-]+)?|servers(?:\/[a-z0-9-]+\/[a-zA-Z0-9_-]+)?|access|users|cloudflare|setup|install|game-status|status)\/?$/.test(url.pathname) || url.pathname === '/setup.html';
             if(user.role==='operator'&&(appPage||url.pathname==='/'||url.pathname==='/index.html')){if(!/^\/servers(?:\/[a-z0-9-]+\/[a-zA-Z0-9_-]+)?\/?$/.test(url.pathname)||url.searchParams.has('tab')&&url.searchParams.get('tab')!=='overview')return Response.redirect(env.APP_ORIGIN+'/servers',302);}
             if(user.role==='operator'&&url.pathname.endsWith('.txt'))need(false,403,'Administrator access required');
             response=await env.ASSETS.fetch(appPage ? new Request(new URL('/',url.origin),request) : request);

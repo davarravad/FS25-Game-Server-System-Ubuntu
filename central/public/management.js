@@ -121,11 +121,37 @@ async function managementPage(node,server,tab){
 }
 function managementSecrets(parent,values){const box=element('details'),heading=element('summary','Connection credentials');box.append(heading);for(const [key,value] of Object.entries(values)){const form=element('div',undefined,'edit-form');managementField(form,key,value);for(const input of form.querySelectorAll('input'))input.readOnly=true;box.append(form);}parent.append(box);}
 function managementLogs(panel,node,server){
-  const toolbar=element('div',undefined,'actions'),label=element('label','Include Docker logs'),docker=element('input');docker.type='checkbox';label.append(docker);const message=element('p'),state=element('p'),containers=element('div'),runtime=element('pre'),dockerOutput=element('pre');let busy=false;
-  for(const [output,name] of [[runtime,'Runtime logs'],[dockerOutput,'Docker logs']]){output.className='log-output';output.tabIndex=0;output.setAttribute('role','region');output.setAttribute('aria-label',name);}
+  const tabsNav=element('div',undefined,'management-tabs log-view-tabs');tabsNav.setAttribute('role','tablist');tabsNav.setAttribute('aria-label','Log views');
+  const message=element('p'),state=element('p'),containers=element('div');
+  const docker=element('input');docker.type='checkbox';const dockerLabel=element('label',undefined,'log-docker-toggle');dockerLabel.append(docker,element('span','Include Docker logs'));
+  const consoleOutput=element('pre'),dockerOutput=element('pre'),gameOutput=element('pre'),sftpOutput=element('pre');
+  for(const [output,name] of [[consoleOutput,'Console log'],[dockerOutput,'Docker log'],[gameOutput,'Game server log'],[sftpOutput,'SFTP log']]){output.className='log-output';output.tabIndex=0;output.setAttribute('role','region');output.setAttribute('aria-label',name);}
+  const consoleSection=element('div',undefined,'log-tab-panel'),gameSection=element('div',undefined,'log-tab-panel'),sftpSection=element('div',undefined,'log-tab-panel');
+  consoleSection.append(consoleOutput,dockerOutput);
+  gameSection.append(gameOutput);
+  sftpSection.append(sftpOutput);
+  const views={console:{section:consoleSection,button:null},game:{section:gameSection,button:null},sftp:{section:sftpSection,button:null}};
+  let activeView='console',busy=false;
   const updateLog=(output,text)=>{if(output.textContent===text)return;const top=output.scrollTop,left=output.scrollLeft;output.textContent=text;output.scrollTop=top;output.scrollLeft=left;};
-  const refresh=async()=>{if(busy||!panel.isConnected||document.hidden)return;busy=true;try{const data=await manageApi(node,'live',server,undefined,{include_docker_logs:docker.checked?'1':'0'});if(!panel.isConnected)return;state.textContent=data.metrics?.runtime_state?.label+' — '+data.metrics?.runtime_state?.detail;containers.replaceChildren(...(data.metrics?.containers||[]).map(c=>element('p',`${c.service}: ${c.status}${c.health?' · '+c.health:''}${c.exit_code!=null?' · exit '+c.exit_code:''}`)));updateLog(runtime,data.log_output||'No game logs.');dockerOutput.hidden=!docker.checked;updateLog(dockerOutput,data.docker_log_output||'');message.textContent='Updated '+new Date().toLocaleTimeString();}catch(e){message.textContent=e.message;}finally{busy=false;}};
-  toolbar.append(label,button('Refresh logs',refresh));panel.append(toolbar,message,state,containers,element('h3','Runtime logs'),runtime,dockerOutput);docker.onchange=refresh;void refresh();const timer=setInterval(()=>{if(!panel.isConnected){clearInterval(timer);return;}void refresh();},5000);
+  const refresh=async()=>{if(busy||!panel.isConnected||document.hidden)return;busy=true;try{
+      const data=await manageApi(node,'live',server,undefined,{include_docker_logs:docker.checked?'1':'0',include_sftp_logs:activeView==='sftp'?'1':'0',include_game_log:activeView==='game'?'1':'0'});
+      if(!panel.isConnected)return;
+      const all=data.metrics?.containers||[];
+      state.textContent=data.metrics?.runtime_state?.label+' — '+data.metrics?.runtime_state?.detail;
+      const shown=activeView==='sftp'?all.filter(c=>c.service==='sftp'):all;
+      containers.replaceChildren(...shown.map(c=>element('p',`${c.service}: ${c.status}${c.health?' · '+c.health:''}${c.exit_code!=null?' · exit '+c.exit_code:''}`)));
+      updateLog(consoleOutput,data.log_output||'No console log.');
+      dockerOutput.hidden=!docker.checked;updateLog(dockerOutput,data.docker_log_output||'');
+      if(activeView==='game')updateLog(gameOutput,data.game_log_output||'No game server log.');
+      if(activeView==='sftp')updateLog(sftpOutput,data.sftp_log_output||'No SFTP log.');
+      message.textContent='Updated '+new Date().toLocaleTimeString();
+    }catch(e){message.textContent=e.message;}finally{busy=false;}};
+  const showView=view=>{activeView=view;for(const [key,v] of Object.entries(views)){v.section.hidden=key!==view;v.button.setAttribute('aria-current',key===view?'page':'false');}dockerLabel.hidden=view!=='console';void refresh();};
+  for(const [key,label] of [['console','Console'],['game','Game Server'],['sftp','SFTP']]){const b=button(label,()=>showView(key));b.setAttribute('role','tab');views[key].button=b;tabsNav.append(b);}
+  const toolbar=element('div',undefined,'actions');toolbar.append(button('Refresh logs',refresh));
+  panel.append(toolbar,message,state,containers,dockerLabel,tabsNav,consoleSection,gameSection,sftpSection);
+  docker.onchange=refresh;showView('console');
+  const timer=setInterval(()=>{if(!panel.isConnected){clearInterval(timer);return;}void refresh();},5000);
 }
 function managementFiles(panel,node,server){
   const controls=element('div',undefined,'actions'),target=element('select');target.setAttribute('aria-label','File location');for(const value of server?['profile','mods','saves','logs']:['game','dlc','installer']){const o=element('option',value);o.value=value;target.append(o);}
@@ -146,7 +172,7 @@ function managementHelp(panel,server){
     ['Settings','Edit the name shown on this site, the runtime image, ports and SFTP/web credentials. Saved settings sync to the node. The in-game name, passwords, map, player slots, language, difficulty and intervals are managed only in Game admin and are never overwritten from here.'],
     ['Game installation','Open VNC console, run Setup to install licensed game files, then Setup Server to prepare the instance. Use Start on the overview when ready.'],
     ['Files','Browse and upload profile files, mods, saves and logs. Large files upload in small chunks with progress.'],
-    ['Logs & containers','Inspect game logs, optionally Docker logs, and each container’s status, health and exit code.'],
+    ['Logs & containers','Switch between the Console log (the panel’s own startup and lifecycle messages, optionally with Docker logs), the Game Server log (the dedicated server’s own log.txt) and SFTP logs, plus each container’s status, health and exit code.'],
     ['Maintenance','Restart the game process, reinstall the game or SFTP container, or delete the server. Each operation requires its instance ID. Deletion removes instance data.']
   ]:[
     ['Host settings','Configure the local agent connection and shared game, DLC and installer paths. Prepare shared storage before installing games.'],
