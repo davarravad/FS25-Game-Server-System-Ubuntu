@@ -125,14 +125,14 @@ function managementLogs(panel,node,server){
   panel.insertBefore(headingRow,heading);headingRow.append(heading,statusPills);
   const tabsNav=element('div',undefined,'management-tabs log-view-tabs');tabsNav.setAttribute('role','tablist');tabsNav.setAttribute('aria-label','Log views');
   const message=element('p',undefined,'log-updated');message.setAttribute('role','status');
-  const docker=element('input');docker.type='checkbox';const dockerLabel=element('label',undefined,'log-docker-toggle');dockerLabel.append(docker,element('span','Include Docker logs'));
   const consoleOutput=element('pre'),dockerOutput=element('pre'),gameOutput=element('pre'),sftpOutput=element('pre');
   for(const [output,name] of [[consoleOutput,'Console log'],[dockerOutput,'Docker log'],[gameOutput,'Game server log'],[sftpOutput,'SFTP log']]){output.className='log-output';output.tabIndex=0;output.setAttribute('role','region');output.setAttribute('aria-label',name);}
-  const consoleSection=element('div',undefined,'log-tab-panel'),gameSection=element('div',undefined,'log-tab-panel'),sftpSection=element('div',undefined,'log-tab-panel');
-  consoleSection.append(consoleOutput,dockerOutput);
+  const consoleSection=element('div',undefined,'log-tab-panel'),dockerSection=element('div',undefined,'log-tab-panel'),gameSection=element('div',undefined,'log-tab-panel'),sftpSection=element('div',undefined,'log-tab-panel');
+  consoleSection.append(consoleOutput);
+  dockerSection.append(dockerOutput);
   gameSection.append(gameOutput);
   sftpSection.append(sftpOutput);
-  const views={console:{section:consoleSection,button:null},game:{section:gameSection,button:null},sftp:{section:sftpSection,button:null}};
+  const views={game:{section:gameSection,button:null},sftp:{section:sftpSection,button:null},console:{section:consoleSection,button:null},docker:{section:dockerSection,button:null}};
   let activeView='console',busy=false,lastUpdated=null;
   const updateLog=(output,text)=>{
     if(output.textContent===text)return;
@@ -142,7 +142,7 @@ function managementLogs(panel,node,server){
   };
   const updateMessage=()=>{message.textContent=lastUpdated?'Updated '+timeAgo(Date.now()-lastUpdated):'';};
   const refresh=async()=>{if(busy||!panel.isConnected||document.hidden)return;busy=true;try{
-      const data=await manageApi(node,'live',server,undefined,{include_docker_logs:docker.checked?'1':'0',include_sftp_logs:activeView==='sftp'?'1':'0',include_game_log:activeView==='game'?'1':'0'});
+      const data=await manageApi(node,'live',server,undefined,{include_docker_logs:activeView==='docker'?'1':'0',include_sftp_logs:activeView==='sftp'?'1':'0',include_game_log:activeView==='game'?'1':'0'});
       if(!panel.isConnected)return;
       const all=data.metrics?.containers||[],runtimeState=data.metrics?.runtime_state||{};
       const statePill=element('span',runtimeState.label||'Unknown','badge '+(runtimeState.state==='online'?'good':'warning'));
@@ -153,26 +153,37 @@ function managementLogs(panel,node,server){
         return pill;
       });
       statusPills.replaceChildren(statePill,...containerPills);
-      updateLog(consoleOutput,data.log_output||'No console log.');
-      dockerOutput.hidden=!docker.checked;updateLog(dockerOutput,data.docker_log_output||'');
+      if(activeView==='console')updateLog(consoleOutput,data.log_output||'No console log.');
+      if(activeView==='docker')updateLog(dockerOutput,data.docker_log_output||'No Docker log.');
       if(activeView==='game')updateLog(gameOutput,data.game_log_output||'No game server log.');
       if(activeView==='sftp')updateLog(sftpOutput,data.sftp_log_output||'No SFTP log.');
       lastUpdated=Date.now();updateMessage();
     }catch(e){message.textContent=e.message;}finally{busy=false;}};
-  const showView=view=>{activeView=view;for(const [key,v] of Object.entries(views)){v.section.hidden=key!==view;v.button.setAttribute('aria-current',key===view?'page':'false');}dockerLabel.hidden=view!=='console';void refresh();};
-  for(const [key,label] of [['console','Console'],['game','Game Server'],['sftp','SFTP']]){const b=button(label,()=>showView(key));b.setAttribute('role','tab');views[key].button=b;tabsNav.append(b);}
-  const toolbar=element('div',undefined,'actions');toolbar.append(button('Refresh logs',refresh));
-  panel.append(toolbar,dockerLabel,tabsNav,consoleSection,gameSection,sftpSection,message);
-  docker.onchange=refresh;showView('console');
+  const showView=view=>{activeView=view;for(const [key,v] of Object.entries(views)){v.section.hidden=key!==view;v.button.setAttribute('aria-current',key===view?'page':'false');}void refresh();};
+  for(const [key,label] of [['game','Game Server'],['sftp','SFTP'],['console','Console'],['docker','Docker']]){const b=button(label,()=>showView(key));b.setAttribute('role','tab');views[key].button=b;tabsNav.append(b);}
+  const toolbar=element('div',undefined,'actions log-toolbar');toolbar.append(button('Refresh logs',refresh));
+  const tabsRow=element('div',undefined,'log-tabs-row');tabsRow.append(tabsNav,toolbar);
+  panel.append(tabsRow,gameSection,sftpSection,consoleSection,dockerSection,message);
+  showView('console');
   const dataTimer=setInterval(()=>{if(!panel.isConnected){clearInterval(dataTimer);return;}void refresh();},5000);
   const clockTimer=setInterval(()=>{if(!panel.isConnected){clearInterval(clockTimer);return;}updateMessage();},5000);
 }
 function managementFiles(panel,node,server){
   const controls=element('div',undefined,'actions'),target=element('select');target.setAttribute('aria-label','File location');for(const value of server?['profile','mods','saves','logs']:['game','dlc','installer']){const o=element('option',value);o.value=value;target.append(o);}
-  const path=element('p'),message=element('p'),list=element('div'),upload=element('form'),file=element('input'),submit=element('button','Upload file'),meter=element('progress');file.type='file';file.required=true;file.setAttribute('aria-label','File to upload');meter.max=100;meter.value=0;let subpath='',uploading=false;
-  const refresh=async()=>{try{const data=await manageApi(node,'files',server,undefined,{target:target.value,subpath});path.textContent=data.path||subpath||'/';list.replaceChildren();for(const item of data.files||[]){const row=element('div',undefined,'file-row');row.append(item.is_dir?button(item.name+' /',()=>{if(uploading)return;subpath=item.relative_path;void refresh();}):element('span',item.name),element('span',item.is_dir?'Folder':bytes(item.size)),element('span',stamp(item.modified_at)));if(!server&&target.value==='installer'&&!subpath&&/\.zip$/i.test(item.name))row.append(button('Extract installer',async()=>{if(!confirm('Extract '+item.name+' into shared installer storage?'))return;message.textContent='Extracting…';try{await manageApi(node,'unzip',null,{filename:item.name});message.textContent='Extracted.';await refresh();}catch(e){message.textContent=e.message;}}));list.append(row);}if(!list.children.length)list.append(element('p','This folder is empty.'));}catch(e){message.textContent=e.message;}};
+  const crumbs=element('div',undefined,'file-crumbs'),message=element('p'),table=element('table',undefined,'file-table'),thead=element('thead'),tbody=element('tbody'),upload=element('form'),file=element('input'),submit=element('button','Upload file'),meter=element('progress');
+  const headRow=element('tr');for(const label of ['Name','Type','Size','Modified'])headRow.append(element('th',label));thead.append(headRow);table.append(thead,tbody);
+  file.type='file';file.required=true;file.setAttribute('aria-label','File to upload');meter.max=100;meter.value=0;let subpath='',uploading=false;
+  const goTo=p=>{if(uploading)return;subpath=p;void refresh();};
+  const drawCrumbs=()=>{crumbs.replaceChildren();const parts=subpath?subpath.split('/'):[];crumbs.append(button('Home',()=>goTo('')));let acc='';for(const part of parts){acc=acc?acc+'/'+part:part;crumbs.append(element('span','/'),button(part,()=>goTo(acc)));}};
+  const refresh=async()=>{try{const data=await manageApi(node,'files',server,undefined,{target:target.value,subpath});drawCrumbs();tbody.replaceChildren();for(const item of data.files||[]){const row=element('tr'),nameCell=element('td');
+      nameCell.append(item.is_dir?button('📁 '+item.name,()=>goTo(item.relative_path)):element('span','📄 '+item.name));
+      row.append(nameCell,element('td',item.is_dir?'Folder':'File'),element('td',item.is_dir?'—':bytes(item.size)),element('td',stamp(item.modified_at)));
+      if(!server&&target.value==='installer'&&!subpath&&/\.zip$/i.test(item.name)){const actionCell=element('td');actionCell.append(button('Extract installer',async()=>{if(!confirm('Extract '+item.name+' into shared installer storage?'))return;message.textContent='Extracting…';try{await manageApi(node,'unzip',null,{filename:item.name});message.textContent='Extracted.';await refresh();}catch(e){message.textContent=e.message;}}));row.append(actionCell);}
+      tbody.append(row);}
+    if(!tbody.children.length){const row=element('tr'),cell=element('td','This folder is empty.');cell.colSpan=4;row.append(cell);tbody.append(row);}
+    }catch(e){message.textContent=e.message;}};
   controls.append(target,button('Up one folder',()=>{if(uploading)return;subpath=subpath.split('/').slice(0,-1).join('/');void refresh();}),button('Refresh files',refresh));target.onchange=()=>{subpath='';void refresh();};
-  upload.append(file,submit,meter);panel.append(controls,path,message,list,element('h3','Upload to this folder'),upload);
+  upload.append(file,submit,meter);panel.append(controls,crumbs,message,table,element('h3','Upload to this folder'),upload);
   upload.onsubmit=async event=>{event.preventDefault();const selected=file.files[0];if(!selected||uploading)return;if(!confirm('Upload '+selected.name+' here? An existing file with this name will be replaced.'))return;uploading=true;dirty=true;submit.disabled=true;target.disabled=true;
     const chosenTarget=target.value,chosenPath=subpath;
     try{const chunkSize=2*1024*1024;for(let offset=0;offset<selected.size||offset===0;offset+=chunkSize){const end=Math.min(selected.size,offset+chunkSize),query=new URLSearchParams({node:node.id,operation:'upload',...(server?{instance_id:server.instance_id}:{}),target:chosenTarget,subpath:chosenPath,filename:selected.name,offset:String(offset),total_size:String(selected.size),is_last:end===selected.size?'1':'0'});

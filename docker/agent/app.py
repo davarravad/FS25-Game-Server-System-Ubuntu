@@ -33,6 +33,12 @@ SFTP_UID = int(os.getenv("SFTP_UID", "1000"))
 SFTP_GID = int(os.getenv("SFTP_GID", "1000"))
 HOST_FIREWALL_MODE = os.getenv("HOST_FIREWALL_MODE", "auto").strip().lower()
 HOST_FIREWALL_HELPER_IMAGE = os.getenv("HOST_FIREWALL_HELPER_IMAGE", "ubuntu:24.04").strip() or "ubuntu:24.04"
+SFTP_GUARD_MODE = os.getenv("SFTP_GUARD_MODE", "auto").strip().lower()
+SFTP_GUARD_INTERVAL_SECONDS = int(os.getenv("SFTP_GUARD_INTERVAL_SECONDS", "60") or 60)
+SFTP_GUARD_THRESHOLD = int(os.getenv("SFTP_GUARD_THRESHOLD", "3") or 3)
+SFTP_GUARD_WINDOW_SECONDS = int(os.getenv("SFTP_GUARD_WINDOW_SECONDS", "600") or 600)
+SFTP_GUARD_BAN_SECONDS = int(os.getenv("SFTP_GUARD_BAN_SECONDS", "86400") or 86400)
+SFTP_GUARD_STATE_PATH = Path(os.getenv("SFTP_GUARD_STATE_PATH", "/opt/fsg-panel/state/sftp-guard.json"))
 COMPOSE_COMMAND = None
 SFTP_KEYS_DIR_NAME = "sftp-keys"
 PROFILE_RELATIVE_PATH = "data/config/FarmingSimulator2025"
@@ -728,6 +734,185 @@ def read_host_firewall_state() -> dict | None:
     return {"active": True, "allowed": allowed}
 
 
+SFTP_GUARD_LOCK = threading.Lock()
+SFTP_GUARD_INVALID_USER_RE = re.compile(r"Invalid user \S+ from (\d{1,3}(?:\.\d{1,3}){3})")
+SFTP_GUARD_ROOT_FAILURE_RE = re.compile(r"Failed password for root from (\d{1,3}(?:\.\d{1,3}){3})")
+SFTP_GUARD_IPV4_RE = re.compile(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$")
+
+
+def sftp_guard_bannable_ip(ip: str) -> bool:
+    """Reject malformed input and private/loopback ranges so a guard bug can never
+    ban internal Docker/host traffic, only real internet source addresses."""
+    match = SFTP_GUARD_IPV4_RE.match(ip)
+    if not match:
+        return False
+    octets = [int(group) for group in match.groups()]
+    if any(o > 255 for o in octets):
+        return False
+    first, second = octets[0], octets[1]
+    if first in (0, 10, 127):
+        return False
+    if first == 172 and 16 <= second <= 31:
+        return False
+    if first == 192 and second == 168:
+        return False
+    if first == 169 and second == 254:
+        return False
+    return True
+
+
+def load_sftp_guard_state() -> dict:
+    try:
+        return json.loads(SFTP_GUARD_STATE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def save_sftp_guard_state(state: dict):
+    SFTP_GUARD_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = SFTP_GUARD_STATE_PATH.with_suffix(".tmp")
+    tmp_path.write_text(json.dumps(state), encoding="utf-8")
+    tmp_path.replace(SFTP_GUARD_STATE_PATH)
+
+
+def sftp_guard_ban_ip(ip: str) -> bool:
+    """Blocks the IP at the DOCKER-USER chain, which Docker consults before its own
+    DNAT/forward rules for published container ports (a plain INPUT rule would not see
+    that forwarded traffic at all). Falls back to INPUT for hosts without that chain.
+    Honors HOST_FIREWALL_MODE=off the same way sync_public_port_access does, since that
+    setting means "don't let the agent touch the host firewall"."""
+    if HOST_FIREWALL_MODE in {"", "off", "disabled", "false", "0"}:
+        return False
+    quoted_ip = shlex.quote(ip)
+    check = run_host_namespace_shell(f"iptables -C DOCKER-USER -s {quoted_ip} -j DROP")
+    if check["code"] == 0:
+        return True
+    insert = run_host_namespace_shell(f"iptables -I DOCKER-USER -s {quoted_ip} -j DROP")
+    if insert["code"] == 0:
+        return True
+    fallback = run_host_namespace_shell(f"iptables -I INPUT -s {quoted_ip} -j DROP")
+    return fallback["code"] == 0
+
+
+def sftp_guard_unban_ip(ip: str):
+    quoted_ip = shlex.quote(ip)
+    run_host_namespace_shell(
+        f"iptables -D DOCKER-USER -s {quoted_ip} -j DROP 2>/dev/null; "
+        f"iptables -D INPUT -s {quoted_ip} -j DROP 2>/dev/null; true"
+    )
+
+
+def sftp_guard_container_names() -> list[str]:
+    result = run_command(["docker", "ps", "--format", "{{.Names}}", "--filter", "name=sftp"], timeout=15)
+    if result["code"] != 0:
+        return []
+    return [name.strip() for name in result["stdout"].splitlines() if name.strip()]
+
+
+def sftp_guard_instance_id_for_container(container_name: str) -> str | None:
+    if not container_name.endswith("-sftp"):
+        return None
+    candidate = container_name[: -len("-sftp")]
+    if safe_instance_id(candidate) and (INSTANCE_BASE_PATH / candidate).is_dir():
+        return candidate
+    return None
+
+
+def sftp_guard_scan_container(container_name: str, since_ts: int) -> list[tuple[str, str]]:
+    result = run_command(["docker", "logs", "--since", str(since_ts), container_name], timeout=30)
+    hits: list[tuple[str, str]] = []
+    for line in (result.get("stdout", "") + result.get("stderr", "")).splitlines():
+        match = SFTP_GUARD_INVALID_USER_RE.search(line)
+        if match:
+            hits.append((match.group(1), "unknown username"))
+            continue
+        match = SFTP_GUARD_ROOT_FAILURE_RE.search(line)
+        if match:
+            hits.append((match.group(1), "root login"))
+    return hits
+
+
+def sftp_guard_tick():
+    now = int(time.time())
+    with SFTP_GUARD_LOCK:
+        state = load_sftp_guard_state()
+        containers_state = state.setdefault("containers", {})
+        strikes_state = state.setdefault("strikes", {})
+        bans_state = state.setdefault("bans", {})
+
+        for container_name in sftp_guard_container_names():
+            container_record = containers_state.setdefault(container_name, {"since": now - SFTP_GUARD_INTERVAL_SECONDS})
+            since_ts = int(container_record.get("since", now - SFTP_GUARD_INTERVAL_SECONDS))
+            hits = sftp_guard_scan_container(container_name, since_ts)
+            container_record["since"] = now
+
+            instance_id = sftp_guard_instance_id_for_container(container_name)
+
+            for ip, reason in hits:
+                if not sftp_guard_bannable_ip(ip) or ip in bans_state:
+                    continue
+
+                strike = strikes_state.setdefault(ip, {"attempts": []})
+                strike["attempts"] = [seen for seen in strike["attempts"] if now - seen <= SFTP_GUARD_WINDOW_SECONDS]
+                strike["attempts"].append(now)
+                strike["reason"] = reason
+                strike["container"] = container_name
+
+                if len(strike["attempts"]) < SFTP_GUARD_THRESHOLD:
+                    continue
+
+                if not sftp_guard_ban_ip(ip):
+                    continue
+
+                expires_at = None if SFTP_GUARD_BAN_SECONDS <= 0 else now + SFTP_GUARD_BAN_SECONDS
+                attempts = len(strike["attempts"])
+                bans_state[ip] = {
+                    "banned_at": now,
+                    "expires_at": expires_at,
+                    "reason": reason,
+                    "container": container_name,
+                    "attempts": attempts,
+                }
+                strikes_state.pop(ip, None)
+                message = f"[SFTP Guard] Banned {ip} after {attempts} {reason} attempt(s) on {container_name}."
+                print(message, flush=True)
+                if instance_id:
+                    append_runtime_log(instance_id, message)
+
+        for ip, ban in list(bans_state.items()):
+            expires_at = ban.get("expires_at")
+            if expires_at is not None and now >= expires_at:
+                sftp_guard_unban_ip(ip)
+                bans_state.pop(ip, None)
+                print(f"[SFTP Guard] Ban expired for {ip}.", flush=True)
+            else:
+                # The iptables rule lives in the host kernel, not this container, so a host
+                # reboot without iptables-persistent silently drops it; re-assert it every
+                # tick (sftp_guard_ban_ip no-ops if the rule is already there) so a still-active
+                # ban in state always stays enforced.
+                sftp_guard_ban_ip(ip)
+
+        save_sftp_guard_state(state)
+
+
+def sftp_guard_loop():
+    if SFTP_GUARD_MODE in {"", "off", "disabled", "false", "0"}:
+        print("[SFTP Guard] Disabled via SFTP_GUARD_MODE.", flush=True)
+        return
+
+    print(
+        "[SFTP Guard] Watching SFTP containers for unknown-username/root login attempts "
+        f"(threshold={SFTP_GUARD_THRESHOLD} per {SFTP_GUARD_WINDOW_SECONDS}s, ban={SFTP_GUARD_BAN_SECONDS}s).",
+        flush=True,
+    )
+    while True:
+        try:
+            sftp_guard_tick()
+        except Exception as exc:
+            print(f"[SFTP Guard] tick failed: {exc}", flush=True)
+        time.sleep(SFTP_GUARD_INTERVAL_SECONDS)
+
+
 def safe_upload_name(filename: str) -> bool:
     return re.fullmatch(r"[a-zA-Z0-9._ -]+", filename or "") is not None
 
@@ -1245,6 +1430,21 @@ def release_game_sync_lock(error=None):
 @app.get("/health")
 def health():
     return jsonify({"ok": True})
+
+
+@app.get("/sftp-guard/status")
+def sftp_guard_status():
+    with SFTP_GUARD_LOCK:
+        state = load_sftp_guard_state()
+    return jsonify({
+        "ok": True,
+        "mode": SFTP_GUARD_MODE,
+        "threshold": SFTP_GUARD_THRESHOLD,
+        "window_seconds": SFTP_GUARD_WINDOW_SECONDS,
+        "ban_seconds": SFTP_GUARD_BAN_SECONDS,
+        "bans": state.get("bans", {}),
+        "strikes": state.get("strikes", {}),
+    })
 
 
 @app.post("/instance/create")
@@ -1862,4 +2062,5 @@ if __name__ == "__main__":
     # Bringing every instance back after a reboot can take minutes; the API (and its health
     # check) must not wait for it.
     threading.Thread(target=restore_desired_instances, name="restore-instances", daemon=True).start()
+    threading.Thread(target=sftp_guard_loop, name="sftp-guard", daemon=True).start()
     app.run(host="0.0.0.0", port=8081)
