@@ -106,6 +106,10 @@ services:
       # desktop console ports to loopback so the main site can reach them through the tunnel.
       CENTRAL_MODE: ${CENTRAL_MODE:-1}
       HOST_FIREWALL_HELPER_IMAGE: ${HOST_FIREWALL_HELPER_IMAGE:-ubuntu:24.04}
+      SFTP_GUARD_MODE: ${SFTP_GUARD_MODE:-auto}
+      SFTP_GUARD_THRESHOLD: ${SFTP_GUARD_THRESHOLD:-3}
+      SFTP_GUARD_WINDOW_SECONDS: ${SFTP_GUARD_WINDOW_SECONDS:-600}
+      SFTP_GUARD_BAN_SECONDS: ${SFTP_GUARD_BAN_SECONDS:-86400}
       TZ: ${TZ}
     volumes:
       - /proc:/host/proc:ro

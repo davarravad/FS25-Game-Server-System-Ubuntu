@@ -30,8 +30,8 @@ test('site assets and fleet data require current admin or staff approval',async(
       if(role==='operator'||role==='viewer')assert.equal(page.status,403);
       else assert.equal(page.headers.get('Cache-Control'),'no-store');
       assert.equal((await mf.dispatchFetch(origin+'/api/nodes',{headers})).status,approved?200:403);
-      for(const path of ['/nodes/node-1','/servers/node-1/Game_1','/access','/setup','/install','/setup/','/install/','/setup.html','/users']){
-        const response=await mf.dispatchFetch(origin+path,{headers,redirect:'manual'});const adminPage=['/setup','/install','/setup/','/install/','/setup.html','/users'].includes(path);const canOpen=approved&&(!adminPage||role==='admin')&&(role!=='operator'||path.startsWith('/servers/'));assert.equal((await response.text()).includes('PRIVATE ASSET'),canOpen);if(approved&&adminPage&&role!=='admin')assert.equal(response.status,403);else if(role==='operator'&&!canOpen)assert.equal(response.status,302);
+      for(const path of ['/nodes/node-1','/servers/node-1/Game_1','/access','/setup','/install','/setup/','/install/','/setup.html','/users','/status']){
+        const response=await mf.dispatchFetch(origin+path,{headers,redirect:'manual'});const adminPage=['/setup','/install','/setup/','/install/','/setup.html','/users','/status'].includes(path);const canOpen=approved&&(!adminPage||role==='admin')&&(role!=='operator'||path.startsWith('/servers/'));assert.equal((await response.text()).includes('PRIVATE ASSET'),canOpen);if(approved&&adminPage&&role!=='admin')assert.equal(response.status,403);else if(role==='operator'&&!canOpen)assert.equal(response.status,302);
         if(canOpen){assert.equal(assetPaths.at(-1),'/');assert.equal(response.status,200);assert.equal(response.headers.get('Cache-Control'),'no-store');}
       }
     }

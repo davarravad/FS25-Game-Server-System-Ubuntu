@@ -121,18 +121,69 @@ async function managementPage(node,server,tab){
 }
 function managementSecrets(parent,values){const box=element('details'),heading=element('summary','Connection credentials');box.append(heading);for(const [key,value] of Object.entries(values)){const form=element('div',undefined,'edit-form');managementField(form,key,value);for(const input of form.querySelectorAll('input'))input.readOnly=true;box.append(form);}parent.append(box);}
 function managementLogs(panel,node,server){
-  const toolbar=element('div',undefined,'actions'),label=element('label','Include Docker logs'),docker=element('input');docker.type='checkbox';label.append(docker);const message=element('p'),state=element('p'),containers=element('div'),runtime=element('pre'),dockerOutput=element('pre');let busy=false;
-  for(const [output,name] of [[runtime,'Runtime logs'],[dockerOutput,'Docker logs']]){output.className='log-output';output.tabIndex=0;output.setAttribute('role','region');output.setAttribute('aria-label',name);}
-  const updateLog=(output,text)=>{if(output.textContent===text)return;const top=output.scrollTop,left=output.scrollLeft;output.textContent=text;output.scrollTop=top;output.scrollLeft=left;};
-  const refresh=async()=>{if(busy||!panel.isConnected||document.hidden)return;busy=true;try{const data=await manageApi(node,'live',server,undefined,{include_docker_logs:docker.checked?'1':'0'});if(!panel.isConnected)return;state.textContent=data.metrics?.runtime_state?.label+' — '+data.metrics?.runtime_state?.detail;containers.replaceChildren(...(data.metrics?.containers||[]).map(c=>element('p',`${c.service}: ${c.status}${c.health?' · '+c.health:''}${c.exit_code!=null?' · exit '+c.exit_code:''}`)));updateLog(runtime,data.log_output||'No game logs.');dockerOutput.hidden=!docker.checked;updateLog(dockerOutput,data.docker_log_output||'');message.textContent='Updated '+new Date().toLocaleTimeString();}catch(e){message.textContent=e.message;}finally{busy=false;}};
-  toolbar.append(label,button('Refresh logs',refresh));panel.append(toolbar,message,state,containers,element('h3','Runtime logs'),runtime,dockerOutput);docker.onchange=refresh;void refresh();const timer=setInterval(()=>{if(!panel.isConnected){clearInterval(timer);return;}void refresh();},5000);
+  const heading=panel.querySelector('h2'),headingRow=element('div',undefined,'log-panel-heading'),statusPills=element('div',undefined,'log-status-pills');
+  panel.insertBefore(headingRow,heading);headingRow.append(heading,statusPills);
+  const tabsNav=element('div',undefined,'management-tabs log-view-tabs');tabsNav.setAttribute('role','tablist');tabsNav.setAttribute('aria-label','Log views');
+  const message=element('p',undefined,'log-updated');message.setAttribute('role','status');
+  const consoleOutput=element('pre'),dockerOutput=element('pre'),gameOutput=element('pre'),sftpOutput=element('pre');
+  for(const [output,name] of [[consoleOutput,'Console log'],[dockerOutput,'Docker log'],[gameOutput,'Game server log'],[sftpOutput,'SFTP log']]){output.className='log-output';output.tabIndex=0;output.setAttribute('role','region');output.setAttribute('aria-label',name);}
+  const consoleSection=element('div',undefined,'log-tab-panel'),dockerSection=element('div',undefined,'log-tab-panel'),gameSection=element('div',undefined,'log-tab-panel'),sftpSection=element('div',undefined,'log-tab-panel');
+  consoleSection.append(consoleOutput);
+  dockerSection.append(dockerOutput);
+  gameSection.append(gameOutput);
+  sftpSection.append(sftpOutput);
+  const views={game:{section:gameSection,button:null},sftp:{section:sftpSection,button:null},console:{section:consoleSection,button:null},docker:{section:dockerSection,button:null}};
+  let activeView='console',busy=false,lastUpdated=null;
+  const updateLog=(output,text)=>{
+    if(output.textContent===text)return;
+    const atBottom=!output.dataset.loaded||output.scrollTop+output.clientHeight>=output.scrollHeight-4,left=output.scrollLeft;
+    output.textContent=text;output.dataset.loaded='1';output.scrollLeft=left;
+    if(atBottom)output.scrollTop=output.scrollHeight;
+  };
+  const updateMessage=()=>{message.textContent=lastUpdated?'Updated '+timeAgo(Date.now()-lastUpdated):'';};
+  const refresh=async()=>{if(busy||!panel.isConnected||document.hidden)return;busy=true;try{
+      const data=await manageApi(node,'live',server,undefined,{include_docker_logs:activeView==='docker'?'1':'0',include_sftp_logs:activeView==='sftp'?'1':'0',include_game_log:activeView==='game'?'1':'0'});
+      if(!panel.isConnected)return;
+      const all=data.metrics?.containers||[],runtimeState=data.metrics?.runtime_state||{};
+      const statePill=element('span',runtimeState.label||'Unknown','badge '+(runtimeState.state==='online'?'good':'warning'));
+      if(runtimeState.detail)statePill.title=runtimeState.detail;
+      const containerPills=all.map(c=>{
+        const pill=element('span',`${c.service}: ${c.status}`,'badge '+(c.running?'good':'warning')),details=[c.health,c.exit_code!=null?'exit '+c.exit_code:''].filter(Boolean).join(' · ');
+        if(details)pill.title=details;
+        return pill;
+      });
+      statusPills.replaceChildren(statePill,...containerPills);
+      if(activeView==='console')updateLog(consoleOutput,data.log_output||'No console log.');
+      if(activeView==='docker')updateLog(dockerOutput,data.docker_log_output||'No Docker log.');
+      if(activeView==='game')updateLog(gameOutput,data.game_log_output||'No game server log.');
+      if(activeView==='sftp')updateLog(sftpOutput,data.sftp_log_output||'No SFTP log.');
+      lastUpdated=Date.now();updateMessage();
+    }catch(e){message.textContent=e.message;}finally{busy=false;}};
+  const showView=view=>{activeView=view;for(const [key,v] of Object.entries(views)){v.section.hidden=key!==view;v.button.setAttribute('aria-current',key===view?'page':'false');}void refresh();};
+  for(const [key,label] of [['game','Game Server'],['sftp','SFTP'],['console','Console'],['docker','Docker']]){const b=button(label,()=>showView(key));b.setAttribute('role','tab');views[key].button=b;tabsNav.append(b);}
+  const toolbar=element('div',undefined,'actions log-toolbar');toolbar.append(button('Refresh logs',refresh));
+  const tabsRow=element('div',undefined,'log-tabs-row');tabsRow.append(tabsNav,toolbar);
+  panel.append(tabsRow,gameSection,sftpSection,consoleSection,dockerSection,message);
+  showView('console');
+  const dataTimer=setInterval(()=>{if(!panel.isConnected){clearInterval(dataTimer);return;}void refresh();},5000);
+  const clockTimer=setInterval(()=>{if(!panel.isConnected){clearInterval(clockTimer);return;}updateMessage();},5000);
 }
 function managementFiles(panel,node,server){
   const controls=element('div',undefined,'actions'),target=element('select');target.setAttribute('aria-label','File location');for(const value of server?['profile','mods','saves','logs']:['game','dlc','installer']){const o=element('option',value);o.value=value;target.append(o);}
-  const path=element('p'),message=element('p'),list=element('div'),upload=element('form'),file=element('input'),submit=element('button','Upload file'),meter=element('progress');file.type='file';file.required=true;file.setAttribute('aria-label','File to upload');meter.max=100;meter.value=0;let subpath='',uploading=false;
-  const refresh=async()=>{try{const data=await manageApi(node,'files',server,undefined,{target:target.value,subpath});path.textContent=data.path||subpath||'/';list.replaceChildren();for(const item of data.files||[]){const row=element('div',undefined,'file-row');row.append(item.is_dir?button(item.name+' /',()=>{if(uploading)return;subpath=item.relative_path;void refresh();}):element('span',item.name),element('span',item.is_dir?'Folder':bytes(item.size)),element('span',stamp(item.modified_at)));if(!server&&target.value==='installer'&&!subpath&&/\.zip$/i.test(item.name))row.append(button('Extract installer',async()=>{if(!confirm('Extract '+item.name+' into shared installer storage?'))return;message.textContent='Extracting…';try{await manageApi(node,'unzip',null,{filename:item.name});message.textContent='Extracted.';await refresh();}catch(e){message.textContent=e.message;}}));list.append(row);}if(!list.children.length)list.append(element('p','This folder is empty.'));}catch(e){message.textContent=e.message;}};
+  const crumbs=element('div',undefined,'file-crumbs'),message=element('p'),table=element('table',undefined,'file-table'),thead=element('thead'),tbody=element('tbody'),upload=element('form'),file=element('input'),submit=element('button','Upload file'),meter=element('progress');
+  const headRow=element('tr');for(const label of ['Name','Type','Size','Modified'])headRow.append(element('th',label));thead.append(headRow);table.append(thead,tbody);
+  file.type='file';file.required=true;file.setAttribute('aria-label','File to upload');meter.max=100;meter.value=0;let subpath='',uploading=false;
+  const goTo=p=>{if(uploading)return;subpath=p;void refresh();};
+  const drawCrumbs=()=>{crumbs.replaceChildren();const parts=subpath?subpath.split('/'):[];crumbs.append(button('Home',()=>goTo('')));let acc='';for(const part of parts){acc=acc?acc+'/'+part:part;crumbs.append(element('span','/'),button(part,()=>goTo(acc)));}};
+  const refresh=async()=>{try{const data=await manageApi(node,'files',server,undefined,{target:target.value,subpath});drawCrumbs();tbody.replaceChildren();for(const item of data.files||[]){const row=element('tr'),nameCell=element('td');
+      nameCell.append(item.is_dir?button('📁 '+item.name,()=>goTo(item.relative_path)):element('span','📄 '+item.name));
+      row.append(nameCell,element('td',item.is_dir?'Folder':'File'),element('td',item.is_dir?'—':bytes(item.size)),element('td',stamp(item.modified_at)));
+      if(!server&&target.value==='installer'&&!subpath&&/\.zip$/i.test(item.name)){const actionCell=element('td');actionCell.append(button('Extract installer',async()=>{if(!confirm('Extract '+item.name+' into shared installer storage?'))return;message.textContent='Extracting…';try{await manageApi(node,'unzip',null,{filename:item.name});message.textContent='Extracted.';await refresh();}catch(e){message.textContent=e.message;}}));row.append(actionCell);}
+      tbody.append(row);}
+    if(!tbody.children.length){const row=element('tr'),cell=element('td','This folder is empty.');cell.colSpan=4;row.append(cell);tbody.append(row);}
+    }catch(e){message.textContent=e.message;}};
   controls.append(target,button('Up one folder',()=>{if(uploading)return;subpath=subpath.split('/').slice(0,-1).join('/');void refresh();}),button('Refresh files',refresh));target.onchange=()=>{subpath='';void refresh();};
-  upload.append(file,submit,meter);panel.append(controls,path,message,list,element('h3','Upload to this folder'),upload);
+  upload.append(file,submit,meter);panel.append(controls,crumbs,message,table,element('h3','Upload to this folder'),upload);
   upload.onsubmit=async event=>{event.preventDefault();const selected=file.files[0];if(!selected||uploading)return;if(!confirm('Upload '+selected.name+' here? An existing file with this name will be replaced.'))return;uploading=true;dirty=true;submit.disabled=true;target.disabled=true;
     const chosenTarget=target.value,chosenPath=subpath;
     try{const chunkSize=2*1024*1024;for(let offset=0;offset<selected.size||offset===0;offset+=chunkSize){const end=Math.min(selected.size,offset+chunkSize),query=new URLSearchParams({node:node.id,operation:'upload',...(server?{instance_id:server.instance_id}:{}),target:chosenTarget,subpath:chosenPath,filename:selected.name,offset:String(offset),total_size:String(selected.size),is_last:end===selected.size?'1':'0'});
@@ -146,7 +197,7 @@ function managementHelp(panel,server){
     ['Settings','Edit the name shown on this site, the runtime image, ports and SFTP/web credentials. Saved settings sync to the node. The in-game name, passwords, map, player slots, language, difficulty and intervals are managed only in Game admin and are never overwritten from here.'],
     ['Game installation','Open VNC console, run Setup to install licensed game files, then Setup Server to prepare the instance. Use Start on the overview when ready.'],
     ['Files','Browse and upload profile files, mods, saves and logs. Large files upload in small chunks with progress.'],
-    ['Logs & containers','Inspect game logs, optionally Docker logs, and each container’s status, health and exit code.'],
+    ['Logs & containers','Switch between the Console log (the panel’s own startup and lifecycle messages, optionally with Docker logs), the Game Server log (the dedicated server’s own log.txt) and SFTP logs, plus each container’s status, health and exit code.'],
     ['Maintenance','Restart the game process, reinstall the game or SFTP container, or delete the server. Each operation requires its instance ID. Deletion removes instance data.']
   ]:[
     ['Host settings','Configure the local agent connection and shared game, DLC and installer paths. Prepare shared storage before installing games.'],

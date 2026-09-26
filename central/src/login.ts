@@ -6,7 +6,7 @@ export function loginPage(pending: boolean): Response {
     : '<h1>Welcome back</h1><p>Sign in with Discord to manage your Farming Simulator fleet. New members start pending approval.</p><a class="button login-discord" href="/auth/login">'+discordIcon+'<span>Sign in with Discord</span></a>';
   return new Response(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in — Farm Servers</title><link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="stylesheet" href="/style.css"><script src="/login.js" defer></script></head>
-<body class="login-page"><main class="login-card"><img class="login-logo" src="/fs-farmservers-logo.svg" width="252" height="48" alt="FS FarmServers"><p class="login-tagline">Your operations center</p>${body}<button id="signout" hidden>Sign out</button><p id="login-message" role="status"></p><p class="login-footer">Farming Simulator 25 · Control plane</p></main></body></html>`, {
+<body class="login-page"><main class="login-card"><img class="login-logo" src="/fs-farmservers-logo.svg" width="252" height="48" alt="FS FarmServers"><p class="login-tagline">Your operations center</p>${body}<button id="signout" hidden>Sign out</button><p id="login-message" role="status"></p><p class="login-footer">Farm Sim · Control plane</p></main></body></html>`, {
     headers: {'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','Vary':'Cookie'}
   });
 }

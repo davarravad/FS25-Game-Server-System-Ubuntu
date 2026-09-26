@@ -145,6 +145,11 @@ test('D1 heartbeat, CSRF, approval and one-use viewer tickets',async()=>{
     assert.equal(html.includes('&amp;amp;'),false);
     assert.equal(r.headers.has('X-Farmservers-Upstream-Origin'),false);
     assert.equal((await mf.dispatchFetch(viewerOrigin+'/',{method:'POST',headers:{Origin:'https://evil.example'},body:'bad'})).status,403);
+    // Non-browser automation signing in to the always-public game panel hostname sends
+    // neither Sec-Fetch-Site nor Origin; a real cross-site browser attack cannot omit both,
+    // so this must be let through while a genuinely mismatched Origin stays rejected.
+    assert.equal((await mf.dispatchFetch('https://game-fs25-0001.sargentweb.com/',{method:'POST',body:'username=bot&password=x'})).status,200);
+    assert.equal((await mf.dispatchFetch('https://game-fs25-0001.sargentweb.com/',{method:'POST',headers:{Origin:'https://evil.example'},body:'bad'})).status,403);
     assert.equal((await mf.dispatchFetch('https://game-unknown.sargentweb.com/')).status,404);
     const consoleLaunch=await (await mf.dispatchFetch(origin+'/api/launch?node=node-1&kind=vnc&instance=game-1',{method:'POST',headers,body:'{}'})).json() as {url:string};
     const consoleOrigin=new URL(consoleLaunch.url).origin;
