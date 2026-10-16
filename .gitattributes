@@ -1,2 +1,8 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Scripts run on Linux; never let core.autocrlf put CRLF into them or into `git archive` release tarballs.
+*.sh text eol=lf
+*.py text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf

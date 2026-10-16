@@ -5,7 +5,7 @@
 // SSH address, which is marked NODE-IP.
 function installGuide(){
   const para=(parent,text,className)=>parent.append(element('p',text,className));
-  const code=(parent,text)=>parent.append(element('pre',text));
+  const code=(parent,text)=>parent.append(codeBox(text));
   const list=(parent,items,ordered=false)=>{const box=element(ordered?'ol':'ul',undefined,'guide-list');for(const item of items){const li=element('li');if(Array.isArray(item)){li.append(element('strong',item[0]),document.createTextNode(' '+item[1]));}else li.textContent=item;box.append(li);}parent.append(box);return box;};
   const links=(parent,...pairs)=>{const box=element('div',undefined,'actions');for(const [text,href] of pairs)box.append(link(text,href));parent.append(box);};
   const table=(parent,headers,rows)=>{const t=element('table',undefined,'guide-paths'),head=element('tr');for(const h of headers)head.append(element('th',h));t.append(head);for(const row of rows){const tr=element('tr');for(const cell of row){const td=element('td');if(cell.startsWith('`'))td.append(element('code',cell.slice(1,-1)));else td.textContent=cell;tr.append(td);}t.append(tr);}const wrap=element('div',undefined,'update-table-wrap');wrap.append(t);parent.append(wrap);};

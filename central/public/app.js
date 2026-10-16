@@ -9,6 +9,7 @@ const element=(tag,text,className)=>{const e=document.createElement(tag);if(text
 const link=(text,href,className='button')=>{const e=element('a',text,className);e.href=href;return e;};
 
 const button=(text,action)=>{const e=element('button',text);e.type='button';e.onclick=action;return e;};
+const codeBox=(text,className)=>{const box=element('div',undefined,'code-box'),copy=element('button','Copy','code-copy');copy.type='button';copy.setAttribute('aria-label','Copy to clipboard');copy.onclick=async()=>{try{await navigator.clipboard.writeText(text);copy.textContent='Copied';}catch{copy.textContent='Copy failed';}clearTimeout(copy.timer);copy.timer=setTimeout(()=>{copy.textContent='Copy';},1500);};box.append(element('pre',text,className),copy);return box;};
 
 const nodeUrl=node=>'/nodes/'+encodeURIComponent(node.id);
 
@@ -455,7 +456,7 @@ function setupGuidance(){
 
   const s=section('Control plane setup');s.append(element('p','Configure Discord login, D1 migrations, the publishing-token encryption key, private release storage and the public signing key. Enable Cloudflare automation to create protected node connections.'),link('Control plane setup guide','/central-setup.txt'),link('Release & migration guide','/node-distribution.txt'));
 
-  const recovery=section('Update guidance & recovery');recovery.append(element('p','Publish a signed release and update one pilot node first. Updates preserve running games; control-panel sessions may disconnect. Offline nodes process queued jobs after reconnecting. Keep GitHub public until every existing node has successfully updated from this site.'),element('p','Inspect failed or interrupted updates before retrying. Keep SSH access and off-host game-save backups.'),element('pre','sudo journalctl -u farmservers-update.service -n 100'),element('p','Root-only update backups: /var/backups/farmservers/JOB-ID'));
+  const recovery=section('Update guidance & recovery');recovery.append(element('p','Publish a signed release and update one pilot node first. Updates preserve running games; control-panel sessions may disconnect. Offline nodes process queued jobs after reconnecting. Keep GitHub public until every existing node has successfully updated from this site.'),element('p','Inspect failed or interrupted updates before retrying. Keep SSH access and off-host game-save backups.'),codeBox('sudo journalctl -u farmservers-update.service -n 100'),element('p','Root-only update backups: /var/backups/farmservers/JOB-ID'));
 
 }
 

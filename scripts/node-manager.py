@@ -83,7 +83,10 @@ def archive_files(raw):
             total += member.size
             if total > 128*1024*1024 or len(result) >= 10000:
                 raise ValueError('Expanded release too large')
-            result[member.name] = (archive.extractfile(member).read(), member.mode & 0o755)
+            content = archive.extractfile(member).read()
+            if member.name.endswith(('.sh', '.py')):
+                content = content.replace(b'\r\n', b'\n')  # Windows-packaged releases may carry CRLF, which breaks bash.
+            result[member.name] = (content, member.mode & 0o755)
     for required in ['docker-compose.yml', '.env.example', 'scripts/node-manager.py']:
         if required not in result:
             raise ValueError('Incomplete release')

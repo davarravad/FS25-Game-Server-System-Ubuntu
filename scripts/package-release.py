@@ -19,7 +19,7 @@ if not re.fullmatch(r'v\d{1,6}\.\d{1,6}\.\d{1,6}', args.version):
     parser.error('Version must be vMAJOR.MINOR.PATCH')
 root = Path(__file__).resolve().parent.parent
 revision = subprocess.check_output(['git', 'rev-parse', '--verify', args.ref + '^{commit}'], cwd=root, text=True).strip()
-archive = subprocess.check_output(['git', 'archive', '--format=tar.gz', revision, 'app', 'docker', 'templates', 'sql', 'scripts', '.env.example', 'docker-compose.yml', 'LICENSE'], cwd=root)
+archive = subprocess.check_output(['git', '-c', 'core.autocrlf=false', '-c', 'core.eol=lf', 'archive', '--format=tar.gz', revision, 'app', 'docker', 'templates', 'sql', 'scripts', '.env.example', 'docker-compose.yml', 'LICENSE'], cwd=root)
 if len(archive) > 12*1024*1024:
     parser.error('Release exceeds the 12 MiB archive limit; exclude large content')
 manifest = json.dumps({'version': args.version, 'commit': revision, 'sha256': hashlib.sha256(archive).hexdigest(), 'size': len(archive)}, separators=(',', ':'))
