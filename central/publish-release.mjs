@@ -37,7 +37,7 @@ export function snapshot(root,temp){
     total+=Number(size);
   }
   if(total>128*1024*1024)throw new Error('Release exceeds 128 MiB expanded limit');
-  return {tree,archive:()=>git('archive','--format=tar.gz',tree),commit:git('rev-parse','HEAD').toString().trim()};
+  return {tree,archive:()=>git('-c','core.autocrlf=false','-c','core.eol=lf','archive','--format=tar.gz',tree),commit:git('rev-parse','HEAD').toString().trim()};
 }
 async function publish(){
   const temp=mkdtempSync(join(tmpdir(),'farmservers-release-'));
