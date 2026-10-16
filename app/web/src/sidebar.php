@@ -33,6 +33,7 @@ function render_sidebar(string $activeRoute, string $username): void
                 <?php endforeach; ?>
             </nav>
             <div class="panel-account"><span class="panel-avatar" aria-hidden="true"><?= h(strtoupper(substr($username, 0, 1))) ?></span><div><strong><?= h($username) ?></strong><span>Signed in</span></div><a href="/?route=logout" aria-label="Sign out" title="Sign out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M9 4H4v16h5 M9 12h12 M16 7l5 5-5 5"/></svg></a></div>
+            <p class="panel-legal"><a href="https://farmservers.sargentweb.com/cookie-policy" target="_blank" rel="noopener">Cookie Policy</a> · <a href="https://farmservers.sargentweb.com/privacy-policy" target="_blank" rel="noopener">Privacy Policy</a></p>
         </aside>
     </details>
     <?php

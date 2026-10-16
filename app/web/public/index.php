@@ -753,7 +753,7 @@ if ($route === 'upload_large' || $route === 'installer_upload') {
         </style>
     <link rel="stylesheet" href="/assets/telemetry.css?v=2">
 <script defer src="/assets/telemetry.js?v=2"></script>
-<link rel="stylesheet" href="/assets/sidebar.css?v=1">
+<link rel="stylesheet" href="/assets/sidebar.css?v=2">
 <script defer src="/assets/sidebar.js?v=1"></script>
 </head>
     <body class="<?= in_array($route, ['server', 'logs'], true) ? 'panel-layout' : '' ?>">
@@ -1330,7 +1330,7 @@ if ($route === 'logs') {
         </style>
     <link rel="stylesheet" href="/assets/telemetry.css?v=2">
 <script defer src="/assets/telemetry.js?v=2"></script>
-<link rel="stylesheet" href="/assets/sidebar.css?v=1">
+<link rel="stylesheet" href="/assets/sidebar.css?v=2">
 <script defer src="/assets/sidebar.js?v=1"></script>
 </head>
     <body class="<?= in_array($route, ['server', 'logs'], true) ? 'panel-layout' : '' ?>">
@@ -1743,7 +1743,7 @@ if ($route === 'server') {
         </style>
     <link rel="stylesheet" href="/assets/telemetry.css?v=2">
 <script defer src="/assets/telemetry.js?v=2"></script>
-<link rel="stylesheet" href="/assets/sidebar.css?v=1">
+<link rel="stylesheet" href="/assets/sidebar.css?v=2">
 <script defer src="/assets/sidebar.js?v=1"></script>
 </head>
     <body class="<?= in_array($route, ['server', 'logs'], true) ? 'panel-layout' : '' ?>">
@@ -2340,7 +2340,7 @@ if ($route === 'console') {
         </style>
     <link rel="stylesheet" href="/assets/telemetry.css?v=2">
 <script defer src="/assets/telemetry.js?v=2"></script>
-<link rel="stylesheet" href="/assets/sidebar.css?v=1">
+<link rel="stylesheet" href="/assets/sidebar.css?v=2">
 <script defer src="/assets/sidebar.js?v=1"></script>
 </head>
     <body class="panel-layout">
@@ -2413,7 +2413,7 @@ if ($route === 'web_admin') {
         </style>
     <link rel="stylesheet" href="/assets/telemetry.css?v=2">
 <script defer src="/assets/telemetry.js?v=2"></script>
-<link rel="stylesheet" href="/assets/sidebar.css?v=1">
+<link rel="stylesheet" href="/assets/sidebar.css?v=2">
 <script defer src="/assets/sidebar.js?v=1"></script>
 </head>
     <body class="panel-layout">
@@ -2526,7 +2526,7 @@ $pageRoute = in_array($route, ['dashboard', 'managed_hosts', 'file_management', 
     </style>
 <link rel="stylesheet" href="/assets/telemetry.css?v=2">
 <script defer src="/assets/telemetry.js?v=2"></script>
-<link rel="stylesheet" href="/assets/sidebar.css?v=1">
+<link rel="stylesheet" href="/assets/sidebar.css?v=2">
 <script defer src="/assets/sidebar.js?v=1"></script>
 </head>
 <body class="<?= $route !== 'login' ? 'panel-layout' : '' ?>">

@@ -1,4 +1,5 @@
 import {allowed, cookie, cookieValue, digest, hmacHex, publicIPv4, randomToken, readJson, roles, safeMetrics, validId, validScope, type Role} from './security';
+import {publicConsentRoute} from './policies';
 import {gameUrl, rewriteGameHtml} from './game-proxy';
 import {distribution} from './releases';
 import {loginPage} from './login';
@@ -11,7 +12,7 @@ import {management} from './management';
 import {gameNode,gameAdmin} from './game-sync';
 import {fleetReadiness} from './readiness';
 
-type Bindings = Env & { DISCORD_CLIENT_SECRET: string; NODE_GATEWAYS: string; RELEASE_PUBLIC_KEY: string; NODE_TOKEN_KEY: string };
+type Bindings = Env & { DISCORD_CLIENT_SECRET: string; NODE_GATEWAYS: string; RELEASE_PUBLIC_KEY: string; NODE_TOKEN_KEY: string; PRIVACY_CONTACT?: string; CONSENT_KILL_SWITCH?: string };
 type Session = {hash: string; user_id: string; name: string; avatar_url: string|null; role: Role; csrf: string; expires: number};
 const now = () => Math.floor(Date.now() / 1000);
 const reply = (data: unknown, status = 200) => Response.json(data, {status, headers: {'Cache-Control':'no-store'}});
@@ -580,7 +581,9 @@ export default {
         need(['GET','HEAD'].includes(request.method),405,'Method not allowed');
         // The bootstrap must remain reachable by fresh Ubuntu hosts. Everything
         // else except sign-in assets requires a current approved staff session.
-        if (['/style.css','/login.js','/install.py','/favicon.svg','/favicon-32.png','/apple-touch-icon.png','/fs-farmservers-logo.svg','/fs-farmservers-logo.png'].includes(url.pathname)) response=await env.ASSETS.fetch(request);
+        const consent=publicConsentRoute(url.pathname,request,env);
+        if (consent) response=consent;
+        else if (['/style.css','/consent.js','/login.js','/install.py','/favicon.svg','/favicon-32.png','/apple-touch-icon.png','/fs-farmservers-logo.svg','/fs-farmservers-logo.png'].includes(url.pathname)) response=await env.ASSETS.fetch(request);
         else {
           const user=await session(env,await digest(cookieValue(request,'__Host-farmservers')));
           if (!user || !allowed(user.role,'viewer')) response=loginPage(!!user);

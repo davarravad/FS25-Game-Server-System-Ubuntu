@@ -308,7 +308,7 @@ def build_instance_values(instance_id: str, payload: dict, existing_env: dict | 
         "SERVER_DIFFICULTY": current("SERVER_DIFFICULTY", 3),
         "SERVER_PAUSE": current("SERVER_PAUSE", 2),
         "SERVER_SAVE_INTERVAL": current("SERVER_SAVE_INTERVAL", 180.000000),
-        "SERVER_STATS_INTERVAL": current("SERVER_STATS_INTERVAL", 31536000),
+        "SERVER_STATS_INTERVAL": current("SERVER_STATS_INTERVAL", 360),
         "SERVER_CROSSPLAY": str(current("SERVER_CROSSPLAY", True)).lower(),
         "AUTOSTART_SERVER": str(current("AUTOSTART_SERVER", False)).lower(),
         "PUID": current("PUID", 1000),

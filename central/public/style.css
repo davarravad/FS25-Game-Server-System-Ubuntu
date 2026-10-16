@@ -215,3 +215,35 @@ aside,.log-output,.header-dropdown,#notifications-list,.fleet-switcher-results,.
 ::-webkit-scrollbar-thumb{background:#2e4258;border-radius:8px;border:2px solid #0b111a}
 ::-webkit-scrollbar-thumb:hover{background:#3d5674}
 ::-webkit-scrollbar-corner{background:#0b111a}
+/* Cookie consent, policy pages and footer */
+.site-footer{display:flex;flex-wrap:wrap;gap:8px 20px;justify-content:center;margin:28px 0 0;padding-top:16px;border-top:1px solid #243044;font-size:13px}
+.site-footer a,.link-button{color:#8f9cb0;text-decoration:underline;background:none;border:0;padding:0;margin:0;font:inherit;cursor:pointer}
+.site-footer a:hover,.link-button:hover{color:#47d8b0}
+.site-footer a:focus-visible,.link-button:focus-visible{outline:2px solid #47d8b0;outline-offset:3px;border-radius:3px}
+main>.site-footer{margin-top:48px}
+.login-card>.site-footer{margin-top:18px}
+.policy-page{min-height:100vh;padding:24px;background:#090e16}
+.policy-page main.policy-card{margin:0 auto;max-width:960px;padding:36px;border:1px solid #28384c;border-radius:18px;background:#0f1621;line-height:1.65}
+.policy-home{display:inline-block;margin-bottom:12px}
+.policy-card h1{font-size:28px;margin:0 0 6px}
+.policy-card h2{font-size:18px;margin:28px 0 8px}
+.policy-card a{color:#47d8b0}
+.policy-meta{color:#8f9cb0;margin:0 0 8px}
+.policy-table-wrap{overflow-x:auto}
+.policy-table{width:100%;border-collapse:collapse;font-size:14px}
+.policy-table th,.policy-table td{padding:8px 10px;border:1px solid #28384c;text-align:left;vertical-align:top}
+.policy-table thead th{background:#101723}
+.consent-banner{position:fixed;inset:auto 0 0 0;z-index:1000;padding:16px max(16px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));background:#101723;border-top:1px solid #47d8b0;box-shadow:0 -12px 40px #000a}
+.consent-banner h2{margin:0 0 6px;font-size:16px}
+.consent-banner p{margin:0 0 8px;max-width:900px;line-height:1.5}
+.consent-links a{color:#47d8b0}
+.consent-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}
+.consent-actions .consent-button{flex:1 1 140px;margin:0;min-height:44px;text-align:center}
+.consent-dialog{max-width:640px;width:calc(100% - 32px);max-height:90vh;overflow:auto;padding:24px;border:1px solid #47d8b0;border-radius:14px;background:#101723;color:#e8eef7}
+.consent-dialog::backdrop{background:#000a}
+.consent-dialog h2{margin:0 0 12px}
+.consent-dialog h3{margin:16px 0 4px;font-size:15px}
+.consent-dialog li{margin-bottom:6px}
+.consent-fixed{color:#47d8b0;font-weight:600}
+.consent-button:focus-visible,.consent-dialog input:focus-visible{outline:2px solid #fff;outline-offset:2px}
+.consent-gpc{padding:10px;border:1px solid #47d8b0;border-radius:8px}

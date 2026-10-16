@@ -42,3 +42,6 @@
  .panel-layout .console-shell{min-height:calc(100vh - 64px)}
 }
 @media(max-width:650px){.panel-layout .telemetry-grid{grid-template-columns:1fr}}
+.panel-legal{margin:14px 8px 0;font-size:10px;color:#7388a6}
+.panel-legal a{color:#9aacc6;text-decoration:underline}
+.panel-legal a:hover{color:white}
