@@ -56,7 +56,7 @@ The installer creates `/opt/farmservers/node`, installs Docker from Docker's Ubu
 
 Enable automatic node connections on the administrator-only Cloudflare page. Use a signed release containing connection automation. The node updater installs the connector and gateway token; the site creates the tunnel, DNS and Access credentials and verifies the connection. No NODE_GATEWAYS JSON editing is required. Install licensed game content using the node panel, then create a spare test game. Main-site management becomes available when connection status is Ready.
 
-If the installer stops partway through, preserve the installation and .env, inspect the error and complete Docker startup using `cd /opt/farmservers/node && sudo docker compose --profile central up -d --build`. Then run the bootstrap with `--adopt /opt/farmservers/node`. The installer refuses to overwrite an existing installation or credentials.
+If the installer stops partway through, preserve the installation and .env, inspect the error and complete Docker startup using `sudo sh -c 'cd /opt/farmservers/node && docker compose --profile central up -d --build'`. Then run the bootstrap with `--adopt /opt/farmservers/node`. The installer refuses to overwrite an existing installation or credentials.
 
 ## Existing nodes: the final GitHub bridge update
 

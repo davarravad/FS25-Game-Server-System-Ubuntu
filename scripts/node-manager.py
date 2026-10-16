@@ -384,8 +384,11 @@ def setup(adopt):
         if not config['port'].isdigit() or not 1 <= int(config['port']) <= 65535:
             raise ValueError('Invalid panel port')
     else:
-        print('Available releases:', ', '.join(r['version'] for r in releases))
-        version = input('Release to install: ').strip()
+        versions = [r['version'] for r in releases if isinstance(r.get('version'), str) and VERSION.fullmatch(r['version'])]
+        if not versions:
+            raise ValueError('No releases are available')
+        version = max(versions, key=lambda v: tuple(int(part) for part in v[1:].split('.')))
+        print('Installing the latest release:', version)
         files = download(config, version)
         root = Path('/opt/farmservers/node')
         if root.exists():

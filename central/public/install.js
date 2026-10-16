@@ -62,12 +62,11 @@ function installGuide(){
   const install=section('Step 3: Run the installer on the host');
   para(install,'Back on the Ubuntu host, download the installer from this site and run it as root.');
   code(install,"curl --fail --show-error --silent --proto '=https' --tlsv1.2 https://farmservers.sargentweb.com/install.py -o /tmp/farmservers-install.py && sudo python3 /tmp/farmservers-install.py --install");
-  para(install,'The installer asks four things:');
+  para(install,'The installer asks three things, then installs the newest release automatically:');
   list(install,[
     ['Node ID from Server Nodes:','the ID you chose in step 2.'],
     ['Node token (hidden):','paste the token. Nothing is echoed to the terminal.'],
-    ['Type TRUST to pin this signing key:','the installer prints the SHA256 fingerprint of the release signing key. Compare it with the fingerprint your release maintainer gave you. Only type TRUST if they match; this key is what the node checks every future update against.'],
-    ['Release to install:','type one of the listed versions, normally the newest.']
+    ['Type TRUST to pin this signing key:','the installer prints the SHA256 fingerprint of the release signing key. Compare it with the fingerprint your release maintainer gave you. Only type TRUST if they match; this key is what the node checks every future update against.']
   ],true);
   para(install,'It then works unattended for several minutes. What it does, so you can recognise a healthy run:');
   list(install,[
@@ -80,9 +79,9 @@ function installGuide(){
     'Saves /etc/farmservers/updater.json and enables two root systemd timers: farmservers-update.timer (site-requested updates and connection setup, every 30 seconds) and farmservers-game-sync.timer (game library detection and transfers, every minute).'
   ]);
   para(install,'The last line should read “Remote updates enabled. Enable Cloudflare automation on the site to connect this node.” Confirm the services yourself:');
-  code(install,"systemctl status farmservers-update.timer farmservers-game-sync.timer --no-pager && cd /opt/farmservers/node && sudo docker compose --profile central ps");
+  code(install,"systemctl status farmservers-update.timer farmservers-game-sync.timer --no-pager && sudo sh -c 'cd /opt/farmservers/node && docker compose --profile central ps'");
   para(install,'If the installer stops partway, do not delete anything and do not run --install again. Fix the reported problem, start the stack with the command below, then adopt the directory as described at the bottom of this page.','notice');
-  code(install,"cd /opt/farmservers/node && sudo docker compose --profile central up -d --build");
+  code(install,"sudo sh -c 'cd /opt/farmservers/node && docker compose --profile central up -d --build'");
 
   const report=section('Step 4: Confirm the node reports in');
   para(report,'The publisher container sends a heartbeat every 30 seconds. Within two minutes the node shows Online on Overview and on its own page, with a host CPU and memory reading.');
@@ -90,7 +89,7 @@ function installGuide(){
     'If it stays Offline, read the publisher log. Heartbeat accepted means credentials and connectivity are fine; 401 means the token or node ID is wrong; a timeout means outbound HTTPS is blocked.',
     'Check the clock. Heartbeats with timestamps more than an hour off are rejected; timedatectl should show System clock synchronized: yes.'
   ]);
-  code(report,"cd /opt/farmservers/node && sudo docker compose --profile central logs --tail=40 publisher && timedatectl");
+  code(report,"sudo sh -c 'cd /opt/farmservers/node && docker compose --profile central logs --tail=40 publisher' && timedatectl");
   links(report,['Overview','/']);
 
   const connect=section('Step 5: Connect it through Cloudflare');
