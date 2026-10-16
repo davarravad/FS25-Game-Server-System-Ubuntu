@@ -25,7 +25,7 @@ export async function management(request:Request,user:{user_id:string;role:strin
   if(instance&&!validScope(instance))return response('Invalid instance ID',422);
   const g=await resolveGateway(node);
   const target=new URL(g.origin);target.search=new URLSearchParams({route:'api_central_manage',operation}).toString();
-  for(const key of ['instance_id','target','subpath','filename','offset','total_size','is_last','include_docker_logs']){
+  for(const key of ['instance_id','target','subpath','filename','offset','total_size','is_last','include_docker_logs','include_sftp_logs','include_game_log']){
     const value=url.searchParams.get(key);if(value!==null){if(value.length>1024)return response('Management parameter too long',422);target.searchParams.set(key,value);}
   }
   const headers=new Headers({'X-Central-Token':g.token,'X-Central-User':user.user_id,'X-Central-Role':user.role,'CF-Access-Client-Id':g.accessClientId,'CF-Access-Client-Secret':g.accessClientSecret});

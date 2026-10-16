@@ -16,6 +16,8 @@ const serverUrl=(node,server)=>'/servers/'+encodeURIComponent(node.id)+'/'+encod
 
 const stamp=ts=>ts?new Date(ts*1000).toLocaleString():'Never';
 
+const timeAgo=ms=>{const seconds=Math.max(0,Math.round(ms/1000));if(seconds<5)return 'just now';if(seconds<60)return seconds+' second'+(seconds===1?'':'s')+' ago';const minutes=Math.round(seconds/60);if(minutes<60)return minutes+' minute'+(minutes===1?'':'s')+' ago';const hours=Math.round(minutes/60);if(hours<24)return hours+' hour'+(hours===1?'':'s')+' ago';const days=Math.round(hours/24);return days+' day'+(days===1?'':'s')+' ago';};
+
 const nodeStatus=node=>!node.enabled?'Disabled':node.online?'Online':'Offline';
 
 const serverStatus=(node,server)=>!node.enabled?'Node disabled':!node.online?'Host offline':({start:'Start requested',stop:'Stop requested',restart:'Restart requested',backend_reboot:'Game process restart requested'}[server.status]||server.status||'Unknown');
@@ -72,7 +74,7 @@ function route(){
 
   if(parts[0]==='servers'&&parts.length===3)return {type:'server',id:parts[1],instance:parts[2]};
 
-  if(['servers','access','users','cloudflare','setup','install','game-status'].includes(parts[0])&&parts.length===1)return {type:parts[0]};
+  if(['servers','access','users','cloudflare','setup','install','game-status','status'].includes(parts[0])&&parts.length===1)return {type:parts[0]};
 
   if(parts[0]==='setup.html')return {type:'setup'};
 
@@ -473,6 +475,8 @@ async function render(){
   else if(r.type==='users')await userManagement();
 
   else if(r.type==='game-status')await gameStatusPage();
+
+  else if(r.type==='status')await statusPage();
 
   else if(r.type==='cloudflare')await cloudflarePage();
 

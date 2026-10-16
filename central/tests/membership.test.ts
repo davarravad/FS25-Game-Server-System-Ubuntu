@@ -34,5 +34,12 @@ test('Discord membership starts pending; blocking revokes sessions and rejects s
     assert.equal((await block(member,false)).status,200);
     response=await login();assert.equal(response.status,302);
     assert.equal((await db.prepare('SELECT role FROM users WHERE id=?').bind(member).first<{role:string}>())?.role,'pending');
+
+    const start=await mf.dispatchFetch(origin+'/auth/login',{redirect:'manual'});
+    const cancelState=new URL(start.headers.get('Location')!).searchParams.get('state');
+    const cancelled=await mf.dispatchFetch(origin+'/auth/callback?error=access_denied&error_description=denied&state='+cancelState,{headers:{Cookie:'__Host-oauth='+cancelState},redirect:'manual'});
+    assert.equal(cancelled.status,302);
+    assert.equal(cancelled.headers.get('Location'),origin+'/');
+    assert.match(cancelled.headers.getSetCookie().find(c=>c.startsWith('__Host-oauth='))!,/^__Host-oauth=;/);
   }finally{await mf.dispose();}
 });

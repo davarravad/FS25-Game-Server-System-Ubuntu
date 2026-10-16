@@ -14,6 +14,22 @@ CONSOLE_PORTS = {"5900", "6080"}
 LOOPBACK_ADDRESSES = {"127.0.0.1", "::1"}
 
 
+def port_bindings(bindings: dict) -> dict[str, list[dict[str, str]]]:
+    """Every published container port (e.g. "22/tcp") mapped to the host address(es) it is
+    bound to. Used to confirm a container actually publishes the port its .env says it should,
+    not just that some port is open."""
+    result: dict[str, list[dict[str, str]]] = {}
+    for port, targets in (bindings or {}).items():
+        result[str(port)] = [
+            {
+                "host_ip": str((target or {}).get("HostIp") or "0.0.0.0"),
+                "host_port": str((target or {}).get("HostPort") or ""),
+            }
+            for target in (targets or [])
+        ]
+    return result
+
+
 def summarize(inspect: Optional[dict], name: str) -> dict:
     if not isinstance(inspect, dict) or not inspect:
         return {
@@ -25,6 +41,7 @@ def summarize(inspect: Optional[dict], name: str) -> dict:
             "management_network": False,
             "admin_ports_loopback": True,
             "exposed_admin_ports": [],
+            "ports": {},
         }
     state = inspect.get("State") or {}
     networks = sorted(((inspect.get("NetworkSettings") or {}).get("Networks") or {}).keys())
@@ -46,6 +63,7 @@ def summarize(inspect: Optional[dict], name: str) -> dict:
         "management_network": MANAGEMENT_NETWORK in networks,
         "admin_ports_loopback": not exposed,
         "exposed_admin_ports": exposed,
+        "ports": port_bindings(bindings),
     }
 
 

@@ -6,3 +6,8 @@ NODE_TOKEN_KEY=replace-with-64-lowercase-hex-characters
 RELEASE_PUBLIC_KEY=replace-with-base64-public-key
 # Legacy only: gateways are now saved per node in D1 from the site. Leave unset on new deployments.
 # NODE_GATEWAYS={"node1":{"origin":"https://origin-node1.sargentweb.com","token":"replace-with-64-hex-characters","accessClientId":"replace","accessClientSecret":"replace"}}
+
+# Optional. Shown on /privacy-policy and /cookie-policy. Set before publishing the policies.
+# PRIVACY_CONTACT=privacy@example.com
+# Set to 1 to stop every optional integration (none exist yet) without a code change.
+# CONSENT_KILL_SWITCH=1

@@ -20,9 +20,15 @@ test('fleet readiness reports node connection, console bypass, release, hostname
     if(url.searchParams.get('route')==='api_central_health')return Response.json({node:'node-1'});
     if(url.searchParams.get('route')==='api_node_readiness'){
       if(!inspectSupported)return new Response('<html>not found</html>',{status:404,headers:{'Content-Type':'text/html'}});
+      const passingPorts=[
+        {label:'game',port:10823,protocols:[{proto:'tcp',published:true,actual_ports:['10823'],firewall_ok:true},{proto:'udp',published:true,actual_ports:['10823'],firewall_ok:true}]},
+        {label:'web',port:18000,protocols:[{proto:'tcp',published:true,actual_ports:['18000'],firewall_ok:true}]},
+        {label:'tls',port:28000,protocols:[{proto:'tcp',published:true,actual_ports:['28000'],firewall_ok:true}]},
+        {label:'sftp',port:2222,protocols:[{proto:'tcp',published:true,actual_ports:['2222'],firewall_ok:true}]},
+      ];
       return Response.json({ok:true,servers:[
-        {instance_id:'game-1',server_name:'First',is_enabled:true,container:{exists:true,running:true,status:'running',networks:['fsg-management'],management_network:true,admin_ports_loopback:true,exposed_admin_ports:[]}},
-        {instance_id:'game-2',server_name:'Second',is_enabled:true,container:{exists:true,running:false,status:'exited',networks:['game-2_default'],management_network:false,admin_ports_loopback:false,exposed_admin_ports:['0.0.0.0:5901->5900/tcp']}},
+        {instance_id:'game-1',server_name:'First',is_enabled:true,container:{exists:true,running:true,status:'running',networks:['fsg-management'],management_network:true,admin_ports_loopback:true,exposed_admin_ports:[],sftp:{exists:true,running:true,status:'running',networks:['fsg-management'],management_network:false,admin_ports_loopback:true,exposed_admin_ports:[]},port_checks:passingPorts}},
+        {instance_id:'game-2',server_name:'Second',is_enabled:true,container:{exists:true,running:false,status:'exited',networks:['game-2_default'],management_network:false,admin_ports_loopback:false,exposed_admin_ports:['0.0.0.0:5901->5900/tcp'],sftp:{exists:false,running:false,status:'missing',networks:[],management_network:false,admin_ports_loopback:true,exposed_admin_ports:[]},port_checks:[{label:'sftp',port:2222,protocols:[{proto:'tcp',published:false,actual_ports:['2299'],firewall_ok:null}]}]}},
         {instance_id:'game-3',server_name:'Third',is_enabled:true,container:{exists:false,running:false,status:'missing',networks:[],management_network:false,admin_ports_loopback:true,exposed_admin_ports:[]}}]});
     }
     assert.fail('Unexpected node request '+url.pathname+url.search);
@@ -55,12 +61,19 @@ test('fleet readiness reports node connection, console bypass, release, hostname
     assert.deepEqual(find(node.checks,'Node software').repair,{label:'Queue update to v1.0.2',api:'distribution/updates',body:{node:'node-1',version:'v1.0.2'},confirm:'Update First node to v1.0.2? Running games stay up; control-panel sessions may disconnect briefly.'});
     assert.deepEqual(node.servers.map(s=>s.instance_id),['game-1','game-2','game-3'],'Servers come from the node inspection');
     const [first,second,third]=node.servers;
-    assert.deepEqual(first.checks.map(c=>c.state),['pass','pass','pass','pass','fail']);
+    assert.deepEqual(first.checks.map(c=>c.state),['pass','pass','pass','pass','pass','pass','pass','pass','pass','fail']);
+    assert.equal(find(first.checks,'SFTP container').state,'pass');
+    assert.equal(find(first.checks,'Game port').state,'pass');assert.match(find(first.checks,'Game port').detail,/Published on 10823 as configured/);
+    assert.equal(find(first.checks,'Web admin port').state,'pass');
+    assert.equal(find(first.checks,'TLS port').state,'pass');
+    assert.equal(find(first.checks,'SFTP port').state,'pass');assert.match(find(first.checks,'SFTP port').detail,/Published on 2222 as configured/);
     assert.match(find(first.checks,'VNC console').detail,/console-fs25-0001.*resolves over IPv4 and IPv6/);
     assert.match(find(first.checks,'Game admin').detail,/game-fs25-0001.*does not resolve on both/,'A hostname with only an AAAA answer is not ready');
     assert.deepEqual(find(first.checks,'Game admin').repair,{label:'Re-check DNS',api:'readiness/repair',body:{node:'node-1',action:'provision-hostname',instance:'game-1',kind:'web'}});
     assert.equal(find(second.checks,'Container').state,'warn');assert.deepEqual(find(second.checks,'Container').repair,{label:'Start server',api:'action',body:{node:'node-1',instance_id:'game-2',action:'start'}});
     assert.equal(find(second.checks,'Management network').state,'fail');assert.equal(find(second.checks,'Management network').repair?.api,'nodes/apply-updates');assert.deepEqual(find(second.checks,'Management network').repair?.body,{node:'node-1',instance_id:'game-2'});assert.ok(find(second.checks,'Management network').repair?.confirm);
+    assert.equal(find(second.checks,'SFTP container').state,'fail');assert.equal(find(second.checks,'SFTP container').repair?.api,'nodes/apply-updates');
+    assert.equal(find(second.checks,'SFTP port').state,'fail');assert.match(find(second.checks,'SFTP port').detail,/Configured for 2222 \(tcp\) but the container publishes 2299/);assert.equal(find(second.checks,'SFTP port').repair?.api,'nodes/apply-updates');
     assert.equal(find(second.checks,'Admin ports').state,'fail');assert.match(find(second.checks,'Admin ports').detail,/0\.0\.0\.0:5901/);
     assert.match(find(second.checks,'VNC console').detail,/not created yet/);assert.equal(find(second.checks,'VNC console').repair?.label,'Provision hostname now');
     assert.equal(find(third.checks,'Container').state,'fail');assert.equal(find(third.checks,'Container').repair?.href,'/servers/node-1/game-3');

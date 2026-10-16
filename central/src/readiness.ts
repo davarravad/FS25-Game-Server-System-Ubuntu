@@ -11,10 +11,14 @@ export type Repair={label:string;api?:string;body?:Record<string,unknown>;href?:
 export type Check={name:string;state:'pass'|'warn'|'fail';detail:string;repair?:Repair};
 export type ServerReport={instance_id:string;server_name:string;checks:Check[]};
 export type NodeReport={id:string;name:string;online:boolean;checks:Check[];servers:ServerReport[]};
-type Container={exists:boolean;running:boolean;status:string;management_network:boolean;admin_ports_loopback:boolean;exposed_admin_ports:string[]};
+type ContainerState={exists:boolean;running:boolean;status:string;management_network:boolean;admin_ports_loopback:boolean;exposed_admin_ports:string[]};
+type PortProtocolCheck={proto:string;published:boolean;actual_ports:string[];firewall_ok:boolean|null};
+type PortCheck={label:string;port:number;protocols:PortProtocolCheck[]};
+type Container=ContainerState&{sftp?:ContainerState|null;port_checks?:PortCheck[]};
 type NodeServers={ok:boolean;servers:{instance_id:string;server_name:string;is_enabled:boolean;container:Container|null}[]};
 type Endpoint={host:string;node_id:string;instance:string;kind:string;ready:number};
 
+const PORT_CHECK_LABELS:Record<string,string>={game:'Game port',web:'Web admin port',tls:'TLS port',sftp:'SFTP port'};
 const check=(name:string,state:Check['state'],detail:string,repair?:Repair):Check=>repair&&state!=='pass'?{name,state,detail,repair}:{name,state,detail};
 const compareVersions=(a:string,b:string)=>{const x=a.replace(/^v/,'').split('.').map(Number),y=b.replace(/^v/,'').split('.').map(Number);return (x[0]-y[0])||(x[1]-y[1])||(x[2]-y[2]);};
 async function probe(url:string,init:RequestInit,ms:number):Promise<Response|null>{
@@ -86,6 +90,25 @@ export async function fleetReadiness(env:Env,actor:string):Promise<{generated:nu
           sc.push(c.running?check('Container','pass','Running.'):check('Container','warn','Container is '+c.status+'; start the server before opening its panels.',{label:'Start server',api:'action',body:{node:node.id,instance_id:server.instance_id,action:'start'}}));
           sc.push(c.management_network?check('Management network','pass','Reachable from the node gateway.'):check('Management network','fail','Not attached to fsg-management, so the gateway cannot reach it. Recreating the container attaches it.',recreate));
           sc.push(c.admin_ports_loopback?check('Admin ports','pass','Published on loopback only.'):check('Admin ports','fail','Published publicly: '+c.exposed_admin_ports.join(', ')+'. Recreating the container binds them to loopback.',recreate));
+
+          if(c.sftp)sc.push(!c.sftp.exists?check('SFTP container','fail','No SFTP container found; recreating this server creates it.',recreate):c.sftp.running?check('SFTP container','pass','Running.'):check('SFTP container','warn','Container is '+c.sftp.status+'; SFTP uploads will fail until it is running.',recreate));
+
+          // Each public port (game, web admin, TLS, SFTP) is checked against what its container
+          // actually publishes right now, not just what settings say: a port edited after the
+          // container was created stays on the old value until the container is recreated.
+          for(const pc of c.port_checks||[]){
+            const label=PORT_CHECK_LABELS[pc.label]||pc.label;
+            const notPublished=pc.protocols.filter(p=>!p.published);
+            const notFirewalled=pc.protocols.filter(p=>p.published&&p.firewall_ok===false);
+            if(notPublished.length){
+              const actual=[...new Set(notPublished.flatMap(p=>p.actual_ports))];
+              sc.push(check(label,'fail','Configured for '+pc.port+' ('+notPublished.map(p=>p.proto).join('/')+') but the container publishes '+(actual.length?actual.join(', '):'nothing')+'. Recreating the server applies the configured port.',recreate));
+            }else if(notFirewalled.length){
+              sc.push(check(label,'fail','Published on '+pc.port+' as configured, but the host firewall does not allow it yet ('+notFirewalled.map(p=>p.proto).join('/')+'). Recreating the server reopens the firewall.',recreate));
+            }else{
+              sc.push(check(label,'pass','Published on '+pc.port+' as configured.'));
+            }
+          }
         }
       }
       sc.push(...await Promise.all(([['vnc','VNC console'],['web','Game admin']] as const).map(async([kind,label])=>{

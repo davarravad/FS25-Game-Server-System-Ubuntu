@@ -1,52 +1,5 @@
 const compareVersions=(a,b)=>{const x=a.slice(1).split('.').map(Number),y=b.slice(1).split('.').map(Number);return x[0]-y[0]||x[1]-y[1]||x[2]-y[2];};
 
-// Panel & console readiness: one pass over every enabled node and each of its game servers,
-// checking what the main-site game admin panel and VNC console need. The check is read-only;
-// each finding that needs attention carries its own repair button or link. The last report is
-// kept so it survives the page being rebuilt (the Node updates page rebuilds itself when the
-// site's audit revision changes, which the check and every repair cause).
-let lastReadiness=null,lastReadinessStatus='';
-function readinessPanel(){
-  if($('readiness'))return;
-  const panel=section('Panel & console readiness');panel.id='readiness';
-  panel.append(element('p','Checks every enabled node and each of its game servers for what the game admin panels and VNC console need: the Cloudflare connection, gateway reachability, the console bypass, the installed release, DNS for each panel hostname, and each container\'s network and port setup. The check changes nothing; every finding that needs attention has a repair action next to it.','muted'));
-  const run=button('Check all nodes',()=>{}),status=element('p'),results=element('div');status.setAttribute('role','status');status.setAttribute('aria-live','polite');results.id='readiness-results';
-  panel.append(run,status,results);
-  const mark=state=>element('span',state==='pass'?'OK':state==='warn'?'Attention':'Problem','badge '+(state==='pass'?'good':state==='warn'?'warning':'bad'));
-  const say=text=>{lastReadinessStatus=text;status.textContent=text;};
-  const runCheck=async()=>{
-    run.disabled=true;say('Checking every node… this can take up to a minute per node.');
-    try{const report=await api('readiness',{});lastReadiness=report;render(report);const findings=report.nodes.flatMap(n=>[...n.checks,...n.servers.flatMap(s=>s.checks)]).filter(c=>c.state!=='pass').length;say('Checked '+report.nodes.length+' node(s) at '+stamp(report.generated)+(findings?' · '+findings+' finding(s) need attention.':' · everything is ready.'));}
-    catch(e){say(e.message);}
-    finally{run.disabled=false;}
-  };
-  const repairControl=check=>{
-    const repair=check.repair;if(!repair)return null;
-    if(repair.href)return link(repair.label,repair.href,'text-link readiness-repair');
-    const control=button(repair.label,async()=>{
-      if(repair.confirm&&!confirm(repair.confirm))return;
-      control.disabled=true;say(repair.label+'…');
-      try{const result=await api(repair.api,repair.body);say(result.message||(result.ok===false?(result.error||repair.label+' failed.'):repair.label+' done. Re-checking…'));await runCheck();}
-      catch(e){say(e.message);control.disabled=false;}
-    });control.className='readiness-repair';return control;
-  };
-  const list=checks=>{const ul=element('ul',undefined,'readiness-list');for(const check of checks){const li=element('li');li.append(mark(check.state),element('strong',' '+check.name+': '),document.createTextNode(check.detail+' '));const control=repairControl(check);if(control)li.append(control);ul.append(li);}return ul;};
-  const render=report=>{
-    results.replaceChildren();
-    if(!report.nodes.length){results.append(element('p','No enabled nodes to check.','muted'));return;}
-    for(const node of report.nodes){
-      const block=element('div',undefined,'readiness-node'),all=[...node.checks,...node.servers.flatMap(s=>s.checks)];
-      const worst=all.some(c=>c.state==='fail')?'fail':all.some(c=>c.state==='warn')?'warn':'pass';
-      const heading=element('h3');heading.append(link(node.name,'/nodes/'+encodeURIComponent(node.id),'text-link'),document.createTextNode(node.online?' ':' (offline) '),mark(worst));
-      block.append(heading,list(node.checks));
-      if(!node.servers.length)block.append(element('p','No game servers reported on this node.','muted'));
-      for(const server of node.servers){const title=element('h4');title.append(link(server.server_name+' ('+server.instance_id+')','/servers/'+encodeURIComponent(node.id)+'/'+encodeURIComponent(server.instance_id),'text-link'));block.append(title,list(server.checks));}
-      results.append(block);
-    }
-  };
-  run.onclick=runCheck;
-  if(lastReadiness){render(lastReadiness);status.textContent=lastReadinessStatus;}
-}
 function nodeSoftware(node){
   const panel=section('Node software');panel.id='node-software';
   const contents=element('div'),message=element('p');message.setAttribute('role','status');message.setAttribute('aria-live','polite');panel.append(contents,message);
@@ -140,7 +93,6 @@ async function software(){
   all.onclick=()=>{if(latest&&confirm('Update all eligible enabled nodes to '+latest+'? Control services may briefly disconnect. Offline nodes will update when they reconnect.'))void run(async()=>{const result=await api('distribution/update-all',{version:latest});return result.queued+' node update(s) queued for '+result.version+'. Nodes already current, disabled or updating were skipped.';});};
   withdraw.onclick=()=>{if(release.value&&confirm('Withdraw '+release.value+'? New downloads stop and queued jobs fail.'))void run(async()=>{await api('distribution/withdraw',{version:release.value});return 'Release withdrawn.';});};
   panel.refreshUpdates=refresh;
-  readinessPanel();
   const timer=setInterval(()=>{if(!panel.isConnected){clearInterval(timer);return;}if(!document.hidden&&!acting)void refresh().catch(e=>{message.textContent=e.message+' — retrying automatically.';});},15000);
   await refresh();
 }
