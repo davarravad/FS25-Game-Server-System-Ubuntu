@@ -115,7 +115,7 @@ async function managementPage(node,server,tab){
       const diagnostics=element('details');diagnostics.append(element('summary','Technical details'),element('pre',JSON.stringify(data.health,null,2)));health.append(diagnostics);panel.append(health);
     }else if(tab==='export'){
       panel.append(element('p','The settings export contains server credentials. Keep the downloaded file private.'),link('Download settings for all servers on this node','/api/manage?'+new URLSearchParams({node:node.id,operation:'export'})));
-      if(data.sftp)managementSecrets(panel,Object.fromEntries(Object.entries(data.sftp).filter(([key])=>key.startsWith('admin_sftp_'))));
+      adminSftpPanel(panel,node,data.sftp);
     }
   }catch(error){loading.textContent=error.message;panel.append(link('Node software & updates',nodeUrl(node)+'#node-software'),link('Cloudflare connections','/cloudflare'));}
 }
@@ -220,4 +220,53 @@ async function nodeNotesPanel(node){
   input.oninput=()=>{edited=true;};
   form.onsubmit=async event=>{event.preventDefault();save.disabled=true;reload.disabled=true;input.readOnly=true;try{draw(await api('nodes/notes',{id:node.id,notes:input.value,version}));message.textContent='Notes saved.';}catch(e){message.textContent=e.message;}finally{save.disabled=false;reload.disabled=false;input.readOnly=false;}};
   try{const data=await api('nodes/notes?'+new URLSearchParams({id:node.id}));if(panel.isConnected)draw(data);}catch(e){message.textContent=e.message;}
+}
+
+// Live status of the node's admin SFTP server (the file-transfer service for the whole node).
+// It is published on loopback by default, so a client needs an SSH tunnel; this panel says which.
+function adminSftpPanel(parent,node,credentials){
+  const pill=(text,tone)=>element('span',text,'badge '+tone);
+  const box=element('div',undefined,'sftp-status'),head=element('div',undefined,'sftp-status-head'),pills=element('div',undefined,'log-status-pills'),body=element('div'),checked=element('p',undefined,'muted'),creds=element('div');
+  head.append(element('h3','Admin SFTP server'),pills);
+  let busy=false,shownHost;
+  const showCredentials=host=>{if(shownHost===host)return;shownHost=host;creds.replaceChildren();if(credentials)managementSecrets(creds,{...Object.fromEntries(Object.entries(credentials).filter(([key])=>key.startsWith('admin_sftp_'))),admin_sftp_host:host});};
+  const compose=action=>"sudo sh -c 'cd /opt/farmservers/node && docker compose "+action+"'";
+  const tunnel=(port,address)=>{
+    const wrap=element('div');
+    wrap.append(element('p','The admin SFTP port is published on this node’s loopback address only, so it is not reachable from the internet. That is intentional: it can read and write every server’s files. To connect from your computer, open an SSH tunnel first and leave it running:'),codeBox('ssh -N -L '+port+':127.0.0.1:'+port+' YOUR-SSH-USER@'+(address||'NODE-ADDRESS')),element('p','Then point your SFTP client (FileZilla, WinSCP) at the tunnel instead of the node’s public address:'));
+    const list=element('ul','',''); for(const line of ['Protocol: SFTP','Host: 127.0.0.1','Port: '+port,'Username and password: shown under Connection credentials below'])list.append(element('li',line));
+    wrap.append(list);return wrap;
+  };
+  const render=report=>{
+    pills.replaceChildren();body.replaceChildren();
+    const port=report.port||Number((credentials||{}).admin_sftp_port)||22220;
+    pills.append(pill(report.running?'Container running':report.exists?'Container stopped':'Container missing',report.running?'good':'bad'));
+    if(report.running)pills.append(pill(report.answering?'SSH answering':'Not answering',report.answering?'good':'warning'));
+    if(report.exists&&report.bindings?.length)pills.append(report.loopback_only?pill('Loopback only','quiet'):pill(report.firewall_open===false?'Firewall closed':'Public port '+port,report.firewall_open===false?'warning':'good'));
+
+    if(report.state==='missing'||report.state==='stopped'){
+      body.append(element('p',report.state==='missing'?'The admin SFTP container does not exist on this node.':'The admin SFTP container is stopped, so no client can connect.','notice'),element('p','Start it on the node:'),codeBox(compose('up -d admin-sftp')));
+    }else if(report.state==='not-answering'){
+      body.append(element('p','The container is running but the SSH service inside it did not answer. Restart it on the node:','notice'),codeBox(compose('restart admin-sftp')),element('p','If it keeps failing, read its log:'),codeBox('sudo docker logs --tail 50 fsg-panel-admin-sftp'));
+    }else if(report.loopback_only){
+      body.append(element('p','Running and answering. Connect through an SSH tunnel.','status'),tunnel(port,report.access_host));
+    }else{
+      body.append(element('p','Running and answering. It is published on all addresses, so you can connect directly: host '+(report.access_host||'the node address')+', port '+port+'.','status'));
+      if(report.firewall_open===false)body.append(element('p','The host firewall does not allow port '+port+'. Open it on the node:','notice'),codeBox('sudo ufw allow '+port+'/tcp'));
+    }
+    showCredentials(report.loopback_only?'127.0.0.1':(report.access_host||(credentials||{}).admin_sftp_host||''));
+  };
+  const fallback=message=>{
+    pills.replaceChildren(pill('Status unavailable','warning'));body.replaceChildren(element('p',message,'notice'),element('p','If your client reports connection refused, the port is almost certainly loopback-only on this node (the default). Connect through an SSH tunnel instead.'),tunnel(Number((credentials||{}).admin_sftp_port)||22220,''));
+    showCredentials('127.0.0.1');
+  };
+  const refresh=async manual=>{
+    if(busy||!box.isConnected||document.hidden&&!manual)return;busy=true;check.disabled=true;
+    try{render(await manageApi(node,'sftp-status'));checked.textContent='Checked '+new Date().toLocaleTimeString()+'. Updates automatically every 10 seconds.';}
+    catch(e){fallback(/latest software|Unknown management/i.test(e.message)?'This node’s software is too old to report SFTP status. Update it from Node updates to see live status.':e.message);checked.textContent='Checked '+new Date().toLocaleTimeString()+'.';}
+    finally{busy=false;check.disabled=false;}
+  };
+  const check=button('Check again',()=>void refresh(true));
+  box.append(head,body,checked,check,creds);parent.append(box);
+  void refresh(true);const timer=setInterval(()=>{if(!box.isConnected){clearInterval(timer);return;}void refresh(false);},10000);
 }

@@ -61,5 +61,30 @@ class ContainerSetupTests(unittest.TestCase):
         self.assertTrue(good['management_network'])
 
 
+class AdminSftpReportTests(unittest.TestCase):
+    def summary(self, running=True, host_ip='127.0.0.1', exists=True):
+        return {'exists': exists, 'name': 'fsg-panel-admin-sftp', 'running': running, 'status': 'running' if running else 'exited',
+                'ports': {'22/tcp': [{'host_ip': host_ip, 'host_port': '22220'}]} if exists else {}}
+
+    def test_loopback_only_node_is_ready_but_needs_a_tunnel(self):
+        report = module.admin_sftp_report(self.summary(), 'SSH-2.0-OpenSSH_9.6', {(22220, 'tcp')})
+        self.assertEqual(report['state'], 'ready')
+        self.assertTrue(report['loopback_only'])
+        self.assertEqual(report['port'], 22220)
+        self.assertTrue(report['answering'])
+
+    def test_public_binding_reports_firewall(self):
+        closed = module.admin_sftp_report(self.summary(host_ip='0.0.0.0'), 'SSH-2.0-OpenSSH_9.6', {(22, 'tcp')})
+        self.assertFalse(closed['loopback_only'])
+        self.assertFalse(closed['firewall_open'])
+        self.assertIsNone(module.admin_sftp_report(self.summary(host_ip='0.0.0.0'), 'SSH-2.0-x', None)['firewall_open'])
+
+    def test_stopped_missing_and_silent_states(self):
+        self.assertEqual(module.admin_sftp_report(self.summary(running=False), '', None)['state'], 'stopped')
+        self.assertEqual(module.admin_sftp_report(self.summary(exists=False), '', None)['state'], 'missing')
+        self.assertEqual(module.admin_sftp_report(self.summary(), '', None)['state'], 'not-answering')
+        self.assertEqual(module.admin_sftp_report(self.summary(), 'garbage', None)['state'], 'not-answering')
+
+
 if __name__ == '__main__':
     unittest.main()
