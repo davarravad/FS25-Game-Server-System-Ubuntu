@@ -51,9 +51,18 @@ fi
 
 
 # install a downgraded version of wine due https://bugs.winehq.org/show_bug.cgi?id=56790
+# wine-staging 10.1 still depends on lib32-gettext and lib32-libpcap, which Arch has since removed from multilib.
+# lib32-gettext is installed from the Arch archive. lib32-libpcap only provides Wine's optional packet capture
+# (wpcap), which a game server never uses, and even its newest archived build needs packages that no longer exist,
+# so that one dependency is skipped.
+archive_url="https://archive.archlinux.org/packages"
+wine_package="${archive_url}/w/wine-staging/wine-staging-10.1-1-x86_64.pkg.tar.zst"
+gettext_package="${archive_url}/l/lib32-gettext/lib32-gettext-1.0-1-x86_64.pkg.tar.zst"
 
-
-pacman -U "https://archive.archlinux.org/packages/w/wine-staging/wine-staging-10.1-1-x86_64.pkg.tar.zst" --noconfirm
+if ! pacman -U "${wine_package}" "${gettext_package}" --noconfirm --assume-installed lib32-libpcap=1.10.6; then
+	echo "[warn] wine-staging could not be installed with the archived lib32-gettext, retrying without it"
+	pacman -U "${wine_package}" --noconfirm --assume-installed lib32-gettext=1.0 --assume-installed lib32-libpcap=1.10.6
+fi
 
 # aur packages
 ####
