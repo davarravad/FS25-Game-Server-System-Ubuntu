@@ -332,7 +332,13 @@ function viewerSection(title,description,node,server,kind,openLabel,loadCredenti
   const s=section(title);s.append(element('p',description));
   const message=element('p');message.setAttribute('role','status');
   const actions=element('div',undefined,'actions');
-  const open=button(openLabel,()=>openViewer(node.id,kind,server.instance_id,message));open.disabled=!node.online;actions.append(open);
+  // The console and web panel live inside the game server's container. While it is not running there is nothing to
+  // connect to and the tunnel can only answer with a bare 502, so say so first and let the person decide.
+  const open=button(openLabel,()=>{
+    const stopped=/^(offline|stopped)$/i.test(serverStatus(node,server));
+    if(stopped&&!confirm(server.server_name+' is not running yet, so there is nothing to connect to and this will show a 502 error.\n\nStart the server first and follow Startup progress. The first start builds the game runtime and takes several minutes.\n\nOpen it anyway?'))return;
+    openViewer(node.id,kind,server.instance_id,message);
+  });open.disabled=!node.online;actions.append(open);
   if(extra)actions.append(extra(message));
   s.append(actions,message);
   const credentials=element('details',undefined,'credential-details'),credMessage=element('p');credMessage.setAttribute('role','status');

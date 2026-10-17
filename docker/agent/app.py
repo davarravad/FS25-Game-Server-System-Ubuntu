@@ -1645,6 +1645,10 @@ def instance_action():
         if not image_result.get("ok"):
             failure = (str(image_result.get("error") or "unknown error").strip().splitlines() or ["unknown error"])[-1][:200]
             append_runtime_log(instance_id, f"Console: Runtime image build failed: {failure}")
+            # The one-line summary rarely names the real cause, so keep the end of the build output in the console log too.
+            build_output = f"{(image_result.get('result') or {}).get('stderr') or ''}\n{(image_result.get('result') or {}).get('stdout') or ''}"
+            for build_line in [text for text in build_output.splitlines() if text.strip()][-30:]:
+                append_runtime_log(instance_id, "[build] " + build_line.strip()[:300])
             return jsonify(image_result), 500
         append_runtime_log(instance_id, "Console: Game runtime image ready.")
         if action == "rebuild":
