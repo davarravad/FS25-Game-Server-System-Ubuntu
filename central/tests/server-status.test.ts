@@ -94,3 +94,15 @@ test('during first-time setup the board reports status only, with no repairs, un
   assert.equal(ran.state, 'attention');
   assert.equal(ran.fixes.length, 2, 'Provision hostname and Start server');
 });
+
+test('a node that cannot inspect its containers is a note on the board, not a finding on every server', async () => {
+  const build = await load();
+  const inspection = {name: 'Server inspection', group: 'node', state: 'warn', detail: 'The node answered without a container report (HTTP 200). It sent text/html: "<!doctype html>".', repair: {label: 'Queue update', api: 'distribution/updates', body: {node: 'node-1'}}};
+  const model = build(report([{name: 'VNC console', group: 'domains', state: 'pass', detail: 'ok'}], [inspection, {name: 'Gateway reachable', group: 'node', state: 'pass', detail: 'ok'}]), live('online'), node, server);
+  assert.equal(model.state, 'ok', 'It does not turn the verdict to attention');
+  assert.equal(model.title, 'All systems operational');
+  assert.deepEqual(model.fixes, [], 'Nor does it offer an update as a fix');
+  assert.equal(model.groups.flatMap((g: any) => g.checks).some((c: any) => c.name === 'Server inspection'), false);
+  assert.deepEqual(model.notes, [inspection.detail]);
+  assert.deepEqual(build(null, live('online'), node, server).notes, []);
+});

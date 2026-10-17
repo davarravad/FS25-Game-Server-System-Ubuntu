@@ -43,7 +43,10 @@ function buildServerStatus(report,live,node,server){
     const container=containers.find(item=>item.service===serviceOf[check.name]);
     return container?{...check,detail:check.detail+' ('+liveContainerText(container)+')'}:check;
   });
-  let checks=[...liveChecks(live,node,server),...readiness];
+  // A node that cannot inspect its containers and ports says so on every server it hosts. That is a limit of the check, not a
+  // problem with this server, so it is shown as a note and never counted as a finding.
+  const notes=readiness.filter(check=>check.name==='Server inspection').map(check=>check.detail);
+  let checks=[...liveChecks(live,node,server),...readiness.filter(check=>check.name!=='Server inspection')];
   // A node that cannot inspect its containers still reports them in the live status.
   if(report&&!checks.some(check=>check.group==='containers'))for(const container of containers)checks.push({name:container.service==='sftp'?'SFTP container':container.service==='fs25'?'Container':container.service||'Container',group:'containers',state:container.restarting?'fail':container.running?'pass':'warn',detail:liveContainerText(container)});
   checks.push(node.online?{name:'Node heartbeat',group:'node',state:'pass',detail:'Last heartbeat '+stamp(node.last_seen)+'.'}:{name:'Node heartbeat',group:'node',state:'fail',detail:'The node is not reporting. Last heartbeat '+stamp(node.last_seen)+'.',repair:{label:'Open node',href:nodeUrl(node)}});
@@ -64,7 +67,7 @@ function buildServerStatus(report,live,node,server){
   // The same repair often fixes several findings (recreating a container), so each distinct action runs once.
   const seen=new Set(),fixes=[];
   for(const check of checks)if(check.state!=='pass'&&check.repair?.api){const key=check.repair.api+JSON.stringify(check.repair.body||{});if(!seen.has(key)){seen.add(key);fixes.push(check.repair);}}
-  return {groups,counts,state,title,setup,percent:counts.total?Math.round(counts.pass/counts.total*100):0,fixes,checked:!!report};
+  return {groups,counts,state,title,setup,notes,percent:counts.total?Math.round(counts.pass/counts.total*100):0,fixes,checked:!!report};
 }
 
 const statusIcons={
@@ -88,7 +91,8 @@ function serverStatusBoard(node,server){
   const recheck=button('Re-check',()=>void runCheck()),fixAll=button('Fix all',()=>void repairAll());
   ring.append(ringText);headline.append(title,sub);tools.append(fixAll,recheck);hero.append(ring,headline,tools);
   note.setAttribute('role','status');note.setAttribute('aria-live','polite');note.className='ss-note muted';
-  panel.classList.add('ss-board');panel.append(hero,note,grid);
+  const limits=element('p',undefined,'ss-note muted');
+  panel.classList.add('ss-board');panel.append(hero,limits,note,grid);
   let report=null,live=null,checkedAt=0,liveAt=0,busy=false,drawn='',model=null;
 
   const say=text=>{note.textContent=text;};
@@ -119,6 +123,7 @@ function serverStatusBoard(node,server){
     ringText.textContent=model.checked?model.counts.pass+'/'+model.counts.total:'…';
     title.textContent=model.checked?model.title:'Checking this server…';
     sub.textContent=model.checked?'Checked '+timeAgo(Date.now()-checkedAt)+' · '+model.counts.pass+' of '+model.counts.total+(model.setup?' checks ready. Repairs appear after the first successful start.':' checks passing'):'Looking at containers, domains, ports and the node connection. This can take up to half a minute.';
+    limits.textContent=model.notes.length?'Not checked on this node: '+model.notes.join(' '):'';
     fixAll.hidden=!model.fixes.length;fixAll.textContent=model.fixes.length>1?'Fix all ('+model.fixes.length+')':'Fix issue';
     recheck.disabled=busy;fixAll.disabled=busy;
   };

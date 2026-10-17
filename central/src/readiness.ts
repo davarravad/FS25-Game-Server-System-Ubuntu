@@ -44,7 +44,7 @@ export async function fleetReadiness(env:Env,actor:string,scope:{node?:string;in
     const bypassRepair:Repair={label:'Create console bypass now',api:'readiness/repair',body:{node:node.id,action:'console-bypass'}};
     const behind=!!latest&&(!node.installed_version||compareVersions(node.installed_version,latest)<0);
     const updateRepair:Repair|undefined=behind?{label:(node.installed_version?'Queue update to ':'Install release ')+latest,api:'distribution/updates',body:{node:node.id,version:latest},confirm:'Update '+node.name+' to '+latest+'? Running games stay up; control-panel sessions may disconnect briefly.'}:undefined;
-    const noInspection=behind?'Update it to a release with readiness support.':'The installed release does not include readiness inspection; publish a release that does, then update the node.';
+    const noInspection=behind?'Update it to a release with readiness support.':'The node is on the latest release, so updating will not change this; the live container status on the game server page still applies.';
 
     let gateway:Gateway|null=null;
     try{gateway=(await readGateway(env,node.id)).gateway;}catch{ /* Reported below as a failed check. */ }
@@ -73,11 +73,14 @@ export async function fleetReadiness(env:Env,actor:string,scope:{node?:string;in
       checks.push(bypass?.status===403?check('Console path bypass','pass','Access lets console sockets through; the node still requires the gateway token.'):check('Console path bypass','fail',bypass?'Access answered HTTP '+bypass.status+' on the console socket path; the bypass application is missing or not effective.':'No answer on the console socket path.',bypassRepair));
 
       const inspect=await probe(gateway.origin+'/?route=api_node_readiness',{headers},30000);
+      // Say what the node actually sent, so a wrong answer can be diagnosed from the finding itself.
+      const inspectType=inspect?.headers.get('Content-Type')||'no content type',inspectText=inspect?(await inspect.text().catch(()=>'')):'';
+      const sent=inspect?'It sent '+inspectType.split(';')[0]+(inspectText.trim()?': "'+inspectText.replace(/\s+/g,' ').trim().slice(0,100)+'". ':'. '):'';
       try{
-        const data=inspect?.ok&&(inspect.headers.get('Content-Type')||'').includes('application/json')?await inspect.json<NodeServers>():null;
+        const data=inspect?.ok&&inspectType.includes('application/json')?JSON.parse(inspectText) as NodeServers:null;
         if(data?.ok&&Array.isArray(data.servers))nodeServers=data;
-        else checks.push(check('Server inspection','warn',(inspect?'The node answered without a container report (HTTP '+inspect.status+'). ':'The node did not answer the readiness query. ')+noInspection,updateRepair));
-      }catch{checks.push(check('Server inspection','warn','The node returned an unreadable readiness answer. '+noInspection,updateRepair));}
+        else checks.push(check('Server inspection','warn',(inspect?'The node answered without a container report (HTTP '+inspect.status+'). '+sent:'The node did not answer the readiness query. ')+noInspection,updateRepair));
+      }catch{checks.push(check('Server inspection','warn','The node returned an unreadable readiness answer. '+sent+noInspection,updateRepair));}
     }
 
     checks.push(!latest?check('Node software','warn','No release has been published yet.'):!node.installed_version?check('Node software','warn','Installed version not reported yet; a successful managed update records it.',updateRepair):compareVersions(node.installed_version,latest)>=0?check('Node software','pass','Running '+node.installed_version+'.'):check('Node software','warn','Running '+node.installed_version+'; '+latest+' is available.',updateRepair));

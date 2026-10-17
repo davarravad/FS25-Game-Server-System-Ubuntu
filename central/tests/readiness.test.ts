@@ -109,6 +109,7 @@ test('fleet readiness reports node connection, console bypass, release, hostname
     const degraded=report.nodes[0];
     assert.equal(find(degraded.checks,'Console path bypass').state,'fail');assert.match(find(degraded.checks,'Console path bypass').detail,/HTTP 401/);assert.deepEqual(find(degraded.checks,'Console path bypass').repair,{label:'Create console bypass now',api:'readiness/repair',body:{node:'node-1',action:'console-bypass'}});
     assert.equal(find(degraded.checks,'Server inspection').state,'warn');assert.equal(find(degraded.checks,'Server inspection').repair?.api,'distribution/updates');
+    assert.match(find(degraded.checks,'Server inspection').detail,/HTTP 404\)\. It sent text\/html: "<html>not found<\/html>"\./,'The finding quotes what the node actually sent');
     assert.deepEqual(degraded.servers.map(s=>s.instance_id),['game-1','game-2'],'Falls back to the heartbeat snapshot');
     assert.deepEqual(degraded.servers[0].checks.map(c=>c.name),['VNC console','Game admin'],'No container checks without node support');
   }finally{await mf.dispose();}
