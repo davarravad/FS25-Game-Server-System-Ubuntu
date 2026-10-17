@@ -1,5 +1,23 @@
 const connectionStages={tunnel:'Creating tunnel',credentials:'Creating Access credentials',access:'Protecting the hostname',route:'Configuring tunnel route',dns:'Publishing DNS',connector:'Preparing connector',installing:'Installing the node connector',verifying:'Checking the protected connection',ready:'Ready'};
 function connectionStatus(row){return row.error?'Setup needs attention':!row.enabled?'Node disabled':connectionStages[row.stage]||'Waiting for compatible node updater';}
+const connectionOrder=Object.keys(connectionStages);
+// Live progress indicator shared by the Cloudflare page and each node's connection tab. update() changes
+// the existing elements in place so polling never rebuilds (or flickers) the card.
+function connectionProgress(){
+  const box=element('div',undefined,'conn-progress'),head=element('div',undefined,'conn-head'),spin=element('span',undefined,'spinner'),label=element('strong',undefined,'conn-label'),count=element('span',undefined,'muted conn-count'),bar=element('div',undefined,'progress-bar'),fill=element('div',undefined,'progress-fill');
+  spin.setAttribute('aria-hidden','true');head.setAttribute('role','status');bar.setAttribute('role','progressbar');bar.setAttribute('aria-valuemin','0');bar.setAttribute('aria-valuemax','100');
+  bar.append(fill);head.append(spin,label,count);box.append(head,bar);
+  box.update=row=>{
+    const steps=connectionOrder.length-1,index=connectionOrder.indexOf(row.stage);
+    const state=row.error?'error':!row.enabled?'idle':row.stage==='ready'?'done':index>=0?'active':'waiting';
+    const percent=state==='done'?100:state==='active'?Math.round((index+.5)/steps*100):state==='error'&&index>=0?Math.round(index/steps*100):0;
+    label.textContent=connectionStatus(row);
+    count.textContent=state==='active'?'Step '+(index+1)+' of '+steps:state==='done'?'Complete':state==='waiting'?'Waiting for the node to check in':'';
+    fill.style.width=percent+'%';box.dataset.state=state;
+    bar.setAttribute('aria-valuenow',String(percent));bar.setAttribute('aria-valuetext',label.textContent+(count.textContent?', '+count.textContent:''));
+  };
+  return box;
+}
 async function cloudflarePage(){
   title('Cloudflare','Set up automatic, protected connections for your server nodes.','cloudflare');
   if(me.role!=='admin'){empty($('page'),'Administrator access is required.');return;}
@@ -20,23 +38,41 @@ async function cloudflarePage(){
   const save=element('button','Save Cloudflare settings');form.append(save);panel.append(form,element('p','Token permissions: Account → Workers Scripts: Edit (required for game panel and VNC hostnames), Cloudflare Tunnel: Edit, Access: Apps and Policies: Edit, Access: Service Tokens: Edit. Zone → DNS: Edit and Zone: Read. Limit it to this account and zone.','muted'),element('p','Enabling starts setup for all enabled nodes with a compatible updater. Pausing stops setup and renewal; existing connections stay active. Existing conflicting DNS records are not overwritten.','muted'));
   form.onsubmit=async e=>{e.preventDefault();save.disabled=true;message.textContent='Checking Cloudflare settings…';try{await api('cloudflare',{account:account.value.trim(),zone:zone.value.trim(),domain:domain.value,token:token.value.trim(),enabled:enabled.value==='true'});const switchedToToken=!!token.value.trim();token.value='';token.required=false;token.placeholder='Saved — leave blank to keep';if(switchedToToken){history.replaceState(null,'','/cloudflare');await load();$('message').textContent='API token saved. OAuth is not used; retry Game admin or VNC from the server page.';return;}message.textContent=enabled.value==='true'?'Saved. Nodes will set themselves up as they check in.':'Saved. Automation is paused.';}catch(e){message.textContent=e.message;}finally{save.disabled=false;}};
   const fleet=section('Node connection progress'),list=element('div',undefined,'grid'),status=element('p');status.setAttribute('role','status');fleet.append(status,list);
-  const draw=rows=>{list.replaceChildren();for(const row of rows){const card=element('article',undefined,'card');card.append(link(row.name,'/nodes/'+encodeURIComponent(row.id),'text-link'),element('p',connectionStatus(row)));if(row.error){card.append(element('p',row.error,'notice'));const retry=button('Retry setup',async()=>{retry.disabled=true;try{await api('cloudflare/retry',{id:row.id});status.textContent='Retry queued for '+row.name;await refresh();}catch(e){status.textContent=e.message;}finally{retry.disabled=false;}});card.append(retry);}if(row.updated)card.append(element('p','Last setup activity: '+stamp(row.updated),'muted'));list.append(card);}if(!rows.length)empty(list,'Create a node on the Server Nodes page to begin.');};
-  const refresh=async()=>{if(!fleet.isConnected||document.hidden)return;try{const result=await api('cloudflare');if(fleet.isConnected)draw(result.nodes);}catch(e){status.textContent=e.message;}};
+  const pulse=element('p',undefined,'muted'),cards=new Map(),none=element('p','Create a node on the Server Nodes page to begin.','empty-state');none.hidden=true;status.after(pulse);list.after(none);
+  const makeCard=row=>{
+    const card=element('article',undefined,'card'),name=link('','','text-link'),progress=connectionProgress(),error=element('p',undefined,'notice'),retry=button('Retry setup',async()=>{retry.disabled=true;try{await api('cloudflare/retry',{id:entry.id});status.textContent='Retry queued for '+entry.name;await refresh();}catch(e){status.textContent=e.message;}finally{retry.disabled=false;}}),updated=element('p',undefined,'muted');
+    error.hidden=true;retry.hidden=true;card.append(name,progress,error,retry,updated);
+    const entry={id:row.id,name:row.name,card,nameLink:name,progress,error,retry,updated};return entry;
+  };
+  const draw=rows=>{
+    const seen=new Set();
+    rows.forEach((row,i)=>{
+      seen.add(row.id);let entry=cards.get(row.id);if(!entry){entry=makeCard(row);cards.set(row.id,entry);}
+      entry.name=row.name;entry.nameLink.textContent=row.name;entry.nameLink.href='/nodes/'+encodeURIComponent(row.id);
+      entry.progress.update(row);
+      entry.error.textContent=row.error||'';entry.error.hidden=!row.error;entry.retry.hidden=!row.error;
+      entry.updated.textContent=row.updated?'Last setup activity: '+stamp(row.updated):'';
+      if(list.children[i]!==entry.card)list.insertBefore(entry.card,list.children[i]||null);
+    });
+    for(const [id,entry] of cards)if(!seen.has(id)){entry.card.remove();cards.delete(id);}
+    none.hidden=rows.length>0;
+  };
+  const refresh=async()=>{if(!fleet.isConnected||document.hidden)return;try{const result=await api('cloudflare');if(fleet.isConnected){draw(result.nodes);status.textContent='';pulse.textContent='Live: progress updates automatically. Last checked '+new Date().toLocaleTimeString()+'.';}}catch(e){status.textContent='Unable to refresh progress: '+e.message+'. Retrying automatically.';}};
   draw(data.nodes);const timer=setInterval(()=>{if(!fleet.isConnected){clearInterval(timer);return;}void refresh();},5000);
   const setup=section('Existing Ubuntu nodes');setup.append(element('p','Existing nodes need a signed node software release containing connection automation. Install that release from the Node software section on the node’s Overview tab, or from Node updates. New installations using that release configure themselves after enrollment. Setup briefly restarts the web control panel; running game servers remain active.'));
 }
 async function nodeConnectionPanel(node){
   if(me.role!=='admin')return;
-  const panel=section('Node connection progress'),card=element('article',undefined,'card'),status=element('p','Loading connection progress...'),error=element('p',undefined,'notice'),activity=element('p',undefined,'muted'),paused=element('p'),message=element('p');
-  status.setAttribute('role','status');message.setAttribute('role','status');
+  const panel=section('Node connection progress'),card=element('article',undefined,'card'),progress=connectionProgress(),error=element('p',undefined,'notice'),activity=element('p',undefined,'muted'),paused=element('p'),message=element('p');
+  message.setAttribute('role','status');progress.update({enabled:true});
   let busy=false,retrying=false;
   const retry=button('Retry setup',async()=>{if(retrying)return;retrying=true;retry.disabled=true;try{await api('cloudflare/retry',{id:node.id});message.textContent='Retry queued. Progress updates automatically.';}catch(e){message.textContent=e.message;}finally{retrying=false;retry.disabled=false;void refresh();}});
   retry.hidden=true;error.hidden=true;
-  card.append(element('h3',node.name),status,error,activity,retry,paused);panel.append(card,message,element('p','Connection progress refreshes every 5 seconds.','muted'),link('Cloudflare settings','/cloudflare'));
+  card.append(element('h3',node.name),progress,error,activity,retry,paused);panel.append(card,message,element('p','Progress updates live. The node checks in about every 30 seconds, so each step can take up to a minute.','muted'),link('Cloudflare settings','/cloudflare'));
   const refresh=async()=>{
     if(busy||retrying||document.hidden||!panel.isConnected)return;busy=true;
     try{const data=await api('cloudflare',undefined,{signal:AbortSignal.timeout(15000)});if(!panel.isConnected)return;
-      const row=data.nodes.find(n=>n.id===node.id);status.textContent=row?connectionStatus(row):'Waiting for setup';
+      const row=data.nodes.find(n=>n.id===node.id);progress.update(row||{enabled:true});
       error.textContent=row?.error||'';error.hidden=!row?.error;retry.hidden=!row?.error;retry.disabled=retrying||!row?.enabled;
       activity.textContent=row?.updated?'Last setup activity: '+stamp(row.updated):'No setup activity reported yet.';
       paused.textContent=data.settings?.enabled?'':'Automatic connections are paused. Enable them on the Cloudflare page to continue setup.';
@@ -97,11 +133,11 @@ async function cloudflareLoginPanel(){
       let target;try{if(typeof data.url!=='string')throw new Error();target=new URL(data.url);}catch{throw new Error('The service did not return a valid Cloudflare authorization link. Try again or check the service configuration.');}if(target.origin!=='https://dash.cloudflare.com'||target.pathname!=='/oauth2/auth')throw new Error('The service did not return a valid Cloudflare authorization link.');
       notify('Opening Cloudflare authorization…','pending');location.assign(target.href);
     }catch(e){notify(e.name==='TimeoutError'||e.name==='AbortError'?'The connection request timed out. Try again.':e.message);connect.disabled=false;connect.textContent=connectLabel;}
-  });connect.disabled=!status.configured;panel.append(connect);
+  });connect.disabled=!status.configured;const actions=element('div',undefined,'actions');actions.append(connect);panel.append(actions);
   if(result==='invalid-scope'){
     panel.append(element('p','Cloudflare returned invalid_scope. These are the exact scopes the website requested:'),element('pre',status.scopes,'oauth-scope-list'),element('p','The website includes offline_access for automatic renewal. In Cloudflare, edit this OAuth client and enable the Refresh Token grant, then save it. If it is already enabled, compare every scope above with the scopes registered in Cloudflare.','notice'));
   }
-  if(status.connected)panel.append(button('Disconnect Cloudflare',async()=>{try{const data=await api('cloudflare/oauth/disconnect',{});await load();$('message').textContent=data.revoked?'Cloudflare disconnected. Automatic setup is paused; existing node connections remain active.':'Disconnected locally and paused automation. Cloudflare could not confirm revocation; remove this app authorization in your Cloudflare account.';}catch(e){notify(e.message);}}));
+  if(status.connected)actions.append(button('Disconnect Cloudflare',async()=>{try{const data=await api('cloudflare/oauth/disconnect',{});await load();$('message').textContent=data.revoked?'Cloudflare disconnected. Automatic setup is paused; existing node connections remain active.':'Disconnected locally and paused automation. Cloudflare could not confirm revocation; remove this app authorization in your Cloudflare account.';}catch(e){notify(e.message);}}));
   const details=element('details');details.open=!status.configured||['invalid-scope','invalid-client','unauthorized-client','invalid-request','invalid-response-type','offline-required'].includes(result);details.append(element('summary','One-time OAuth app registration'));
   details.append(element('p','In Cloudflare, open Manage Account → OAuth clients and create a private client. Enable both Authorization Code and Refresh Token grants, choose the code response type and client_secret_basic authentication. Register the callback URL below.'),codeBox(status.callback),element('p','Select the scopes for Workers Scripts Write (required for game panel and VNC hostnames), Zone Read, DNS Edit, Cloudflare Tunnel Edit, Access Apps and Policies Edit, Access Service Tokens Edit, plus offline_access. Enter the exact scope IDs from the client registration below.'));
   details.append(link('Cloudflare OAuth registration instructions','https://developers.cloudflare.com/fundamentals/oauth/create-an-oauth-client/','text-link'));

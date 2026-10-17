@@ -20,11 +20,11 @@ async function refreshLive(){
     if(route().type==='game-status')liveChanged=false;
     if(liveChanged&&!$('fleet-switcher')?.open){
       const settingsPage=['node','server'].includes(route().type)&&['settings','create','logs','connection'].includes(new URLSearchParams(location.search).get('tab'));
-      // The Node updates and System Status pages refresh their own data every few seconds; the
+      // The Node updates, Cloudflare and System Status pages refresh their own data every few seconds; the
       // System Status page also holds readiness results and repair controls the administrator is
       // reading (running a check or a repair itself causes a revision bump). Never rebuild either
       // page underneath them.
-      const selfRefreshing=['setup','status'].includes(route().type);
+      const selfRefreshing=['setup','status','cloudflare'].includes(route().type);
       if(route().type!=='game-status'&&!$('charts')&&!settingsPage&&!selfRefreshing&&!editDirty&&!dirty&&!$('page').contains(document.activeElement)){
         liveChanged=false;await render();
       }else{

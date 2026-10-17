@@ -248,3 +248,17 @@ main>.site-footer{margin-top:48px}
 .consent-button:focus-visible,.consent-dialog input:focus-visible{outline:2px solid #fff;outline-offset:2px}
 .consent-gpc{padding:10px;border:1px solid #47d8b0;border-radius:8px}
 .code-box{position:relative}.code-box pre{margin:0;padding-right:84px}.code-copy{position:absolute;top:8px;right:8px;padding:5px 12px;font-size:12px}
+
+.conn-progress{margin:12px 0}.conn-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}.conn-label{font-weight:650}.conn-count{margin-left:auto;font-size:12px}
+.progress-bar{height:10px;border-radius:999px;background:#1c2c40;border:1px solid #2b3e55;overflow:hidden}.progress-fill{height:100%;width:0;border-radius:999px;background:linear-gradient(90deg,#2fb88f,#47d8b0);transition:width .6s ease}
+.conn-progress[data-state=active] .progress-fill{background:linear-gradient(90deg,#2fb88f,#7af0cc,#2fb88f);background-size:200% 100%;animation:progress-shimmer 1.6s linear infinite}
+.conn-progress[data-state=waiting] .progress-fill{width:35%!important;background:linear-gradient(90deg,transparent,#47d8b0,transparent);animation:progress-sweep 1.4s ease-in-out infinite}
+.conn-progress[data-state=done] .progress-fill{background:#47d8b0}.conn-progress[data-state=error] .progress-fill{background:#e88179}.conn-progress[data-state=idle] .progress-fill{background:#40516a}
+.spinner{display:none;width:16px;height:16px;border-radius:50%;border:2px solid #2b4a4a;border-top-color:#47d8b0;animation:spinner-turn .8s linear infinite;flex:none}
+.conn-progress[data-state=active] .spinner,.conn-progress[data-state=waiting] .spinner{display:inline-block}
+@keyframes spinner-turn{to{transform:rotate(360deg)}}@keyframes progress-shimmer{to{background-position:-200% 0}}@keyframes progress-sweep{0%{margin-left:-35%}100%{margin-left:100%}}
+@media(prefers-reduced-motion:reduce){.progress-fill{animation:none!important;transition:none}.spinner{animation-duration:2.4s}.conn-progress[data-state=waiting] .progress-fill{margin-left:0;width:100%!important;opacity:.35}}
+#page>section>details{margin-top:18px}
+#page>section>button{margin:8px 8px 0 0}
+
+button.primary{background:#2fb88f;border-color:#47d8b0;color:#04130e;font-weight:650}button.primary:hover{background:#47d8b0}button.primary:disabled{background:#152234;color:inherit;border-color:#31435a}
