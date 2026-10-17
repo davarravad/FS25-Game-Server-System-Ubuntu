@@ -6,8 +6,10 @@ reaches each game container by name on the management network. Only the desktop 
 public by design. This module reduces `docker inspect` output to the facts the readiness check
 needs.
 """
+import hashlib
 import json
 import re
+from pathlib import Path
 from typing import Callable, Optional
 
 MANAGEMENT_NETWORK = "fsg-management"
@@ -29,6 +31,27 @@ def port_bindings(bindings: dict) -> dict[str, list[dict[str, str]]]:
             for target in (targets or [])
         ]
     return result
+
+
+def source_tree_hash(root: Path) -> str:
+    """Fingerprint of the game runtime's build inputs (Dockerfile, scripts, templates). Line endings are normalised so a
+    Windows checkout and a Linux one give the same answer, and Python caches are ignored."""
+    digest = hashlib.sha256()
+    for path in sorted(Path(root).rglob("*")):
+        if not path.is_file() or "__pycache__" in path.parts:
+            continue
+        digest.update(path.relative_to(root).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes().replace(b"\r\n", b"\n"))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def image_is_stale(label: Optional[str], current: str) -> bool:
+    """An image only counts as stale when it carries a fingerprint that no longer matches the source. A missing image
+    (None) is built elsewhere, and an image built before fingerprints existed ("") is left alone so that updating the
+    node software never rebuilds a working runtime by surprise."""
+    return bool(label) and label != current
 
 
 def set_env_value(text: str, key: str, value: str) -> str:

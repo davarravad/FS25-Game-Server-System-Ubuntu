@@ -14,7 +14,7 @@ import time
 from contextlib import suppress
 from pathlib import Path
 from game_details import collect as collect_game_details
-from container_setup import inspect_setup, admin_sftp_report, compose_target, set_env_value
+from container_setup import inspect_setup, admin_sftp_report, compose_target, set_env_value, source_tree_hash, image_is_stale
 
 from flask import Flask, jsonify, request, g
 
@@ -135,6 +135,27 @@ def image_exists(image_name: str) -> bool:
     return result["code"] == 0
 
 
+RUNTIME_SOURCE_LABEL = "com.farmservers.runtime-source"
+
+
+def runtime_image_source_label(image_name: str) -> str | None:
+    """None when the image does not exist, "" when it has no fingerprint, otherwise the fingerprint it was built from."""
+    result = run_command(["docker", "image", "inspect", image_name, "--format", "{{index .Config.Labels \"" + RUNTIME_SOURCE_LABEL + "\"}}"], timeout=10)
+    if result["code"] != 0:
+        return None
+    value = (result.get("stdout") or "").strip()
+    return "" if value in {"", "<no value>"} else value
+
+
+def runtime_image_is_stale(image_name: str) -> bool:
+    if image_name != FS25_RUNTIME_IMAGE or not FS25_RUNTIME_SOURCE.exists():
+        return False
+    try:
+        return image_is_stale(runtime_image_source_label(image_name), source_tree_hash(FS25_RUNTIME_SOURCE))
+    except OSError:
+        return False
+
+
 def runtime_target_arch() -> str:
     host_arch = os.uname().machine.lower()
     arch_map = {
@@ -160,6 +181,7 @@ def ensure_runtime_image(image_name: str, force_rebuild: bool = False) -> dict:
     build_cmd = [
         "docker", "build",
         "-t", image_name,
+        "--label", f"{RUNTIME_SOURCE_LABEL}={source_tree_hash(FS25_RUNTIME_SOURCE)}",
         "--build-arg", f"RELEASETAG={FS25_RUNTIME_RELEASETAG}",
         "--build-arg", f"TARGETARCH={runtime_target_arch()}",
         str(FS25_RUNTIME_SOURCE),
@@ -1639,9 +1661,19 @@ def instance_action():
 
     if action in {"start", "restart", "rebuild", "resync", "reinstall_game"}:
         needs_build = image_name == FS25_RUNTIME_IMAGE and (action == "rebuild" or not image_exists(image_name))
+        # After a node software update changes the game runtime, a stopped server picks up the new image when it is started.
+        # A running server is never rebuilt out from under its players, and if the rebuild fails the existing image is kept.
+        refresh_stale = (not needs_build and action == "start" and runtime_image_is_stale(image_name)
+                         and not inspect_container(instance_id).get("running"))
         if needs_build:
             append_runtime_log(instance_id, "Console: Building the game runtime image. This only happens the first time on a node and can take several minutes.")
-        image_result = ensure_runtime_image(image_name, force_rebuild=(action == "rebuild"))
+        elif refresh_stale:
+            append_runtime_log(instance_id, "Console: Building the game runtime image because an update changed it. This can take several minutes.")
+        image_result = ensure_runtime_image(image_name, force_rebuild=(action == "rebuild" or refresh_stale))
+        if refresh_stale and not image_result.get("ok"):
+            reason = (str(image_result.get("error") or "unknown error").strip().splitlines() or ["unknown error"])[-1][:200]
+            append_runtime_log(instance_id, f"Console: Runtime image update failed, starting with the existing image: {reason}")
+            image_result = {"ok": True, "built": False}
         if not image_result.get("ok"):
             failure = (str(image_result.get("error") or "unknown error").strip().splitlines() or ["unknown error"])[-1][:200]
             append_runtime_log(instance_id, f"Console: Runtime image build failed: {failure}")

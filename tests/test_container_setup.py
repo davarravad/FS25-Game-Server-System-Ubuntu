@@ -106,5 +106,38 @@ class AdminSftpAccessTests(unittest.TestCase):
         self.assertEqual(module.admin_sftp_report(summary, 'SSH-2.0', None)['access_mode'], 'public')
 
 
+class RuntimeImageFreshnessTests(unittest.TestCase):
+    def make_tree(self, files):
+        import tempfile
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        root = Path(folder.name)
+        for name, content in files.items():
+            target = root / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+        return root
+
+    def test_fingerprint_changes_with_content_and_ignores_line_endings_and_caches(self):
+        base = self.make_tree({'Dockerfile': b'FROM x\n', 'run/start.sh': b'echo hi\n'})
+        same_with_crlf = self.make_tree({'Dockerfile': b'FROM x\r\n', 'run/start.sh': b'echo hi\r\n'})
+        with_cache = self.make_tree({'Dockerfile': b'FROM x\n', 'run/start.sh': b'echo hi\n', 'run/__pycache__/x.pyc': b'junk'})
+        edited = self.make_tree({'Dockerfile': b'FROM x\n', 'run/start.sh': b'echo changed\n'})
+        renamed = self.make_tree({'Dockerfile': b'FROM x\n', 'run/other.sh': b'echo hi\n'})
+        fingerprint = module.source_tree_hash(base)
+        self.assertEqual(fingerprint, module.source_tree_hash(same_with_crlf))
+        self.assertEqual(fingerprint, module.source_tree_hash(with_cache))
+        self.assertNotEqual(fingerprint, module.source_tree_hash(edited))
+        self.assertNotEqual(fingerprint, module.source_tree_hash(renamed))
+
+    def test_only_a_fingerprinted_image_that_no_longer_matches_is_stale(self):
+        self.assertTrue(module.image_is_stale('old', 'new'))
+        self.assertFalse(module.image_is_stale('same', 'same'))
+        # Built before fingerprints existed: never rebuilt by surprise.
+        self.assertFalse(module.image_is_stale('', 'new'))
+        # No image at all is the first-start build, handled separately.
+        self.assertFalse(module.image_is_stale(None, 'new'))
+
+
 if __name__ == '__main__':
     unittest.main()

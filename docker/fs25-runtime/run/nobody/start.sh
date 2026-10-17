@@ -58,6 +58,17 @@ eval "${vnc_start}" &
 
 /usr/local/bin/autostart_fs25.sh &
 
+# Xvnc needs a moment before it accepts connections, and its socket file appears before it is listening. Starting the
+# desktop too early makes xrdb and xfce4-session fail with "Connection refused"; this script then exits and takes the
+# display with it, leaving a running container with no desktop. Wait until the display answers (up to a minute).
+for _ in $(seq 1 120); do
+	if (exec 3<>/dev/tcp/127.0.0.1/5900) 2>/dev/null && [ -S /tmp/.X11-unix/X0 ]; then
+		break
+	fi
+	sleep 0.5
+done
+sleep 1
+
 dbus-launch startxfce4
 
 # STARTCMD_PLACEHOLDER
