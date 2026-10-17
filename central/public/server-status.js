@@ -89,7 +89,7 @@ function serverStatusBoard(node,server){
   ring.append(ringText);headline.append(title,sub);tools.append(fixAll,recheck);hero.append(ring,headline,tools);
   note.setAttribute('role','status');note.setAttribute('aria-live','polite');note.className='ss-note muted';
   panel.classList.add('ss-board');panel.append(hero,note,grid);
-  let report=null,live=null,checkedAt=0,busy=false,drawn='',model=null;
+  let report=null,live=null,checkedAt=0,liveAt=0,busy=false,drawn='',model=null;
 
   const say=text=>{note.textContent=text;};
   const draw=()=>{
@@ -125,7 +125,7 @@ function serverStatusBoard(node,server){
 
   async function refreshLive(){
     if(!panel.isConnected)return;
-    try{live=await manageApi(node,'live',server);}catch{ /* Keep the last live reading; the check below reports an unreachable node. */ }
+    try{live=await manageApi(node,'live',server);liveAt=Date.now();}catch{ /* Keep the last live reading; the check below reports an unreachable node. */ }
     draw();
   }
   async function runCheck(){
@@ -150,11 +150,12 @@ function serverStatusBoard(node,server){
 
   serverStatusKick=()=>void runCheck();
   draw();void runCheck();
-  // Live status is cheap, so it follows the server closely; the full check runs again every couple of minutes while the page is open.
+  // Every read is a request through the node's tunnel (the start-up panel already polls the same live status), so the board reads it
+  // every 30 seconds and runs the full check every 5 minutes while the page is open.
   const timer=setInterval(()=>{
     if(!panel.isConnected){clearInterval(timer);return;}
     if(document.hidden||busy)return;
-    if(Date.now()-checkedAt>120000)void runCheck();else void refreshLive();
+    if(Date.now()-checkedAt>300000)void runCheck();else if(Date.now()-liveAt>=30000)void refreshLive();
   },10000);
 }
 if(typeof module!=='undefined')module.exports={buildServerStatus,statusGroups};

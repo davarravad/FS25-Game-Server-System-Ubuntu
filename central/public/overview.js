@@ -158,10 +158,11 @@ function overviewPage(version){
       for(const node of nodes)if(node.enabled&&node.online)for(const server of node.snapshot?.servers||[])if(ovServerState(serverStatus(node,server))!=='good')wanted.push([node,server]);
       const keep=new Set(wanted.map(([node,server])=>node.id+'/'+server.instance_id));
       for(const key of [...extras.progress.keys()])if(!keep.has(key)){extras.progress.delete(key);checkedAt.delete(key);}
-      // Stopped servers rarely change, so they are re-read once a minute; starting ones every pass.
-      for(const [node,server] of wanted.slice(0,8)){
+      // Each read is a request through the node's tunnel, so they are kept few: a starting server is re-read every 15 seconds,
+      // a stopped one only every 5 minutes, and a pass reads at most four servers.
+      const due=([node,server])=>Date.now()-(checkedAt.get(node.id+'/'+server.instance_id)||0)>=(ovServerState(serverStatus(node,server))==='quiet'?300000:15000);
+      for(const [node,server] of wanted.filter(due).slice(0,4)){
         const key=node.id+'/'+server.instance_id;
-        if(ovServerState(serverStatus(node,server))==='quiet'&&Date.now()-(checkedAt.get(key)||0)<60000)continue;
         try{
           const data=await manageApi(node,'live',server),log=String(data.log_output||''),parsed=parseStartup(log,{state:data.metrics?.runtime_state?.state,containers:data.metrics?.containers||[]});
           extras.progress.set(key,{parsed,setup:/Server created/.test(log)&&!parsed.everRan});checkedAt.set(key,Date.now());
@@ -172,6 +173,6 @@ function overviewPage(version){
   };
   void loadSlow();void loadProgress();
   const timer=setInterval(()=>{if(!root.isConnected){clearInterval(timer);return;}if(!document.hidden)void loadProgress();},15000);
-  const slowTimer=setInterval(()=>{if(!root.isConnected){clearInterval(slowTimer);return;}if(!document.hidden)void loadSlow();},30000);
+  const slowTimer=setInterval(()=>{if(!root.isConnected){clearInterval(slowTimer);return;}if(!document.hidden)void loadSlow();},120000);
 }
 if(typeof module!=='undefined')module.exports={overviewModel,ovServerState};
