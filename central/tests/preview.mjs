@@ -66,7 +66,7 @@ async function membersFixture(req,res,path){
 }
 // What the signed-in preview member may do when PREVIEW_ROLE=operator (a limited Game Server Team member).
 const previewAccess=process.env.PREVIEW_ROLE==='operator'?{admin:false,roles:[{id:'game-server-team',name:'Game Server Team',color:'#47d8b0'}],permissions:['servers.view','servers.control','servers.backend','servers.logs','servers.panel','servers.credentials'],allServers:false,servers:['pilot/game-1']}:{admin:true,roles:[{id:'admin',name:'Admin',color:'#e74c3c'}],permissions:permissionGroups[0].items.map(i=>i.id),allServers:true,servers:[]};
-const visibleNodes=()=>previewAccess.admin?nodes:nodes.map(n=>({...n,snapshot:n.snapshot&&{...n.snapshot,servers:(n.snapshot.servers||[]).filter(s=>previewAccess.servers.includes(n.id+'/'+s.instance_id))}})).filter(n=>n.snapshot?.servers?.length);
+const visibleNodes=()=>previewAccess.admin?nodes:nodes.map(n=>({...n,snapshot:n.snapshot&&{...n.snapshot,servers:(n.snapshot.servers||[]).filter(s=>previewAccess.servers.includes(n.id+'/'+s.instance_id)).map(s=>({...s,permissions:previewAccess.permissions}))}})).filter(n=>n.snapshot?.servers?.length);
 createServer(async(req,res)=>{
   const path=new URL(req.url,'http://localhost').pathname;
   if(/^\/api\/(members|roles|access-requests|users\/(create|block))/.test(path)&&process.env.PREVIEW_ROLE!=='operator'){if(await membersFixture(req,res,path)!==false)return;}
@@ -105,6 +105,7 @@ createServer(async(req,res)=>{
       '/api/me':{id:'513527870258151439',name:'Local preview administrator',role:process.env.PREVIEW_ROLE||'admin',csrf:'fixture',access:previewAccess},
       '/api/users':[{id:'preview',name:'Local preview administrator',role:'admin'},{id:'123456789012345678',name:'Farm viewer',role:'viewer'}],
       '/api/notifications':notices,
+      '/api/server-credentials':{web_username:'fixture-admin',web_password:'fixture-secret'},
 
       '/api/nodes':{nodes:visibleNodes()},
       '/api/history':{points:Array.from({length:20},(_,i)=>({timestamp:time-1800+i*90,cpu_percent:15+i%5,memory_used_bytes:8589934592,disk_used_bytes:12884901888,network_in_bytes_sec:1048576,network_out_bytes_sec:524288}))},
@@ -126,6 +127,7 @@ createServer(async(req,res)=>{
           {id:'north',name:'North farm',online:false,checks:[fail('Cloudflare connection','No gateway saved. Enable Cloudflare automation and let the node connect.',{label:'Open Connection & access',href:'/nodes/north?tab=connection'}),pass('Node software','Running v1.0.0.')],servers:[]}
         ]}));return;
       }
+      if(path==='/api/action'&&body.action==='logs'){res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify({ok:true,result:{stdout:'Console: Server marked as starting...' + String.fromCharCode(10) + 'Console: Server is online.' + String.fromCharCode(10)}}));return;}
       if(path==='/api/notifications/read')for(const notice of notices)if(body.ids.includes(notice.id))notice.read=true;
       if(path==='/api/nodes/update'){const node=nodes.find(n=>n.id===body.id);Object.assign(node,{name:body.name,enabled:body.enabled?1:0});}
       if(path==='/api/nodes'){if(!nodes.some(n=>n.id===body.id))nodes.push({id:body.id,name:body.name,enabled:1,online:false,last_seen:null,snapshot:null});res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify({id:body.id,notice:'Node created.'}));return;}

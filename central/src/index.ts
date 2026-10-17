@@ -1,5 +1,5 @@
 import {allowed, cookie, cookieValue, digest, hmacHex, publicIPv4, randomToken, readJson, roles, safeMetrics, validId, validScope, type Role} from './security';
-import {can, canSee, effectiveRole, legacyAccess, makeAccess, parseRole, publicAccess, type Access, type Permission, type RoleRow} from './access';
+import {can, canSee, effectiveRole, legacyAccess, makeAccess, parseRole, permissions as allPermissions, publicAccess, type Access, type Permission, type RoleRow} from './access';
 import {publicConsentRoute} from './policies';
 import {gameUrl, rewriteGameHtml} from './game-proxy';
 import {distribution} from './releases';
@@ -423,7 +423,7 @@ async function api(request: Request, env: Bindings, url: URL) {
   }
   if (url.pathname === '/api/nodes' && request.method === 'GET') {
     const {results} = await env.DB.prepare('SELECT id,name,enabled,last_seen,snapshot FROM nodes ORDER BY name').all<{id:string;name:string;enabled:number;last_seen:number|null;snapshot:string|null}>();
-    if(user.role==='operator')return reply({nodes:results.map(n=>({id:n.id,name:n.name,enabled:n.enabled,last_seen:n.last_seen,online:!!n.enabled&&n.last_seen!==null&&now()-n.last_seen<120,snapshot:{servers:((n.snapshot?JSON.parse(n.snapshot):null)?.servers||[]).filter((s:{instance_id:string})=>canSee(user.access,n.id,s.instance_id)).map((s:{instance_id:string;server_name:string;status:string})=>({instance_id:s.instance_id,server_name:s.server_name,status:s.status,...Object.fromEntries(Object.entries(s).filter(([key])=>['game_version','game_map','server_map','server_region','player_count','player_capacity','server_players','game_sampled_at'].includes(key)))}))}})).filter(n=>n.snapshot.servers.length>0)});
+    if(user.role==='operator')return reply({nodes:results.map(n=>({id:n.id,name:n.name,enabled:n.enabled,last_seen:n.last_seen,online:!!n.enabled&&n.last_seen!==null&&now()-n.last_seen<120,snapshot:{servers:((n.snapshot?JSON.parse(n.snapshot):null)?.servers||[]).filter((s:{instance_id:string})=>canSee(user.access,n.id,s.instance_id)).map((s:{instance_id:string;server_name:string;status:string})=>({instance_id:s.instance_id,server_name:s.server_name,status:s.status,permissions:allPermissions.filter(p=>can(user.access,p,n.id,s.instance_id)),...Object.fromEntries(Object.entries(s).filter(([key])=>['game_version','game_map','server_map','server_region','player_count','player_capacity','server_players','game_sampled_at'].includes(key)))}))}})).filter(n=>n.snapshot.servers.length>0)});
     return reply({nodes:results.map(n => ({...n,snapshot:n.snapshot ? JSON.parse(n.snapshot) : null,online:!!n.enabled && n.last_seen !== null && now()-n.last_seen < 120}))});
   }
   if (url.pathname === '/api/history' && request.method === 'GET') {
@@ -452,19 +452,20 @@ async function api(request: Request, env: Bindings, url: URL) {
   if (url.pathname === '/api/server-credentials' && request.method === 'GET') {
     const node = url.searchParams.get('node') || '', instance = url.searchParams.get('instance') || '';
     need(validId(node) && validScope(instance),422,'Invalid game server');
-    need(can(user.access,'servers.credentials',node,instance),403,'Your roles do not include the web panel login.');
+    const showWeb = can(user.access,'servers.credentials',node,instance), showConsole = can(user.access,'servers.console',node,instance);
+    need(showWeb || showConsole,403,'Your roles do not include the login for this game server.');
     need(await env.DB.prepare('SELECT id FROM nodes WHERE id=? AND enabled=1').bind(node).first(),404,'Node unavailable');
     const g = await gateway(env,node), headers = gatewayHeaders(g,user);
-    // The node only lets administrators read server details; permission was checked above and only the web login is passed on.
+    // The node only lets administrators read server details; permission was checked above and only the logins this member may see are passed on.
     headers.set('X-Central-Role','admin');
     const target = new URL(g.origin);
     target.search = new URLSearchParams({route:'api_central_manage',operation:'server',instance_id:instance}).toString();
     await audit(env,user.user_id,'viewer.credentials',node+'/'+instance);
     const result = await fetch(target,{headers,redirect:'manual',signal:AbortSignal.timeout(30000)});
     need(result.ok && result.headers.get('Content-Type')?.includes('application/json'),502,'The node did not return the login. Check that it is online.');
-    const data = await result.json().catch(()=>null) as {server?:{web_username?:unknown;web_password?:unknown}}|null;
+    const data = await result.json().catch(()=>null) as {server?:{web_username?:unknown;web_password?:unknown};secrets?:{secrets?:{vnc_password?:unknown}}}|null;
     need(data?.server,502,'The node did not return the login. Check that it is online.');
-    return reply({web_username:String(data.server.web_username ?? ''),web_password:String(data.server.web_password ?? '')});
+    return reply({...(showWeb?{web_username:String(data.server.web_username ?? ''),web_password:String(data.server.web_password ?? '')}:{}),...(showConsole?{vnc_password:String(data.secrets?.secrets?.vnc_password ?? '')}:{})});
   }
   if (url.pathname === '/api/nodes/apply-updates' && request.method === 'POST') {
     need(allowed(user.role,'admin'),403,'Administrator access required');

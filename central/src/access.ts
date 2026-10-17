@@ -8,7 +8,7 @@ export const permissionGroups = [
     {id: 'servers.logs', label: 'View logs', detail: 'Read the server’s recent log output.'},
     {id: 'servers.panel', label: 'Open the game web panel', detail: 'Open the in-game admin web panel.'},
     {id: 'servers.credentials', label: 'See the web panel login', detail: 'Show the web panel username and password.'},
-    {id: 'servers.console', label: 'Open the VNC console', detail: 'Remote desktop session for the server.'}
+    {id: 'servers.console', label: 'Open the VNC console', detail: 'Remote desktop session for the server, including its VNC password.'}
   ]}
 ] as const;
 export type Permission = typeof permissionGroups[number]['items'][number]['id'];

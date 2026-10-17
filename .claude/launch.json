@@ -6,6 +6,13 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["central/tests/preview.mjs"],
       "port": 8766
+    },
+    {
+      "name": "central-preview-team",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["central/tests/preview.mjs"],
+      "port": 8767,
+      "env": {"PREVIEW_ROLE": "operator", "PREVIEW_PORT": "8767"}
     }
   ]
 }

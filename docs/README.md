@@ -25,7 +25,7 @@ The main site serves copies of the first two guides at `/central-setup.txt` and 
 
 Sidebar, by role:
 
-- **Fleet**: Overview (`/`), Game Servers (`/servers`), Server Nodes (`/nodes`). Viewers and administrators. Staff see Game Servers only.
+- **Fleet**: Overview (`/`), Game Servers (`/servers`), Server Nodes (`/nodes`). Administrators see all three; everyone else sees Game Servers only, filtered to the servers their roles cover.
 - **Administration**: Users & permissions (`/users`, includes the audit log), Cloudflare (`/cloudflare`), Game status (`/game-status`). Administrators only.
 - **Setup & Update**: Node updates (`/setup`), Install a node (`/install`). Administrators only.
 
@@ -42,10 +42,10 @@ Game server page (`/servers/NODE/INSTANCE`) tabs: **Overview** (start, stop, res
 
 | Role | Can |
 | --- | --- |
-| Pending | Sign in and wait for approval. |
-| Viewer | Read everything under Fleet: nodes, servers, history, node software status, notifications. No actions. |
-| Staff (`operator`) | Game Servers list with status; start, stop and restart. Nothing else. |
-| Administrator | Everything above plus every management tab, files, credentials, Cloudflare, the game library, users, releases and updates. |
+| No role yet | Sign in and press Request access; nothing else until an administrator assigns a role. |
+| Viewer | See the status of the servers it covers. No actions. |
+| Game Server Team | On the servers it covers: status, start/stop/restart, backend reboot, logs, game web panel and its login. No ports, passwords, settings, files or nodes. Each of these is a switch on the role and can be changed. |
+| Admin | Everything, including every management tab, files, credentials, Cloudflare, the game library, members and roles, releases and updates. Custom roles can be created under Users & permissions → Roles. |
 
 ## Secrets the Worker needs
 

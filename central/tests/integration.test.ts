@@ -104,7 +104,7 @@ test('D1 heartbeat, CSRF, approval and one-use viewer tickets',async()=>{
     assert.equal((await mf.dispatchFetch(origin+'/api/nodes/apply-updates',{method:'POST',headers,body:JSON.stringify({node:'node-1'})})).status,403);
     await db.prepare('UPDATE nodes SET snapshot=? WHERE id=?').bind(JSON.stringify({samples:[{scope:'host',data:{cpu_percent:99}}],servers:[{instance_id:'game-1',server_name:'Test game',status:'running',secret:'private'}]}),'node-1').run();
     const staffData=await (await mf.dispatchFetch(origin+'/api/nodes',{headers})).json() as {nodes:{snapshot:unknown}[]};
-    assert.deepEqual(staffData.nodes[0].snapshot,{servers:[{instance_id:'game-1',server_name:'Test game',status:'running'}]});
+    assert.deepEqual(staffData.nodes[0].snapshot,{servers:[{instance_id:'game-1',server_name:'Test game',status:'running',permissions:['servers.view','servers.control']}]});
     assert.equal((await mf.dispatchFetch(origin+'/nodes/node-1',{headers,redirect:'manual'})).headers.get('Location'),origin+'/servers');
     assert.equal((await edit({id:'node-1',name:'Unauthorized',enabled:false})).status,403);
     await db.prepare("UPDATE users SET role='admin'").run();

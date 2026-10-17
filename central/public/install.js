@@ -38,7 +38,7 @@ function installGuide(){
     ['Network:','A fixed public IPv4 address, or a router that can port-forward to this host. One TCP and UDP game port per game server (10823 by default). Outbound HTTPS to this site and to Cloudflare must be open.'],
     ['Ubuntu:','A fresh Ubuntu Server 24.04 LTS install with a user that can run sudo and SSH key access. Do not reuse a host that already runs Docker workloads you do not control.'],
     ['Game licence:','A separate, non-Steam Farming Simulator 25 licence for every game server you will run on this node, plus keys for any DLC you want on those servers. The Steam edition cannot run as a dedicated server. GIANTS requires a second purchase for hosting; the Year 1 Bundle covers all content.'],
-    ['Site access:','An Administrator account here. Staff and viewers cannot create nodes or open consoles.']
+    ['Site access:','The Admin role here. Only Admins can create nodes; other roles can only reach the game servers they were given.']
   ]);
 
   const ubuntu=section('Step 1: Prepare Ubuntu');

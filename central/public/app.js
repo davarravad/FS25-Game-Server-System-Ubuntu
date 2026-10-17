@@ -11,6 +11,9 @@ const link=(text,href,className='button')=>{const e=element('a',text,className);
 const button=(text,action)=>{const e=element('button',text);e.type='button';e.onclick=action;return e;};
 const codeBox=(text,className)=>{const box=element('div',undefined,'code-box'),copy=element('button','Copy','code-copy');copy.type='button';copy.setAttribute('aria-label','Copy to clipboard');copy.onclick=async()=>{try{await navigator.clipboard.writeText(text);copy.textContent='Copied';}catch{copy.textContent='Copy failed';}clearTimeout(copy.timer);copy.timer=setTimeout(()=>{copy.textContent='Copy';},1500);};box.append(element('pre',text,className),copy);return box;};
 
+// What the signed-in member may do on one server: administrators everything, everyone else what their roles grant there.
+const serverCan=(server,permission)=>me.role==='admin'||!!server?.permissions?.includes(permission);
+
 const nodeUrl=node=>'/nodes/'+encodeURIComponent(node.id);
 
 const serverUrl=(node,server)=>'/servers/'+encodeURIComponent(node.id)+'/'+encodeURIComponent(server.instance_id);
@@ -340,8 +343,27 @@ function viewerSection(title,description,node,server,kind,openLabel,loadCredenti
     try{const data=await loadCredentials();credMessage.remove();const fieldsWrap=element('div',undefined,'edit-form');for(const key of fields)credentialField(fieldsWrap,key,data[key]);credentials.append(fieldsWrap);}
     catch(e){credMessage.textContent=e.message;loaded=false;}
   };
-  s.append(credentials);
+  if(fields.length)s.append(credentials);
   return s;
+}
+
+// What a member without administrator access sees for a server: only the sections their roles allow.
+function teamSections(node,server){
+  const loadLogin=()=>api('server-credentials?'+new URLSearchParams({node:node.id,instance:server.instance_id}));
+  if(serverCan(server,'servers.panel')){
+    viewerSection('Game admin','Opens this server’s web admin panel in a new tab.'+(serverCan(server,'servers.credentials')?' Sign in with the web username and password below.':''),node,server,'web','Open game admin panel',loadLogin,serverCan(server,'servers.credentials')?['web_username','web_password']:[]);
+  }
+  if(serverCan(server,'servers.console')){
+    viewerSection('VNC console','Opens a remote desktop session for this server’s console. When it connects, enter the VNC password below.',node,server,'vnc','Open VNC console',loadLogin,['vnc_password']);
+  }
+  if(serverCan(server,'servers.logs')){
+    const s=section('Server log'),output=element('pre',undefined,'log-output'),message=element('p',undefined,'muted'),actions=element('div',undefined,'actions');
+    output.tabIndex=0;output.setAttribute('role','region');output.setAttribute('aria-label','Server log');message.setAttribute('role','status');
+    const load=async()=>{refresh.disabled=true;message.textContent='Loading…';try{const result=await api('action',{node:node.id,instance_id:server.instance_id,action:'logs'});output.textContent=result.result?.stdout||'The log is empty.';output.scrollTop=output.scrollHeight;message.textContent='Updated '+new Date().toLocaleTimeString()+'.';}catch(e){message.textContent=e.message;}finally{refresh.disabled=!node.online;}};
+    const refresh=button('Refresh log',load);refresh.disabled=!node.online;actions.append(refresh);
+    s.append(element('p','The latest activity reported by this server’s launcher.'),actions,message,output);
+    if(node.online)void load();
+  }
 }
 
 async function historyPanel(node,scope,version){
@@ -368,7 +390,7 @@ async function details(r,version){
 
   if(!node||r.type==='server'&&!server){title('Not found','This node or server is no longer in the published inventory.','overview');$('page').append(link('Back to overview','/'));return;}
 
-  title(server?server.server_name:node.name,server?(me.role==='operator'?'Game server status and start, stop or restart controls.':'Game server details, resource history and management.'):'Node details, hosted game servers and resource history.',server?'servers':'access');
+  title(server?server.server_name:node.name,server?(me.role==='operator'?'Game server status and the controls your roles allow.':'Game server details, resource history and management.'):'Node details, hosted game servers and resource history.',server?'servers':'access');
 
   $('breadcrumbs').append(link(server?'Game Servers':'Server Nodes',server?'/servers':'/nodes','text-link'));if(server&&me.role!=='operator')$('breadcrumbs').append(element('span',' / '),link(node.name,nodeUrl(node),'text-link'));
 
@@ -404,7 +426,7 @@ async function details(r,version){
 
   const actions=element('div',undefined,'actions');
 
-  if(server){for(const action of ['start','stop','restart']){const control=button(action[0].toUpperCase()+action.slice(1),async()=>{if(action!=='start'&&!confirm(action+' '+server.server_name+'? Connected players may be interrupted.'))return;control.disabled=true;try{const result=await api('action',{node:node.id,instance_id:server.instance_id,action});$('message').textContent=result.ok?'Command accepted. Status updates on the next node heartbeat.':result.error||'Action failed';}catch(e){$('message').textContent=e.message;}finally{control.disabled=!node.online;}});control.disabled=!node.online;actions.append(control);}
+  if(server){for(const action of ['start','stop','restart','backend_reboot'].filter(a=>a==='backend_reboot'?me.role!=='admin'&&serverCan(server,'servers.backend'):serverCan(server,'servers.control'))){const label=action==='backend_reboot'?'Backend reboot':action[0].toUpperCase()+action.slice(1);const control=button(label,async()=>{if(action!=='start'&&!confirm(label.toLowerCase()+' '+server.server_name+'? Connected players may be interrupted.'))return;control.disabled=true;try{const result=await api('action',{node:node.id,instance_id:server.instance_id,action});$('message').textContent=result.ok?'Command accepted. Status updates on the next node heartbeat.':result.error||'Action failed';}catch(e){$('message').textContent=e.message;}finally{control.disabled=!node.online;}});control.disabled=!node.online;actions.append(control);}
 
   }else{if(me.role==='admin')actions.append(link('Create game server',managementUrl(node,null,'create')));if(me.role==='admin')actions.append(link('Node updates','#node-software'),link('Connection & access',managementUrl(node,null,'connection')));}
 
@@ -420,7 +442,7 @@ async function details(r,version){
   if(!server){const fleet=section('Game servers on this node'),grid=element('div',undefined,'grid');fleet.append(grid);nodeFleet=grid;for(const item of node.snapshot?.servers||[])grid.append(serverCard(node,item));if(!grid.children.length)empty(grid,'No game servers have been reported. Use Create game server to add one.');}
 
   refreshTelemetry();
-  if(me.role==='operator')return;
+  if(me.role==='operator'){if(server)teamSections(node,server);return;}
 
   if(!server)nodeSoftware(node);
 
