@@ -79,6 +79,18 @@ test('fleet readiness reports node connection, console bypass, release, hostname
     assert.equal(find(third.checks,'Container').state,'fail');assert.equal(find(third.checks,'Container').repair?.href,'/servers/node-1/game-3');
     const audit=await db.prepare("SELECT target FROM audit WHERE action='fleet.readiness'").first<{target:string}>();assert.ok(audit);
 
+    // A scoped request checks one game server only and tags every finding with the card it belongs to.
+    assert.equal((await mf.dispatchFetch(origin+'/api/readiness',{method:'POST',headers,body:JSON.stringify({instance:'game-1'})})).status,422,'A game server needs its node');
+    assert.equal((await mf.dispatchFetch(origin+'/api/readiness',{method:'POST',headers,body:JSON.stringify({node:'../x'})})).status,422);
+    const scoped=await (await mf.dispatchFetch(origin+'/api/readiness',{method:'POST',headers,body:JSON.stringify({node:'node-1',instance:'game-2'})})).json() as Report;
+    assert.deepEqual(scoped.nodes[0].servers.map(s=>s.instance_id),['game-2']);
+    const scopedVnc=find(scoped.nodes[0].servers[0].checks,'VNC console');
+    assert.deepEqual(scopedVnc,{name:'VNC console',group:'domains',state:'warn',detail:scopedVnc.detail,repair:{label:'Provision hostname now',api:'readiness/repair',body:{node:'node-1',action:'provision-hostname',instance:'game-2',kind:'vnc'}}});
+    assert.equal(find(scoped.nodes[0].servers[0].checks,'SFTP port').group,'ports');
+    assert.equal(find(scoped.nodes[0].checks,'Gateway reachable').group,'node');
+    assert.equal((find(first.checks,'VNC console') as Check&{host?:string}).host,'console-fs25-0001.sargentweb.com','Hostname checks name their address');
+    assert.equal((await (await mf.dispatchFetch(origin+'/api/readiness',{method:'POST',headers,body:JSON.stringify({node:'node-off'})})).json() as Report).nodes.length,0,'Disabled nodes stay out of a scoped check too');
+
     // Repairs: hostname provisioning runs the same path as a launch and reports Cloudflare's state; the bypass repair needs a connection record.
     const repair=(body:unknown)=>mf.dispatchFetch(origin+'/api/readiness/repair',{method:'POST',headers,body:JSON.stringify(body)});
     assert.equal((await repair({node:'node-1',action:'bogus'})).status,422);

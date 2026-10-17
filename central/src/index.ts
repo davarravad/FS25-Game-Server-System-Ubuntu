@@ -417,8 +417,12 @@ async function api(request: Request, env: Bindings, url: URL) {
   }
   if (url.pathname === '/api/readiness' && request.method === 'POST') {
     need(user.role==='admin',403,'Administrator access required');
-    const report=await fleetReadiness(env,user.user_id);
-    await audit(env,user.user_id,'fleet.readiness',report.nodes.length+' node(s)');
+    // An empty body checks the whole fleet; naming a node (and optionally one of its game servers) checks just that.
+    const scope=await readJson(request,4096).catch(()=>({} as Record<string,unknown>));
+    need(scope.node===undefined||validId(scope.node),422,'Invalid node');
+    need(scope.instance===undefined||scope.node!==undefined&&validScope(scope.instance),422,'Invalid game server');
+    const report=await fleetReadiness(env,user.user_id,{node:scope.node as string|undefined,instance:scope.instance as string|undefined});
+    await audit(env,user.user_id,'fleet.readiness',scope.node?scope.node+(scope.instance?'/'+scope.instance:''):report.nodes.length+' node(s)');
     return reply(report);
   }
   if (url.pathname === '/api/readiness/repair' && request.method === 'POST') {

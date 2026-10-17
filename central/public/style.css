@@ -310,3 +310,39 @@ button.danger{border-color:#6b3535;background:#3d2323;color:#f3a3a3}button.dange
 .startup-steps{list-style:none;margin:16px 0 8px;padding:0;display:grid;gap:8px}.startup-step{display:grid;grid-template-columns:22px 1fr;gap:2px 10px;align-items:start;color:#8da1ba}.startup-step::before{content:'';width:12px;height:12px;margin:5px 0 0 4px;border-radius:50%;border:2px solid #3b4d66;grid-row:1}.startup-step-name{grid-column:2}.startup-step-detail{grid-column:2;font-size:13px;line-height:1.5}
 .startup-step[data-state=done]{color:#c5f3e3}.startup-step[data-state=done]::before{background:#47d8b0;border-color:#47d8b0}.startup-step[data-state=active]{color:#e8eef7;font-weight:650}.startup-step[data-state=active]::before{border-color:#47d8b0;border-top-color:transparent;animation:spinner-turn .8s linear infinite}.startup-step[data-state=error]{color:#ffd3cf;font-weight:650}.startup-step[data-state=error]::before{background:#e88179;border-color:#e88179}
 @media(prefers-reduced-motion:reduce){.startup-step[data-state=active]::before{animation-duration:2.4s}}
+
+/* Server status board: one health card per concern, each finding with its repair beside it */
+.ss-board{--ss-good:#47d8b0;--ss-warn:#e7b65e;--ss-bad:#ed7777;--ss-idle:#6f819a}
+.ss-hero{--ss-accent:var(--ss-idle);display:flex;align-items:center;gap:22px;flex-wrap:wrap;padding:20px 22px;border:1px solid #26374b;border-radius:14px;background:linear-gradient(120deg,#142132,#0f1824)}
+.ss-hero[data-state=ok]{--ss-accent:var(--ss-good);border-color:#245541;background:linear-gradient(120deg,#12302b,#0f1824)}
+.ss-hero[data-state=attention]{--ss-accent:var(--ss-warn);border-color:#625031;background:linear-gradient(120deg,#2e2a1d,#0f1824)}
+.ss-hero[data-state=problem]{--ss-accent:var(--ss-bad);border-color:#6b3535;background:linear-gradient(120deg,#33201f,#0f1824)}
+.ss-ring{--pct:0;flex:none;display:grid;place-items:center;width:84px;height:84px;border-radius:50%;background:radial-gradient(closest-side,#101925 74%,transparent 76%),conic-gradient(var(--ss-accent) calc(var(--pct)*1%),#26374b 0);box-shadow:0 0 22px color-mix(in srgb,var(--ss-accent) 25%,transparent);transition:background .6s ease}
+.ss-ring strong{font-size:17px;font-variant-numeric:tabular-nums}
+.ss-hero[data-state=checking] .ss-ring{animation:ss-pulse 1.6s ease-in-out infinite}
+.ss-headline{flex:1;min-width:220px}
+.ss-headline h3{margin:0 0 4px;font-size:22px;color:var(--ss-accent)}.ss-headline p{margin:0}
+.ss-tools{display:flex;gap:10px;flex-wrap:wrap}.ss-tools button[hidden]{display:none}
+.ss-note{margin:12px 0 0}.ss-note:empty{display:none}
+.ss-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:var(--page-gap,24px);margin-top:var(--control-gap,16px)}
+.ss-card{--ss-accent:var(--ss-good);min-width:0;border:1px solid #26374b;border-top:3px solid var(--ss-accent);border-radius:14px;background:#0f1722;padding:18px 18px 8px}
+.ss-card[data-state=warn]{--ss-accent:var(--ss-warn)}.ss-card[data-state=fail]{--ss-accent:var(--ss-bad)}
+.ss-card-head{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+.ss-card-head h3{margin:0;font-size:16px}.ss-card-head p{margin:2px 0 0;font-size:12px;line-height:1.4}
+.ss-card-head>div{flex:1;min-width:0}
+.ss-card-icon{flex:none;display:grid;place-items:center;width:38px;height:38px;border-radius:10px;color:var(--ss-accent);background:color-mix(in srgb,var(--ss-accent) 14%,#0f1722)}
+.ss-card-icon svg{width:20px;height:20px}
+.ss-pill{flex:none;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:650;color:var(--ss-accent);background:color-mix(in srgb,var(--ss-accent) 14%,#0f1722);border:1px solid color-mix(in srgb,var(--ss-accent) 40%,transparent)}
+.ss-rows{list-style:none;margin:0;padding:0}
+.ss-row{--ss-accent:var(--ss-good);display:grid;grid-template-columns:14px minmax(0,1fr) auto;gap:2px 12px;align-items:start;padding:12px 0;border-top:1px solid #1d2c3e}
+.ss-row[data-state=warn]{--ss-accent:var(--ss-warn)}.ss-row[data-state=fail]{--ss-accent:var(--ss-bad)}
+.ss-dot{width:10px;height:10px;margin-top:6px;border-radius:50%;background:var(--ss-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--ss-accent) 22%,transparent)}
+.ss-row[data-state=fail] .ss-dot{animation:ss-pulse 1.8s ease-in-out infinite}
+.ss-main strong{font-size:14px}.ss-detail{margin:3px 0 0;font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+.ss-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.ss-host{display:inline-block;max-width:100%;margin-top:7px;padding:3px 9px;border-radius:7px;font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#9fe9d2;background:#10231f;border-color:#24473d;overflow-wrap:anywhere;text-align:left}
+.ss-host:hover{background:#163029}
+.ss-row .readiness-repair{align-self:center;white-space:nowrap;font-size:13px;padding:7px 12px}
+@keyframes ss-pulse{50%{opacity:.55}}
+@media(max-width:600px){.ss-row{grid-template-columns:14px minmax(0,1fr)}.ss-row .readiness-repair{grid-column:2;justify-self:start;margin-top:6px}.ss-tools{width:100%}}
+@media(prefers-reduced-motion:reduce){.ss-ring,.ss-row[data-state=fail] .ss-dot{animation:none;transition:none}}

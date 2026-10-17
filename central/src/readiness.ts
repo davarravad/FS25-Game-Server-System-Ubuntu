@@ -8,7 +8,8 @@ import {consoleProbePath,hostnameResolves} from './cloudflare';
 // fixes it, either an API call the page can make or a link to where it is done.
 type Env={DB:D1Database;NODE_TOKEN_KEY:string;NODE_GATEWAYS?:string;BOOTSTRAP_ADMIN_ID:string};
 export type Repair={label:string;api?:string;body?:Record<string,unknown>;href?:string;confirm?:string};
-export type Check={name:string;state:'pass'|'warn'|'fail';detail:string;repair?:Repair};
+export type Group='containers'|'domains'|'ports'|'node';
+export type Check={name:string;group?:Group;state:'pass'|'warn'|'fail';detail:string;host?:string;repair?:Repair};
 export type ServerReport={instance_id:string;server_name:string;checks:Check[]};
 export type NodeReport={id:string;name:string;online:boolean;checks:Check[];servers:ServerReport[]};
 type ContainerState={exists:boolean;running:boolean;status:string;management_network:boolean;admin_ports_loopback:boolean;exposed_admin_ports:string[]};
@@ -19,16 +20,19 @@ type NodeServers={ok:boolean;servers:{instance_id:string;server_name:string;is_e
 type Endpoint={host:string;node_id:string;instance:string;kind:string;ready:number};
 
 const PORT_CHECK_LABELS:Record<string,string>={game:'Game port',web:'Web admin port',tls:'TLS port',sftp:'SFTP port'};
-const check=(name:string,state:Check['state'],detail:string,repair?:Repair):Check=>repair&&state!=='pass'?{name,state,detail,repair}:{name,state,detail};
+// Which card of a game server's status board a finding belongs to; the board groups by this, so a new check only has to be named here.
+const GROUPS:Record<string,Group>={'Container':'containers','SFTP container':'containers','Management network':'containers','VNC console':'domains','Game admin':'domains','Admin ports':'ports','Game port':'ports','Web admin port':'ports','TLS port':'ports','SFTP port':'ports'};
+const check=(name:string,state:Check['state'],detail:string,repair?:Repair,host?:string):Check=>({name,group:GROUPS[name]||'node',state,detail,...(host?{host}:{}),...(repair&&state!=='pass'?{repair}:{})});
 const compareVersions=(a:string,b:string)=>{const x=a.replace(/^v/,'').split('.').map(Number),y=b.replace(/^v/,'').split('.').map(Number);return (x[0]-y[0])||(x[1]-y[1])||(x[2]-y[2]);};
 async function probe(url:string,init:RequestInit,ms:number):Promise<Response|null>{
   try{return await fetch(url,{...init,redirect:'manual',signal:AbortSignal.timeout(ms)});}catch{return null;}
 }
 
-export async function fleetReadiness(env:Env,actor:string):Promise<{generated:number;nodes:NodeReport[]}>{
+// With a scope the same check runs for one node, or one game server on it, so a server's own page can show its status quickly.
+export async function fleetReadiness(env:Env,actor:string,scope:{node?:string;instance?:string}={}):Promise<{generated:number;nodes:NodeReport[]}>{
   const now=Math.floor(Date.now()/1000);
   const latest=(await env.DB.prepare('SELECT version FROM releases WHERE enabled=1').all<{version:string}>()).results.map(r=>r.version).sort(compareVersions).pop()||null;
-  const nodes=(await env.DB.prepare('SELECT id,name,last_seen,snapshot,installed_version FROM nodes WHERE enabled=1 ORDER BY name LIMIT 50').all<{id:string;name:string;last_seen:number|null;snapshot:string|null;installed_version:string|null}>()).results;
+  const nodes=(await env.DB.prepare('SELECT id,name,last_seen,snapshot,installed_version FROM nodes WHERE enabled=1 AND (?1 IS NULL OR id=?1) ORDER BY name LIMIT 50').bind(scope.node??null).all<{id:string;name:string;last_seen:number|null;snapshot:string|null;installed_version:string|null}>()).results;
   const endpoints=(await env.DB.prepare('SELECT host,node_id,instance,kind,ready FROM game_endpoints').all<Endpoint>()).results;
   // Nodes are checked concurrently; each node's probes stay sequential so one slow node cannot
   // multiply its own subrequests.
@@ -81,6 +85,7 @@ export async function fleetReadiness(env:Env,actor:string):Promise<{generated:nu
     const snapshot=(node.snapshot?(JSON.parse(node.snapshot) as {servers?:{instance_id:string;server_name:string}[]}).servers||[]:[]);
     const listed=nodeServers?nodeServers.servers:snapshot.map(s=>({instance_id:s.instance_id,server_name:s.server_name,is_enabled:true,container:null as Container|null}));
     for(const server of listed){
+      if(scope.instance&&server.instance_id!==scope.instance)continue;
       const sc:Check[]=[];
       const recreate:Repair={label:'Recreate server container',api:'nodes/apply-updates',body:{node:node.id,instance_id:server.instance_id},confirm:'Recreate the container for '+server.server_name+'? The game server restarts and its players are disconnected.'};
       if(nodeServers){
@@ -115,8 +120,8 @@ export async function fleetReadiness(env:Env,actor:string):Promise<{generated:nu
         const endpoint=endpoints.find(e=>e.node_id===node.id&&e.instance===server.instance_id&&e.kind===kind);
         const provision=(text:string):Repair=>({label:text,api:'readiness/repair',body:{node:node.id,action:'provision-hostname',instance:server.instance_id,kind}});
         if(!endpoint)return check(label,'warn','Hostname not created yet; it is provisioned automatically within a few minutes of the server appearing, or now with the button.',provision('Provision hostname now'));
-        if(!endpoint.ready)return check(label,'warn',endpoint.host+' is waiting for Cloudflare DNS.',provision('Re-check DNS'));
-        return await hostnameResolves(endpoint.host)?check(label,'pass',endpoint.host+' resolves over IPv4 and IPv6.'):check(label,'fail',endpoint.host+' does not resolve on both IPv4 and IPv6 yet. Cloudflare publishes custom-domain DNS on a lag; re-check in a few minutes.',provision('Re-check DNS'));
+        if(!endpoint.ready)return check(label,'warn',endpoint.host+' is waiting for Cloudflare DNS.',provision('Re-check DNS'),endpoint.host);
+        return await hostnameResolves(endpoint.host)?check(label,'pass',endpoint.host+' resolves over IPv4 and IPv6.',undefined,endpoint.host):check(label,'fail',endpoint.host+' does not resolve on both IPv4 and IPv6 yet. Cloudflare publishes custom-domain DNS on a lag; re-check in a few minutes.',provision('Re-check DNS'),endpoint.host);
       })));
       servers.push({instance_id:server.instance_id,server_name:server.server_name,checks:sc});
     }
