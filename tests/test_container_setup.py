@@ -86,5 +86,25 @@ class AdminSftpReportTests(unittest.TestCase):
         self.assertEqual(module.admin_sftp_report(self.summary(), 'garbage', None)['state'], 'not-answering')
 
 
+class AdminSftpAccessTests(unittest.TestCase):
+    def test_set_env_value_replaces_or_appends(self):
+        self.assertEqual(module.set_env_value('A=1\nADMIN_SFTP_BIND_ADDRESS=127.0.0.1\nB=2\n', 'ADMIN_SFTP_BIND_ADDRESS', '0.0.0.0'), 'A=1\nADMIN_SFTP_BIND_ADDRESS=0.0.0.0\nB=2\n')
+        self.assertEqual(module.set_env_value('A=1', 'ADMIN_SFTP_BIND_ADDRESS', '127.0.0.1'), 'A=1\nADMIN_SFTP_BIND_ADDRESS=127.0.0.1\n')
+        self.assertEqual(module.set_env_value('# ADMIN_SFTP_BIND_ADDRESS=x\nA=1\n', 'ADMIN_SFTP_BIND_ADDRESS', '0.0.0.0'), '# ADMIN_SFTP_BIND_ADDRESS=x\nA=1\nADMIN_SFTP_BIND_ADDRESS=0.0.0.0\n')
+
+    def test_compose_target_only_accepts_projects_under_opt(self):
+        good = {'com.docker.compose.project': 'farmservers', 'com.docker.compose.project.working_dir': '/opt/farmservers/node', 'com.docker.compose.project.config_files': '/opt/farmservers/node/docker-compose.yml'}
+        self.assertEqual(module.compose_target(good), {'project': 'farmservers', 'workdir': '/opt/farmservers/node', 'config': '/opt/farmservers/node/docker-compose.yml'})
+        self.assertIsNone(module.compose_target({**good, 'com.docker.compose.project.working_dir': '/etc'}))
+        self.assertIsNone(module.compose_target({**good, 'com.docker.compose.project.working_dir': '/opt/../etc'}))
+        self.assertIsNone(module.compose_target({**good, 'com.docker.compose.project.config_files': '/tmp/evil.yml'}))
+        self.assertIsNone(module.compose_target({**good, 'com.docker.compose.project': 'Bad Name'}))
+        self.assertIsNone(module.compose_target({}))
+
+    def test_report_names_the_access_mode(self):
+        summary = {'exists': True, 'name': 'x', 'running': True, 'status': 'running', 'ports': {'22/tcp': [{'host_ip': '0.0.0.0', 'host_port': '22220'}]}}
+        self.assertEqual(module.admin_sftp_report(summary, 'SSH-2.0', None)['access_mode'], 'public')
+
+
 if __name__ == '__main__':
     unittest.main()

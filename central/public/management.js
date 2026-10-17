@@ -226,9 +226,9 @@ async function nodeNotesPanel(node){
 // It is published on loopback by default, so a client needs an SSH tunnel; this panel says which.
 function adminSftpPanel(parent,node,credentials){
   const pill=(text,tone)=>element('span',text,'badge '+tone);
-  const box=element('div',undefined,'sftp-status'),head=element('div',undefined,'sftp-status-head'),pills=element('div',undefined,'log-status-pills'),body=element('div'),checked=element('p',undefined,'muted'),creds=element('div');
+  const accessNote=element('p',undefined,'muted'),box=element('div',undefined,'sftp-status'),head=element('div',undefined,'sftp-status-head'),pills=element('div',undefined,'log-status-pills'),body=element('div'),checked=element('p',undefined,'muted'),creds=element('div');
   head.append(element('h3','Admin SFTP server'),pills);
-  let busy=false,shownHost;
+  let busy=false,shownHost,lastSignature='';
   const showCredentials=host=>{if(shownHost===host)return;shownHost=host;creds.replaceChildren();if(credentials)managementSecrets(creds,{...Object.fromEntries(Object.entries(credentials).filter(([key])=>key.startsWith('admin_sftp_'))),admin_sftp_host:host});};
   const compose=action=>"sudo sh -c 'cd /opt/farmservers/node && docker compose "+action+"'";
   const tunnel=(port,address)=>{
@@ -236,6 +236,18 @@ function adminSftpPanel(parent,node,credentials){
     wrap.append(element('p','The admin SFTP port is published on this node’s loopback address only, so it is not reachable from the internet. That is intentional: it can read and write every server’s files. To connect from your computer, open an SSH tunnel first and leave it running:'),codeBox('ssh -N -L '+port+':127.0.0.1:'+port+' YOUR-SSH-USER@'+(address||'NODE-ADDRESS')),element('p','Then point your SFTP client (FileZilla, WinSCP) at the tunnel instead of the node’s public address:'));
     const list=element('ul','',''); for(const line of ['Protocol: SFTP','Host: 127.0.0.1','Port: '+port,'Username and password: shown under Connection credentials below'])list.append(element('li',line));
     wrap.append(list);return wrap;
+  };
+  const accessControl=report=>{
+    const wrap=element('div',undefined,'sftp-access'),toPublic=report.loopback_only;
+    const change=button(toPublic?'Allow direct connections':'Restrict to SSH tunnel only',async()=>{
+      if(!confirm(toPublic?'Allow connections to this node’s admin SFTP from the internet?\n\nIt still needs the username and password, but this service can read and write every game server’s files. Active SFTP sessions disconnect while it restarts.':'Restrict the admin SFTP to this node only?\n\nDirect connections will stop working and you will need an SSH tunnel. Active SFTP sessions disconnect while it restarts.'))return;
+      change.disabled=true;accessNote.textContent='Applying. The SFTP container is restarting…';
+      try{await manageApi(node,'sftp-access',null,{mode:toPublic?'public':'tunnel'});accessNote.textContent=toPublic?'Direct connections are allowed.':'Restricted to the SSH tunnel.';lastSignature='';await refresh(true);}
+      catch(e){accessNote.textContent=e.message;}
+      finally{change.disabled=false;}
+    });
+    wrap.append(element('p',toPublic?'Prefer connecting straight to the node’s address? You can allow direct connections.':'Direct connections are on. Turn them off to require an SSH tunnel again.','muted'),change);
+    return wrap;
   };
   const render=report=>{
     pills.replaceChildren();body.replaceChildren();
@@ -251,9 +263,10 @@ function adminSftpPanel(parent,node,credentials){
     }else if(report.loopback_only){
       body.append(element('p','Running and answering. Connect through an SSH tunnel.','status'),tunnel(port,report.access_host));
     }else{
-      body.append(element('p','Running and answering. It is published on all addresses, so you can connect directly: host '+(report.access_host||'the node address')+', port '+port+'.','status'));
+      body.append(element('p','Running and answering. Connect directly: protocol SFTP, host '+(report.access_host||'the node address')+', port '+port+', with the username and password below. Anyone who can reach the node can try to sign in, so keep that password private.','status'));
       if(report.firewall_open===false)body.append(element('p','The host firewall does not allow port '+port+'. Open it on the node:','notice'),codeBox('sudo ufw allow '+port+'/tcp'));
     }
+    if(report.exists&&report.bindings?.length)body.append(accessControl(report));
     showCredentials(report.loopback_only?'127.0.0.1':(report.access_host||(credentials||{}).admin_sftp_host||''));
   };
   const fallback=message=>{
@@ -262,11 +275,11 @@ function adminSftpPanel(parent,node,credentials){
   };
   const refresh=async manual=>{
     if(busy||!box.isConnected||document.hidden&&!manual)return;busy=true;check.disabled=true;
-    try{render(await manageApi(node,'sftp-status'));checked.textContent='Checked '+new Date().toLocaleTimeString()+'. Updates automatically every 10 seconds.';}
-    catch(e){fallback(/latest software|Unknown management/i.test(e.message)?'This node’s software is too old to report SFTP status. Update it from Node updates to see live status.':e.message);checked.textContent='Checked '+new Date().toLocaleTimeString()+'.';}
+    try{const report=await manageApi(node,'sftp-status'),signature=JSON.stringify(report);if(signature!==lastSignature){lastSignature=signature;render(report);}checked.textContent='Checked '+new Date().toLocaleTimeString()+'. Updates automatically every 10 seconds.';}
+    catch(e){const text=/latest software|Unknown management/i.test(e.message)?'This node’s software is too old to report SFTP status. Update it from Node updates to see live status.':e.message;if('error:'+text!==lastSignature){lastSignature='error:'+text;fallback(text);}checked.textContent='Checked '+new Date().toLocaleTimeString()+'.';}
     finally{busy=false;check.disabled=false;}
   };
   const check=button('Check again',()=>void refresh(true));
-  box.append(head,body,checked,check,creds);parent.append(box);
+  box.append(head,body,accessNote,checked,check,creds);parent.append(box);
   void refresh(true);const timer=setInterval(()=>{if(!box.isConnected){clearInterval(timer);return;}void refresh(false);},10000);
 }

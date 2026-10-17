@@ -13,7 +13,7 @@ const operations:Record<string,{method:string;admin:boolean}>=Object.fromEntries
   ...['inventory','live'].map(name=>[name,{method:'GET',admin:false}]),
   ...['server','files','export','sftp-status'].map(name=>[name,{method:'GET',admin:true}]),
   ['command',{method:'POST',admin:false}],
-  ...['create','save','host-save','prepare','unzip','reinstall','delete','upload'].map(name=>[name,{method:'POST',admin:true}])
+  ...['create','save','host-save','prepare','unzip','reinstall','delete','upload','sftp-access'].map(name=>[name,{method:'POST',admin:true}])
 ]);
 const response=(error:string,status:number)=>Response.json({error},{status,headers:{'Cache-Control':'no-store'}});
 export async function management(request:Request,user:{user_id:string;role:string},resolveGateway:(node:string)=>Promise<Gateway>,audit:(action:string,target:string)=>Promise<void>,getPublicIp:(node:string)=>Promise<string|null>){

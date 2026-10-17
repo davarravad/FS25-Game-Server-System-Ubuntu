@@ -151,7 +151,9 @@ services:
     logging: *json-log-rotation
     command: "${ADMIN_SFTP_USERNAME}:${ADMIN_SFTP_PASSWORD}:1000:1000:panel"
     ports:
-      - "${PANEL_BIND_ADDRESS:-0.0.0.0}:${ADMIN_SFTP_PORT}:22"
+      # Defaults to the panel bind address (loopback on site-installed nodes). Export & access on the
+      # main site switches it with ADMIN_SFTP_BIND_ADDRESS=0.0.0.0 for direct connections.
+      - "${ADMIN_SFTP_BIND_ADDRESS:-${PANEL_BIND_ADDRESS:-0.0.0.0}}:${ADMIN_SFTP_PORT}:22"
     volumes:
       - /opt:/home/${ADMIN_SFTP_USERNAME}/panel/opt
       - ${INSTANCE_BASE_PATH}:/home/${ADMIN_SFTP_USERNAME}/panel/instances

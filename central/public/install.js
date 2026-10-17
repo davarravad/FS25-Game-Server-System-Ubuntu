@@ -27,7 +27,7 @@ function installGuide(){
     ['Tunnel connector','`/etc/farmservers/tunnel-compose.json`','cloudflared runs in the farmservers-connection Compose project.'],
     ['Telemetry history','`/opt/fsg-panel/instances/.telemetry.sqlite3`','30 days of local samples.'],
     ['Panel port','`127.0.0.1:8080`','Loopback only; reached through the tunnel or an SSH port forward.'],
-    ['Admin SFTP','`127.0.0.1:22220`','Loopback only; user paneladmin, password in .env.']
+    ['Admin SFTP','`127.0.0.1:22220`','Loopback only until you allow direct connections on the node’s Export & access tab; user paneladmin, password in .env.']
   ]);
 
   const before=section('Before you begin');

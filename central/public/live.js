@@ -18,8 +18,10 @@ async function refreshLive(){
     const banner=$('collaboration-status');banner.replaceChildren();
     if(data.editors.length)banner.append(element('p',data.editors.map(e=>e.name).join(', ')+' is editing this item. Coordinate before saving to avoid overwriting each other.'));
     if(route().type==='game-status')liveChanged=false;
+    // Read-only tabs keep themselves current (or never change), so there is nothing to load and no banner to show.
+    if(['node','server'].includes(route().type)&&['export','help'].includes(new URLSearchParams(location.search).get('tab')))liveChanged=false;
     if(liveChanged&&!$('fleet-switcher')?.open){
-      const settingsPage=['node','server'].includes(route().type)&&['settings','create','logs','connection'].includes(new URLSearchParams(location.search).get('tab'));
+      const tabName=new URLSearchParams(location.search).get('tab'),settingsPage=['node','server'].includes(route().type)&&!!tabName&&tabName!=='overview';
       // The Node updates, Cloudflare and System Status pages refresh their own data every few seconds; the
       // System Status page also holds readiness results and repair controls the administrator is
       // reading (running a check or a repair itself causes a revision bump). Never rebuild either

@@ -7,6 +7,7 @@ public by design. This module reduces `docker inspect` output to the facts the r
 needs.
 """
 import json
+import re
 from typing import Callable, Optional
 
 MANAGEMENT_NETWORK = "fsg-management"
@@ -28,6 +29,36 @@ def port_bindings(bindings: dict) -> dict[str, list[dict[str, str]]]:
             for target in (targets or [])
         ]
     return result
+
+
+def set_env_value(text: str, key: str, value: str) -> str:
+    """Return .env text with `key` set to `value`: replaces every existing assignment, or appends one."""
+    lines = text.splitlines()
+    pattern = re.compile(r"^\s*" + re.escape(key) + r"\s*=")
+    found = False
+    for index, line in enumerate(lines):
+        if pattern.match(line):
+            lines[index] = f"{key}={value}"
+            found = True
+    if not found:
+        lines.append(f"{key}={value}")
+    return "\n".join(lines) + "\n"
+
+
+def compose_target(labels: dict, allowed_root: str = "/opt") -> Optional[dict]:
+    """Where a running container's Compose project lives, from the labels Docker put on it.
+    Refuses anything outside `allowed_root` so a label can never point the agent at another path."""
+    labels = labels or {}
+    project = str(labels.get("com.docker.compose.project") or "")
+    workdir = str(labels.get("com.docker.compose.project.working_dir") or "")
+    config = str(labels.get("com.docker.compose.project.config_files") or "").split(",")[0].strip()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,62}", project):
+        return None
+    if not workdir.startswith(allowed_root + "/") or ".." in workdir.split("/"):
+        return None
+    if config and (not config.startswith(workdir + "/") or ".." in config.split("/")):
+        return None
+    return {"project": project, "workdir": workdir, "config": config or workdir + "/docker-compose.yml"}
 
 
 def admin_sftp_report(summary: dict, banner: str, firewall_allowed: Optional[set]) -> dict:
@@ -58,6 +89,7 @@ def admin_sftp_report(summary: dict, banner: str, firewall_allowed: Optional[set
         "port": port,
         "bindings": published,
         "loopback_only": loopback_only,
+        "access_mode": "tunnel" if loopback_only else "public",
         "firewall_managed": firewall_allowed is not None,
         "firewall_open": None if firewall_allowed is None or port is None else (port, "tcp") in firewall_allowed,
     }

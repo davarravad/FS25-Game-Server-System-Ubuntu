@@ -14,7 +14,7 @@ import time
 from contextlib import suppress
 from pathlib import Path
 from game_details import collect as collect_game_details
-from container_setup import inspect_setup, admin_sftp_report
+from container_setup import inspect_setup, admin_sftp_report, compose_target, set_env_value
 
 from flask import Flask, jsonify, request, g
 
@@ -1435,18 +1435,73 @@ def health():
 ADMIN_SFTP_CONTAINER = "fsg-panel-admin-sftp"
 
 
-@app.post("/admin-sftp/status")
-def admin_sftp_status():
-    # Read-only: is the node's admin SFTP container up, does sshd answer inside it, which host
-    # address it is published on (loopback-only means a client needs an SSH tunnel), and whether
-    # the host firewall allows its port.
+def current_admin_sftp_report() -> dict:
     summary = inspect_setup(run_command, ADMIN_SFTP_CONTAINER)
     banner = ""
     if summary.get("running"):
         probe = run_command(["docker", "exec", ADMIN_SFTP_CONTAINER, "sh", "-c", "nc -w 2 127.0.0.1 22 </dev/null | head -c 80"], timeout=10)
         banner = (probe.get("stdout") or "").strip()
     firewall = read_host_firewall_state()
-    return jsonify(admin_sftp_report(summary, banner, None if firewall is None else firewall["allowed"]))
+    return admin_sftp_report(summary, banner, None if firewall is None else firewall["allowed"])
+
+
+@app.post("/admin-sftp/status")
+def admin_sftp_status():
+    # Read-only: is the node's admin SFTP container up, does sshd answer inside it, which host
+    # address it is published on (loopback-only means a client needs an SSH tunnel), and whether
+    # the host firewall allows its port.
+    return jsonify(current_admin_sftp_report())
+
+
+def sync_admin_sftp_firewall(port: int, open_port: bool) -> dict:
+    """Keep UFW consistent with the chosen access mode. Docker publishes the port itself, so this
+    only matters on hosts whose firewall policy is managed through UFW."""
+    if HOST_FIREWALL_MODE in {"", "off", "disabled", "false", "0"}:
+        return {"status": "disabled"}
+    if run_host_namespace_shell("command -v ufw >/dev/null 2>&1")["code"] != 0:
+        return {"status": "unmanaged"}
+    status_line = (run_host_namespace_shell("ufw status | sed -n '1p'").get("stdout") or "").lower()
+    if "inactive" in status_line:
+        return {"status": "inactive"}
+    if open_port:
+        result = run_host_namespace_shell(f"ufw allow {port}/tcp comment {shlex.quote('fsg-admin-sftp')}")
+        return {"status": "ok" if result["code"] == 0 else "error", "action": f"opened {port}/tcp"}
+    result = run_host_namespace_shell(f"ufw --force delete allow {port}/tcp")
+    output = ((result.get("stdout") or "") + (result.get("stderr") or "")).lower()
+    return {"status": "ok" if result["code"] == 0 or "non-existent" in output else "error", "action": f"closed {port}/tcp"}
+
+
+@app.post("/admin-sftp/access")
+def admin_sftp_access():
+    # Switch the admin SFTP between "tunnel" (published on loopback only) and "public" (published
+    # on every address). The choice is stored as ADMIN_SFTP_BIND_ADDRESS in the node's .env and the
+    # container is recreated so Docker applies it.
+    payload = request.get_json(silent=True) or {}
+    mode = payload.get("mode")
+    if mode not in {"public", "tunnel"}:
+        return jsonify({"ok": False, "error": "Choose public or tunnel access."}), 400
+    inspected = run_command(["docker", "inspect", ADMIN_SFTP_CONTAINER, "--format", "{{json .Config.Labels}}"], timeout=10)
+    try:
+        labels = json.loads((inspected.get("stdout") or "").strip() or "null") or {}
+    except json.JSONDecodeError:
+        labels = {}
+    target = compose_target(labels) if inspected.get("code") == 0 else None
+    env_path = Path(target["workdir"]) / ".env" if target else None
+    if not target or not env_path.is_file():
+        return jsonify({"ok": False, "error": "This node's Compose project could not be found, so the setting cannot be changed from the site. Edit ADMIN_SFTP_BIND_ADDRESS in the node's .env and run docker compose up -d admin-sftp."}), 409
+    try:
+        env_path.write_text(set_env_value(env_path.read_text(encoding="utf-8"), "ADMIN_SFTP_BIND_ADDRESS", "0.0.0.0" if mode == "public" else "127.0.0.1"), encoding="utf-8")
+    except OSError as error:
+        return jsonify({"ok": False, "error": f"The node's .env could not be updated: {error}"}), 500
+    up = run_command([
+        "docker", "compose", "-p", target["project"], "--project-directory", target["workdir"], "-f", target["config"],
+        "up", "-d", "--no-deps", "--force-recreate", "admin-sftp",
+    ], cwd=target["workdir"], timeout=180)
+    if up.get("code") != 0:
+        return jsonify({"ok": False, "error": "Docker could not recreate the admin SFTP container.", "detail": ((up.get("stderr") or up.get("stdout") or "")[-400:])}), 500
+    port = parse_port_number(read_env_file(env_path).get("ADMIN_SFTP_PORT")) or 22220
+    firewall = sync_admin_sftp_firewall(port, mode == "public")
+    return jsonify({**current_admin_sftp_report(), "changed": mode, "firewall": firewall})
 
 
 @app.get("/sftp-guard/status")

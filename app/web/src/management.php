@@ -93,7 +93,7 @@ function central_management(): string
     management_require($user !== null, 'Unauthorized', 401);
     $operation = (string) ($_GET['operation'] ?? '');
     $reads = ['inventory','server','live','files','export','sftp-status'];
-    $writes = ['create','save','host-save','prepare','unzip','command','reinstall','delete','upload'];
+    $writes = ['create','save','host-save','prepare','unzip','command','reinstall','delete','upload','sftp-access'];
     management_require(in_array($operation, array_merge($reads, $writes), true), 'Unknown management operation', 404);
     management_require($_SERVER['REQUEST_METHOD'] === (in_array($operation, $reads, true) ? 'GET' : 'POST'), 'Method not allowed', 405);
     management_require($user['role'] === 'admin' || in_array($operation, ['inventory','live','command'], true), 'Administrator access required', 403);
@@ -113,6 +113,14 @@ function central_management(): string
             $result['images'] = fs25_image_options(); $result['sftp'] = local_node_config();
         }
         json_response($result);
+    }
+    if ($operation === 'sftp-access') {
+        $mode = (string) ($_POST['mode'] ?? '');
+        management_require(in_array($mode, ['public', 'tunnel'], true), 'Choose public or tunnel access');
+        $report = agent_post_for_host($host, '/admin-sftp/access', ['mode' => $mode], 240);
+        $address = trim((string) ($host['access_host'] ?? ''));
+        if ($address === '') $address = (string) (local_node_config()['admin_sftp_host'] ?? '');
+        json_response($report + ['access_host' => $address]);
     }
     if ($operation === 'sftp-status') {
         $report = agent_post_for_host($host, '/admin-sftp/status', [], 20);
