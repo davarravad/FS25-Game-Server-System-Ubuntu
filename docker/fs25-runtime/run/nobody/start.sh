@@ -12,7 +12,9 @@ VNC_PASSWD_PATH="/home/nobody/.vnc/passwd"
 export DISPLAY=:0
 
 # vnc start command
-vnc_start="rm -rf /tmp/.X*; Xvnc :0 -depth 24"
+# Only stale display files are cleared. /tmp/.X11-unix itself is root-owned and cannot be removed by this user, and under
+# "set -e" a failing rm would stop the whole command before Xvnc ever started, so the cleanup must never be fatal.
+vnc_start="rm -f /tmp/.X0-lock /tmp/.X11-unix/X0 2>/dev/null || true; Xvnc :0 -depth 24"
 
 # if a password is specified then generate password file in /home/nobody/.vnc/passwd
 # else append insecure flag to command line
