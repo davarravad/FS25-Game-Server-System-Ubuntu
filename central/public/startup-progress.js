@@ -12,7 +12,12 @@ const startupSteps=[
   ['online','Online']
 ];
 const containersRunning=runtime=>(runtime?.containers||[]).some(container=>container.running);
+// everRan: the server has come online at least once, which is when first-time setup is over.
 function parseStartup(logText,runtime){
+  const result=parseStartupLog(logText,runtime);
+  return {...result,everRan:result.state==='online'||/Server marked as running|\[Webserver\]: Now accessible/.test(String(logText||''))};
+}
+function parseStartupLog(logText,runtime){
   const lines=String(logText||'').split('\n').map(line=>line.trim()).filter(Boolean);
   const text=line=>line.replace(/^\[[^\]]*\]\s*/,'');
   const stamp=line=>((/^\[([^\]]*)\]/.exec(line)||[])[1])||'';

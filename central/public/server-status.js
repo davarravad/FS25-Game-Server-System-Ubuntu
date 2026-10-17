@@ -27,8 +27,10 @@ function liveChecks(live,node,server){
   else if(runtime.state==='degraded')checks.push({name:'Game server',group:'runtime',state:'fail',detail:text||'Some required containers are not healthy.',repair:control('Restart server','restart','Restart '+server.server_name+'? Connected players will be disconnected.')});
   else checks.push({name:'Game server',group:'runtime',state:'warn',detail:text||'The server is stopped.',repair:control('Start server','start')});
   if(['online','booting','degraded'].includes(runtime.state)){
-    const cpu=Number(metrics.cpu_percent)||0,memory=Number(metrics.memory_percent)||0,disk=Number(metrics.disk_percent)||0,worst=Math.max(cpu,memory,disk);
-    checks.push({name:'Resources',group:'runtime',state:worst>=95?'fail':worst>=85?'warn':'pass',detail:'CPU '+percentText(cpu)+' · RAM '+sizeText(metrics.memory_used_bytes)+' / '+sizeText(metrics.memory_limit_bytes)+' ('+percentText(memory)+') · Disk '+sizeText(metrics.disk_used_bytes)+(worst>=85?'. Running low on headroom.':'')});
+    // Docker reports a container's CPU as a total across cores (999% is about ten busy cores), so the board shows the host's
+    // overall CPU instead, which the node already reports as a true 0-100% share. Only memory and disk can raise a finding.
+    const hostCpu=node.snapshot?.samples?.find(item=>item.scope==='host')?.data?.cpu_percent,memory=Number(metrics.memory_percent)||0,disk=Number(metrics.disk_percent)||0,worst=Math.max(memory,disk);
+    checks.push({name:'Resources',group:'runtime',state:worst>=95?'fail':worst>=85?'warn':'pass',detail:(Number.isFinite(hostCpu)?'Host CPU '+percentText(hostCpu)+' · ':'')+'RAM '+sizeText(metrics.memory_used_bytes)+' / '+sizeText(metrics.memory_limit_bytes)+' ('+percentText(memory)+') · Disk '+sizeText(metrics.disk_used_bytes)+(worst>=85?'. Running low on headroom.':'')});
   }
   return checks;
 }
@@ -41,22 +43,28 @@ function buildServerStatus(report,live,node,server){
     const container=containers.find(item=>item.service===serviceOf[check.name]);
     return container?{...check,detail:check.detail+' ('+liveContainerText(container)+')'}:check;
   });
-  const checks=[...liveChecks(live,node,server),...readiness];
+  let checks=[...liveChecks(live,node,server),...readiness];
   // A node that cannot inspect its containers still reports them in the live status.
   if(report&&!checks.some(check=>check.group==='containers'))for(const container of containers)checks.push({name:container.service==='sftp'?'SFTP container':container.service==='fs25'?'Container':container.service||'Container',group:'containers',state:container.restarting?'fail':container.running?'pass':'warn',detail:liveContainerText(container)});
   checks.push(node.online?{name:'Node heartbeat',group:'node',state:'pass',detail:'Last heartbeat '+stamp(node.last_seen)+'.'}:{name:'Node heartbeat',group:'node',state:'fail',detail:'The node is not reporting. Last heartbeat '+stamp(node.last_seen)+'.',repair:{label:'Open node',href:nodeUrl(node)}});
+  // While a server is being set up for the first time, missing hostnames and stopped containers are part of the process, so the
+  // board only reports status; repairs appear once the server has started successfully and something then goes wrong.
+  // The log keeps only recent lines, but its "Server created" line is still there for a young server and long gone for an old
+  // one, so a server whose log has rotated is never mistaken for one still being set up.
+  const setup=!!live&&typeof parseStartup==='function'&&/Server created/.test(String(live.log_output||''))&&!parseStartup(live.log_output,{state:live.metrics?.runtime_state?.state,containers}).everRan;
+  if(setup)checks=checks.map(({repair,...check})=>check);
   const groups=statusGroups.map(([id,title,blurb])=>{
     const items=checks.filter(check=>(check.group||'node')===id).sort((a,b)=>statusRank[b.state]-statusRank[a.state]);
     return {id,title,blurb,checks:items,state:worstState(items)};
   }).filter(group=>group.checks.length);
   const counts={pass:0,warn:0,fail:0,total:checks.length};
   for(const check of checks)counts[check.state]++;
-  const state=counts.fail?'problem':counts.warn?'attention':'ok';
-  const title=state==='ok'?'All systems operational':counts.fail+counts.warn===1?'1 thing needs '+(counts.fail?'fixing':'attention'):counts.fail+counts.warn+' things need '+(counts.fail?'fixing':'attention');
+  const state=setup?'setup':counts.fail?'problem':counts.warn?'attention':'ok';
+  const title=setup?'Setting up this server':state==='ok'?'All systems operational':counts.fail+counts.warn===1?'1 thing needs '+(counts.fail?'fixing':'attention'):counts.fail+counts.warn+' things need '+(counts.fail?'fixing':'attention');
   // The same repair often fixes several findings (recreating a container), so each distinct action runs once.
   const seen=new Set(),fixes=[];
   for(const check of checks)if(check.state!=='pass'&&check.repair?.api){const key=check.repair.api+JSON.stringify(check.repair.body||{});if(!seen.has(key)){seen.add(key);fixes.push(check.repair);}}
-  return {groups,counts,state,title,percent:counts.total?Math.round(counts.pass/counts.total*100):0,fixes,checked:!!report};
+  return {groups,counts,state,title,setup,percent:counts.total?Math.round(counts.pass/counts.total*100):0,fixes,checked:!!report};
 }
 
 const statusIcons={
@@ -91,6 +99,7 @@ function serverStatusBoard(node,server){
     if(view===drawn)return;drawn=view;
     grid.replaceChildren(...model.groups.map(group=>{
       const card=element('article',undefined,'ss-card'),head=element('header',undefined,'ss-card-head'),icon=element('span',undefined,'ss-card-icon'),text=element('div'),list=element('ul',undefined,'ss-rows');
+      list.tabIndex=0;list.setAttribute('aria-label',group.title+' checks');
       card.dataset.state=group.state;icon.append(statusIcon(statusIcons[group.id]));
       text.append(element('h3',group.title),element('p',group.blurb,'muted'));
       head.append(icon,text,element('span',group.state==='pass'?'Healthy':group.state==='warn'?'Attention':'Problem','ss-pill'));
@@ -109,7 +118,7 @@ function serverStatusBoard(node,server){
     ring.style.setProperty('--pct',String(model.checked?model.percent:0));
     ringText.textContent=model.checked?model.counts.pass+'/'+model.counts.total:'…';
     title.textContent=model.checked?model.title:'Checking this server…';
-    sub.textContent=model.checked?'Checked '+timeAgo(Date.now()-checkedAt)+' · '+model.counts.pass+' of '+model.counts.total+' checks passing':'Looking at containers, domains, ports and the node connection. This can take up to half a minute.';
+    sub.textContent=model.checked?'Checked '+timeAgo(Date.now()-checkedAt)+' · '+model.counts.pass+' of '+model.counts.total+(model.setup?' checks ready. Repairs appear after the first successful start.':' checks passing'):'Looking at containers, domains, ports and the node connection. This can take up to half a minute.';
     fixAll.hidden=!model.fixes.length;fixAll.textContent=model.fixes.length>1?'Fix all ('+model.fixes.length+')':'Fix issue';
     recheck.disabled=busy;fixAll.disabled=busy;
   };

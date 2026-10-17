@@ -7,7 +7,8 @@ import vm from 'node:vm';
 async function load() {
   const sandbox: any = {module: {exports: {}}, stamp: (ts: number) => 'at ' + ts, nodeUrl: (node: {id: string}) => '/nodes/' + node.id};
   vm.createContext(sandbox);
-  vm.runInContext((await readFile('public/server-status.js', 'utf8')) + '\nthis.api = {buildServerStatus};', sandbox);
+  for (const file of ['startup-progress.js', 'server-status.js']) vm.runInContext(await readFile('public/' + file, 'utf8'), sandbox);
+  vm.runInContext('this.api = {buildServerStatus};', sandbox);
   // Results cross a vm realm boundary; a JSON round trip gives them this realm's arrays and objects.
   return ((...args: unknown[]) => JSON.parse(JSON.stringify(sandbox.api.buildServerStatus(...args)))) as (report: unknown, live: unknown, node: unknown, server: unknown) => any;
 }
@@ -55,6 +56,12 @@ test('a stopped server offers a start, and high resource use is flagged', async 
   assert.equal(busy.groups[0].checks.find((c: any) => c.name === 'Resources').state, 'warn');
   assert.equal(busy.state, 'attention');
   assert.equal(busy.title, '1 thing needs attention');
+  const hostNode = {...node, snapshot: {samples: [{scope: 'host', data: {cpu_percent: 21.4}}]}};
+  const overall = build(report([]), live('online', {cpu_percent: 999}), hostNode, server).groups[0].checks.find((c: any) => c.name === 'Resources');
+  assert.equal(overall.state, 'pass', 'A container CPU total across cores never raises a finding');
+  assert.match(overall.detail, /^Host CPU 21% · RAM/);
+  assert.doesNotMatch(overall.detail, /999/, 'The per-core total is not shown');
+  assert.doesNotMatch(busy.groups[0].checks.find((c: any) => c.name === 'Resources').detail, /CPU/, 'No CPU figure until the host reports one');
 });
 
 test('before the first check finishes, only live information is shown; an offline node is a problem with a link to it', async () => {
@@ -65,4 +72,25 @@ test('before the first check finishes, only live information is shown; an offlin
   const offline = build(null, null, {...node, online: false}, server);
   assert.equal(offline.state, 'problem');
   assert.equal(offline.groups.find((g: any) => g.id === 'node').checks[0].repair.href, '/nodes/node-1');
+});
+
+test('during first-time setup the board reports status only, with no repairs, until the server has come online once', async () => {
+  const build = await load();
+  const findings = report([{name: 'VNC console', group: 'domains', state: 'warn', detail: 'Hostname not created yet.', repair: {label: 'Provision hostname now', api: 'readiness/repair', body: {node: 'node-1'}}}]);
+  const neverStarted = {...live('offline', {containers: []}), log_output: 'Console: Server created.'};
+  const setup = build(findings, neverStarted, node, server);
+  assert.equal(setup.setup, true);
+  assert.equal(setup.state, 'setup');
+  assert.equal(setup.title, 'Setting up this server');
+  assert.deepEqual(setup.fixes, []);
+  assert.ok(setup.groups.every((g: any) => g.checks.every((c: any) => !c.repair)), 'No repair buttons while setting up');
+  assert.equal(setup.groups.find((g: any) => g.id === 'domains').checks[0].state, 'warn', 'The status itself is still shown');
+  const building = build(findings, {...live('booting'), log_output: '[2026-10-17 09:59:00] Console: Server created.\n[2026-10-17 10:00:00] Console: Server marked as starting\n[2026-10-17 10:00:05] Building the game runtime image'}, node, server);
+  assert.equal(building.setup, true, 'A first start still building is part of setup');
+  const rotated = build(findings, {...live('offline', {containers: []}), log_output: '[2026-10-17 11:00:00] Console: Server marked as offline'}, node, server);
+  assert.equal(rotated.setup, false, 'A log that no longer reaches back to creation is an old server, not a new one');
+  const ran = build(findings, {...live('offline', {containers: []}), log_output: '[2026-10-17 10:00:00] Console: Server marked as running\n[2026-10-17 11:00:00] Console: Server marked as offline'}, node, server);
+  assert.equal(ran.setup, false, 'A server that has run before gets its repairs back');
+  assert.equal(ran.state, 'attention');
+  assert.equal(ran.fixes.length, 2, 'Provision hostname and Start server');
 });
