@@ -1638,9 +1638,15 @@ def instance_action():
         append_runtime_log(instance_id, "Console: SFTP reinstall requested. Recreating SFTP container...")
 
     if action in {"start", "restart", "rebuild", "resync", "reinstall_game"}:
+        needs_build = image_name == FS25_RUNTIME_IMAGE and (action == "rebuild" or not image_exists(image_name))
+        if needs_build:
+            append_runtime_log(instance_id, "Console: Building the game runtime image. This only happens the first time on a node and can take several minutes.")
         image_result = ensure_runtime_image(image_name, force_rebuild=(action == "rebuild"))
         if not image_result.get("ok"):
+            failure = (str(image_result.get("error") or "unknown error").strip().splitlines() or ["unknown error"])[-1][:200]
+            append_runtime_log(instance_id, f"Console: Runtime image build failed: {failure}")
             return jsonify(image_result), 500
+        append_runtime_log(instance_id, "Console: Game runtime image ready.")
         if action == "rebuild":
             append_runtime_log(instance_id, "Version mismatch detected. Rebuilding server files.")
         elif action == "resync":
@@ -1717,7 +1723,16 @@ def instance_action():
     if action not in action_map:
         return jsonify({"ok": False, "error": "unsupported action"}), 400
 
+    starts_containers = action in {"start", "restart", "rebuild", "resync", "reinstall_game"}
+    if starts_containers:
+        append_runtime_log(instance_id, "Console: Starting containers...")
     result = run_command(action_map[action], cwd=str(instance_dir))
+    if starts_containers:
+        if result["code"] == 0:
+            append_runtime_log(instance_id, "Console: Containers started. Waiting for the game to boot...")
+        else:
+            reason = ((result.get("stderr") or result.get("stdout") or "unknown error").strip().splitlines() or ["unknown error"])[-1][:200]
+            append_runtime_log(instance_id, f"Console: Containers failed to start: {reason}")
 
     if result["code"] == 0:
         if action in {"start", "restart", "rebuild", "resync", "reinstall_game"}:

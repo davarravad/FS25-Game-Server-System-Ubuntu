@@ -306,3 +306,7 @@ button.danger{border-color:#6b3535;background:#3d2323;color:#f3a3a3}button.dange
 .toggle-row .role-dot{margin-top:4px}
 
 .sftp-status{margin-top:22px;padding-top:18px;border-top:1px solid #26374b}.sftp-status-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.sftp-status-head h3{margin:0}.sftp-status ul{color:#c0d0df;line-height:1.7}.sftp-status .status{color:#7aefbf}.sftp-status>button{margin:6px 0 14px}.sftp-status details{margin-top:6px}
+
+.startup-steps{list-style:none;margin:16px 0 8px;padding:0;display:grid;gap:8px}.startup-step{display:grid;grid-template-columns:22px 1fr;gap:2px 10px;align-items:start;color:#8da1ba}.startup-step::before{content:'';width:12px;height:12px;margin:5px 0 0 4px;border-radius:50%;border:2px solid #3b4d66;grid-row:1}.startup-step-name{grid-column:2}.startup-step-detail{grid-column:2;font-size:13px;line-height:1.5}
+.startup-step[data-state=done]{color:#c5f3e3}.startup-step[data-state=done]::before{background:#47d8b0;border-color:#47d8b0}.startup-step[data-state=active]{color:#e8eef7;font-weight:650}.startup-step[data-state=active]::before{border-color:#47d8b0;border-top-color:transparent;animation:spinner-turn .8s linear infinite}.startup-step[data-state=error]{color:#ffd3cf;font-weight:650}.startup-step[data-state=error]::before{background:#e88179;border-color:#e88179}
+@media(prefers-reduced-motion:reduce){.startup-step[data-state=active]::before{animation-duration:2.4s}}
