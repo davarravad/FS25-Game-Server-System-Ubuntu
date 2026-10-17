@@ -48,7 +48,7 @@ export async function gameNode(request:Request,env:EnvLike){
   const b=await readJson(request,8*1024**2);let size:number;try{size=validateManifest(b);}catch{return json({error:'Invalid game manifest'},422);}
   const raw=JSON.stringify(b),fingerprint=await digest(JSON.stringify({version:b.version,files:(b.files as any[]).filter(f=>!f.path.startsWith('__dlc__/'))})),key='game-library/'+node+'/manifests/'+await digest(raw);
   await env.RELEASES.put(key,raw);
-  await env.DB.batch([env.DB.prepare('INSERT OR IGNORE INTO game_releases(id,source_node,version,fingerprint,manifest_key,bytes,dlcs,created) VALUES(?,?,?,?,?,?,?,?)').bind(jobId,node,b.version,fingerprint,key,size,JSON.stringify([...new Set((b.files as any[]).map(f=>/^__dlc__\/FarmingSimulator25_([^_]+)_/.exec(f.path)?.[1]).filter(Boolean))]),now()),env.DB.prepare("UPDATE game_jobs SET status='succeeded',done_bytes=?,total_bytes=?,detail='Game version published. Approve it on Game status.',updated=? WHERE id=?").bind(size,size,now(),jobId)]);return json({ok:true});
+  await env.DB.batch([env.DB.prepare('INSERT OR IGNORE INTO game_releases(id,source_node,version,fingerprint,manifest_key,bytes,dlcs,created) VALUES(?,?,?,?,?,?,?,?)').bind(jobId,node,b.version,fingerprint,key,size,JSON.stringify([...new Set((b.files as any[]).map(f=>/^__dlc__\/FarmingSimulator25_([^_]+)_/.exec(f.path)?.[1]).filter(Boolean))]),now()),env.DB.prepare("UPDATE game_jobs SET status='succeeded',done_bytes=?,total_bytes=?,detail='Game version published. Approve it on Game status.',updated=? WHERE id=?").bind(size,size,now(),jobId)]);await startWaitingNodes(env,jobId);return json({ok:true});
  }
  if(job.kind==='sync'&&request.method==='GET'){
   const release=await env.DB.prepare('SELECT * FROM game_releases WHERE id=?').bind(job.release_id).first<any>();if(!release)return json({error:'Release missing'},404);
@@ -60,8 +60,19 @@ export async function gameNode(request:Request,env:EnvLike){
  }
  return json({error:'Unknown game sync operation'},404);
 }
+// Nodes that asked for the game files before any version had been published wait here. When the first
+// publication lands it is approved (if nothing is) and every waiting node starts downloading it.
+// Wrapped so a database without the game_wanted table keeps publishing normally.
+async function startWaitingNodes(env:EnvLike,release:string){
+ try{
+  await env.DB.prepare('UPDATE game_policy SET release_id=? WHERE id=1 AND release_id IS NULL').bind(release).run();
+  const waiting=(await env.DB.prepare('SELECT node_id FROM game_wanted').all<{node_id:string}>()).results;
+  for(const w of waiting)await queue(env,w.node_id,'sync',release);
+  if(waiting.length)await env.DB.prepare('DELETE FROM game_wanted').run();
+ }catch{ /* Waiting nodes are picked up by the next click. */ }
+}
 export async function gameAdmin(request:Request,env:EnvLike){
- if(request.method==='GET')return json({nodes:(await env.DB.prepare('SELECT n.id,n.name,n.enabled,n.last_seen,n.snapshot,i.version,i.fingerprint,i.status,i.detail,i.updated FROM nodes n LEFT JOIN game_inventory i ON i.node_id=n.id ORDER BY n.name').all()).results,releases:(await env.DB.prepare('SELECT * FROM game_releases ORDER BY created DESC LIMIT 100').all()).results,jobs:(await env.DB.prepare('SELECT * FROM game_jobs ORDER BY created DESC LIMIT 100').all()).results,dlcSettings:(await env.DB.prepare('SELECT * FROM game_dlc_settings').all()).results,policy:await env.DB.prepare('SELECT * FROM game_policy WHERE id=1').first()});
+ if(request.method==='GET'){let wanted:string[]=[];try{wanted=(await env.DB.prepare('SELECT node_id FROM game_wanted').all<{node_id:string}>()).results.map(r=>r.node_id);}catch{ /* Table arrives with migration 0020. */ }return json({wanted,nodes:(await env.DB.prepare('SELECT n.id,n.name,n.enabled,n.last_seen,n.snapshot,i.version,i.fingerprint,i.status,i.detail,i.updated FROM nodes n LEFT JOIN game_inventory i ON i.node_id=n.id ORDER BY n.name').all()).results,releases:(await env.DB.prepare('SELECT * FROM game_releases ORDER BY created DESC LIMIT 100').all()).results,jobs:(await env.DB.prepare('SELECT * FROM game_jobs ORDER BY created DESC LIMIT 100').all()).results,dlcSettings:(await env.DB.prepare('SELECT * FROM game_dlc_settings').all()).results,policy:await env.DB.prepare('SELECT * FROM game_policy WHERE id=1').first()});}
  if(request.method!=='POST')return json({error:'Method not allowed'},405);
  const b=await readJson(request);
  if(b.action==='dlcs'&&validId(b.node)&&typeof b.instance==='string'&&Array.isArray(b.packages)&&b.packages.length<=100&&b.packages.every(p=>typeof p==='string'&&/^[A-Za-z0-9-]{1,100}$/.test(p))){
@@ -71,6 +82,22 @@ export async function gameAdmin(request:Request,env:EnvLike){
  if(b.action==='publish'&&validId(b.node)){await queue(env,b.node,'publish',null);return json({ok:true});}
  if(b.action==='approve'&&typeof b.release==='string'&&await env.DB.prepare('SELECT id FROM game_releases WHERE id=?').bind(b.release).first()){await env.DB.prepare('UPDATE game_policy SET release_id=? WHERE id=1').bind(b.release).run();return json({ok:true});}
  if(b.action==='bootstrap'&&typeof b.enabled==='boolean'){await env.DB.prepare('UPDATE game_policy SET auto_bootstrap=? WHERE id=1').bind(b.enabled?1:0).run();return json({ok:true});}
+ if(b.action==='install'&&validId(b.node)){
+  const target=await env.DB.prepare('SELECT id FROM nodes WHERE id=? AND enabled=1').bind(b.node).first();if(!target)return json({error:'Node unavailable'},404);
+  const policy=await env.DB.prepare('SELECT release_id FROM game_policy WHERE id=1').first<any>();
+  let release:string|null=policy?.release_id||null;
+  if(!release){
+   release=(await env.DB.prepare('SELECT id FROM game_releases ORDER BY created DESC LIMIT 1').first<any>())?.id||null;
+   if(release)await env.DB.prepare('UPDATE game_policy SET release_id=? WHERE id=1').bind(release).run();
+  }
+  if(release){await queue(env,b.node,'sync',release);return json({ok:true,mode:'download'});}
+  // Nothing is in the library yet: have an online node that already has the game publish it, then download it here.
+  const source=await env.DB.prepare("SELECT n.id,n.name FROM nodes n JOIN game_inventory i ON i.node_id=n.id WHERE n.enabled=1 AND n.id!=? AND i.status='ready' AND n.last_seen>? ORDER BY i.updated DESC LIMIT 1").bind(b.node,now()-120).first<any>();
+  if(!source)return json({error:'No online node has game files ready to copy. Install the game on one node first, then try again.'},409);
+  await env.DB.prepare('INSERT OR REPLACE INTO game_wanted(node_id,created) VALUES(?,?)').bind(b.node,now()).run();
+  await queue(env,source.id,'publish',null);
+  return json({ok:true,mode:'publish',source:source.name});
+ }
  if(b.action==='sync'){
   const policy=await env.DB.prepare('SELECT release_id FROM game_policy WHERE id=1').first<any>();if(!policy?.release_id)return json({error:'Approve a published version first'},409);
   const release=await env.DB.prepare('SELECT fingerprint,source_node FROM game_releases WHERE id=?').bind(policy.release_id).first<any>();

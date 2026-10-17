@@ -118,8 +118,8 @@ function installGuide(){
   para(game,'Every game server on the node shares one installation of Farming Simulator 25 under /opt/fs25/game. There are two ways to get it onto a new node. The first is much faster.');
   para(game,'Option A: copy from your game library (recommended when another node already runs the game).');
   list(game,[
-    'Open Game status. If a version shows Approved and “Automatically prepare empty new nodes” is ticked, the new node requests it on its first game scan without any action from you.',
-    'Otherwise find the node’s card and choose Sync approved version. Progress and byte counts refresh every five seconds; the transfer resumes on its own after interruptions and a reboot.',
+    'Open Game status, find the new node’s card and choose Download game files. That is the only click needed: if the game has not been copied into your library yet, the site first asks a node that already has it to publish it, then downloads it onto this node.',
+    'Progress and byte counts refresh every five seconds. The transfer resumes on its own after interruptions and a reboot. Updates wait until every game container on the node is stopped.',
     'The node card reads Game files ready when the copy is verified. DLC installers are copied only for packages you select per server later, so a brand-new node receives the base game first.'
   ],true);
   para(game,'Option B: install from the GIANTS installer (first node, or a newer game version).');
