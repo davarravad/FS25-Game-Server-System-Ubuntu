@@ -118,11 +118,11 @@ async function oauth(request: Request, env: Bindings, url: URL) {
   const token = await tokenResult.json<{access_token: string}>();
   const profileResult = await fetch('https://discord.com/api/users/@me', {headers:{Authorization:`Bearer ${token.access_token}`}, signal:AbortSignal.timeout(15000)});
   need(profileResult.ok, 502, 'Unable to read Discord profile');
-  const profile = await profileResult.json<{id:string; username:string; avatar?:string|null; discriminator?:string}>();
+  const profile = await profileResult.json<{id:string; username:string; global_name?:string|null; avatar?:string|null; discriminator?:string}>();
   need(/^\d{17,20}$/.test(profile.id), 502, 'Invalid Discord identity');
   const avatar=typeof profile.avatar==='string'&&/^(?:a_)?[a-f0-9]{32}$/.test(profile.avatar)?'https://cdn.discordapp.com/avatars/'+profile.id+'/'+profile.avatar+'.webp?size=64':profile.avatar===null?'https://cdn.discordapp.com/embed/avatars/'+(profile.discriminator&&profile.discriminator!=='0'?Number(profile.discriminator)%5:Number((BigInt(profile.id)>>22n)%6n))+'.png':null;
   const role = profile.id === env.BOOTSTRAP_ADMIN_ID ? 'admin' : 'pending';
-  await env.DB.prepare("INSERT INTO users(id,name,role,created,avatar_url) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, avatar_url=excluded.avatar_url, role=CASE WHEN excluded.role='admin' THEN 'admin' ELSE users.role END").bind(profile.id, profile.username.slice(0,100), role, now(),avatar).run();
+  await env.DB.prepare("INSERT INTO users(id,name,role,created,avatar_url) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, avatar_url=excluded.avatar_url, role=CASE WHEN excluded.role='admin' THEN 'admin' ELSE users.role END").bind(profile.id, (typeof profile.global_name==='string'&&profile.global_name.trim()?profile.global_name.trim():profile.username).slice(0,100), role, now(),avatar).run();
   if (profile.id === env.BOOTSTRAP_ADMIN_ID) await env.DB.prepare("INSERT OR IGNORE INTO user_roles(user_id,role_id) VALUES(?, 'admin')").bind(profile.id).run();
   const sid = randomToken();
   const created=await env.DB.prepare('INSERT INTO sessions(hash,user_id,csrf,expires) SELECT ?,id,?,? FROM users WHERE id=? AND blocked=0 RETURNING hash').bind(await digest(sid),randomToken(),now()+28800,profile.id).first();
