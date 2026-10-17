@@ -13,6 +13,7 @@ test('D1 heartbeat, CSRF, approval and one-use viewer tickets',async()=>{
     await db.exec(await readFile('migrations/0001_control_plane.sql','utf8'));
     await db.exec(await readFile('migrations/0013_discord_avatar.sql','utf8'));
     await db.exec(await readFile('migrations/0007_blocked_users.sql','utf8'));
+    await db.exec(await readFile('migrations/0019_roles.sql','utf8'));
     await db.exec(await readFile('migrations/0004_node_tokens.sql','utf8'));
     for(const file of ['0002_node_updates.sql','0003_release_withdrawal.sql','0005_node_version.sql','0006_notification_reads.sql','0008_node_gateways.sql','0012_edit_presence.sql','0014_node_notes.sql','0015_game_sync.sql'])await db.exec(await readFile('migrations/'+file,'utf8'));
     const sid='a'.repeat(64),time=Math.floor(Date.now()/1000);
@@ -71,7 +72,7 @@ test('D1 heartbeat, CSRF, approval and one-use viewer tickets',async()=>{
     assert.equal((await mf.dispatchFetch(origin+'/api/nodes/notes?id=node-1',{headers:viewerHeaders})).status,403);
     assert.equal((await notes({id:'node-1',notes:'forbidden',version:2},viewerHeaders)).status,403);
     assert.equal((await mf.dispatchFetch(origin+'/api/action',{method:'POST',headers:viewerHeaders,body:JSON.stringify({node:'node-1',instance_id:'game-1',action:'start'})})).status,403);
-    assert.equal(((await (await mf.dispatchFetch(origin+'/api/notifications',{headers:viewerHeaders})).json()) as {read:boolean}[])[0].read,false);
+    assert.equal((await mf.dispatchFetch(origin+'/api/notifications',{headers:viewerHeaders})).status,403);
     assert.equal((await mf.dispatchFetch(origin+'/api/users',{method:'POST',headers,body:JSON.stringify({id:'123456789012345678',role:'pending'})})).status,200);
     assert.equal((await mf.dispatchFetch(origin+'/api/nodes',{headers:viewerHeaders})).status,403);
     assert.equal((await (await mf.dispatchFetch(origin+'/api/me',{headers:viewerHeaders})).json() as {role:string}).role,'pending');

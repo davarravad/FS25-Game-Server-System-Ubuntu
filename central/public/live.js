@@ -24,7 +24,7 @@ async function refreshLive(){
       // System Status page also holds readiness results and repair controls the administrator is
       // reading (running a check or a repair itself causes a revision bump). Never rebuild either
       // page underneath them.
-      const selfRefreshing=['setup','status','cloudflare'].includes(route().type);
+      const selfRefreshing=['setup','status','cloudflare','users'].includes(route().type);
       if(route().type!=='game-status'&&!$('charts')&&!settingsPage&&!selfRefreshing&&!editDirty&&!dirty&&!$('page').contains(document.activeElement)){
         liveChanged=false;await render();
       }else{

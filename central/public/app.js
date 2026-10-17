@@ -75,6 +75,10 @@ function route(){
 
   if(parts[0]==='servers'&&parts.length===3)return {type:'server',id:parts[1],instance:parts[2]};
 
+  if(parts[0]==='users'&&parts[1]==='roles'&&parts.length<=3)return parts.length===2?{type:'users',tab:'roles'}:{type:'users',tab:'role',id:parts[2]};
+
+  if(parts[0]==='users'&&parts.length===2&&/^[0-9]{17,20}$/.test(parts[1]))return {type:'users',tab:'member',id:parts[1]};
+
   if(['servers','access','users','cloudflare','setup','install','game-status','status'].includes(parts[0])&&parts.length===1)return {type:parts[0]};
 
   if(parts[0]==='setup.html')return {type:'setup'};
@@ -473,7 +477,7 @@ async function render(){
 
   else if(r.type==='access')await access(version);
 
-  else if(r.type==='users')await userManagement();
+  else if(r.type==='users')await membersPage(r);
 
   else if(r.type==='game-status')await gameStatusPage();
 

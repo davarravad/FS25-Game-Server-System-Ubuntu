@@ -11,7 +11,7 @@ test('signed release distribution, authorization, immutable versions and job lif
   const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:'releases-test',modules:true,scriptPath:'dist/index.js',compatibilityDate:'2026-09-09',compatibilityFlags:['nodejs_compat'],d1Databases:['DB'],r2Buckets:['RELEASES'],bindings:{APP_ORIGIN:origin,RELEASE_PUBLIC_KEY:publicKey.export({type:'spki',format:'der'}).toString('base64')}}]}));
   try {
     const db=await mf.getD1Database('DB');
-    for(const file of ['0001_control_plane.sql','0013_discord_avatar.sql','0002_node_updates.sql','0003_release_withdrawal.sql','0005_node_version.sql','0007_blocked_users.sql'])await db.exec(await readFile('migrations/'+file,'utf8'));
+    for(const file of ['0001_control_plane.sql','0013_discord_avatar.sql','0002_node_updates.sql','0003_release_withdrawal.sql','0005_node_version.sql','0007_blocked_users.sql','0019_roles.sql'])await db.exec(await readFile('migrations/'+file,'utf8'));
     await db.prepare('INSERT INTO users(id,name,role,created) VALUES(?,?,?,?)').bind('owner','Owner','admin',time).run();
     await db.prepare('INSERT INTO sessions VALUES(?,?,?,?)').bind(await digest('session'),'owner','csrf',time+3600).run();
     await db.prepare('INSERT INTO nodes(id,name,token_hash) VALUES(?,?,?)').bind('node-1','Pilot',await digest('b'.repeat(64))).run();

@@ -11,7 +11,7 @@ function unusablePublicHost(host:string):boolean{
 
 const operations:Record<string,{method:string;admin:boolean}>=Object.fromEntries([
   ...['inventory','live'].map(name=>[name,{method:'GET',admin:false}]),
-  ...['server','files','export'].map(name=>[name,{method:'GET',admin:true}]),
+  ...['server','files','export','sftp-status'].map(name=>[name,{method:'GET',admin:true}]),
   ['command',{method:'POST',admin:false}],
   ...['create','save','host-save','prepare','unzip','reinstall','delete','upload'].map(name=>[name,{method:'POST',admin:true}])
 ]);

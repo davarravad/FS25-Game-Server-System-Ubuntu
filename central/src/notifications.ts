@@ -23,6 +23,8 @@ export async function notifications(db:D1Database,userId:string,gameAdmin=false)
   const releases=(await db.prepare('SELECT version,created FROM releases WHERE enabled=1 AND created>? ORDER BY created DESC LIMIT 10').bind(time-7*86400).all<{version:string;created:number}>()).results;
   for(const release of releases)notices.push({id:'release:'+release.version,title:'Release available: '+release.version,detail:'Open a node to review its installed version and available update.',href:'/setup',severity:'info',ts:release.created});
   if(gameAdmin){
+  const asked=(await db.prepare("SELECT r.user_id,r.created,u.name FROM access_requests r JOIN users u ON u.id=r.user_id WHERE r.status='open' AND u.blocked=0 ORDER BY r.created DESC LIMIT 20").all<{user_id:string;created:number;name:string}>()).results;
+  for(const request of asked)notices.push({id:`access:${request.user_id}:${request.created}`,title:request.name+' requested access',detail:'Choose their roles on Users & permissions to let them in.',href:'/users',severity:'info',ts:request.created});
   const gamePolicy=await db.prepare('SELECT r.version,r.fingerprint FROM game_policy p LEFT JOIN game_releases r ON r.id=p.release_id WHERE p.id=1').first<{version:string;fingerprint:string}>();
   const gameNodes=(await db.prepare('SELECT i.*,n.name FROM game_inventory i JOIN nodes n ON n.id=i.node_id WHERE n.enabled=1').all<{node_id:string;version:string|null;fingerprint:string|null;status:string;name:string}>()).results;
   const newer=(a:string,b:string)=>{const x=a.split('.').map(Number),y=b.split('.').map(Number);for(let i=0;i<Math.max(x.length,y.length);i++){if((x[i]||0)!==(y[i]||0))return (x[i]||0)>(y[i]||0);}return false;};

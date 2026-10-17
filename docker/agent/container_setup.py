@@ -30,6 +30,39 @@ def port_bindings(bindings: dict) -> dict[str, list[dict[str, str]]]:
     return result
 
 
+def admin_sftp_report(summary: dict, banner: str, firewall_allowed: Optional[set]) -> dict:
+    """Plain-language state of the node's admin SFTP container for the main site. `banner` is what
+    sshd printed when probed from inside the container; `firewall_allowed` is the set of
+    (port, proto) UFW allows, or None when UFW is not managed here."""
+    published = [b for b in (summary.get("ports") or {}).get("22/tcp", []) if b.get("host_port")]
+    loopback_only = bool(published) and all(b.get("host_ip") in LOOPBACK_ADDRESSES for b in published)
+    port = int(published[0]["host_port"]) if published and str(published[0]["host_port"]).isdigit() else None
+    answering = str(banner or "").startswith("SSH-")
+    if not summary.get("exists"):
+        state = "missing"
+    elif not summary.get("running"):
+        state = "stopped"
+    elif not answering:
+        state = "not-answering"
+    else:
+        state = "ready"
+    return {
+        "ok": True,
+        "state": state,
+        "container": summary.get("name"),
+        "exists": bool(summary.get("exists")),
+        "running": bool(summary.get("running")),
+        "status": summary.get("status"),
+        "answering": answering,
+        "banner": str(banner or "")[:80],
+        "port": port,
+        "bindings": published,
+        "loopback_only": loopback_only,
+        "firewall_managed": firewall_allowed is not None,
+        "firewall_open": None if firewall_allowed is None or port is None else (port, "tcp") in firewall_allowed,
+    }
+
+
 def summarize(inspect: Optional[dict], name: str) -> dict:
     if not isinstance(inspect, dict) or not inspect:
         return {

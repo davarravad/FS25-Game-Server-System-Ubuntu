@@ -27,7 +27,7 @@ test('main-site management authenticates, checks CSRF, fixes gateway target and 
     return Response.json({ok:true},{headers:{'Set-Cookie':'node-session=private','X-Central-Token':'private'}});
   }}]}));
   try{
-    const db=await mf.getD1Database('DB');for(const file of ['0001_control_plane.sql','0013_discord_avatar.sql','0007_blocked_users.sql','0008_node_gateways.sql','0018_node_public_ip.sql']){const sql=await readFile('migrations/'+file,'utf8');for(const statement of sql.split(';').map(s=>s.trim()).filter(Boolean))await db.prepare(statement).run();}
+    const db=await mf.getD1Database('DB');for(const file of ['0001_control_plane.sql','0013_discord_avatar.sql','0007_blocked_users.sql','0008_node_gateways.sql','0018_node_public_ip.sql','0019_roles.sql']){const sql=await readFile('migrations/'+file,'utf8');for(const statement of sql.split(';').map(s=>s.trim()).filter(Boolean))await db.prepare(statement).run();}
     const now=Math.floor(Date.now()/1000);await db.prepare('INSERT INTO users(id,name,role,created) VALUES(?,?,?,?)').bind('123456789012345678','Admin','admin',now).run();await db.prepare('INSERT INTO sessions VALUES(?,?,?,?)').bind(await digest('session'),'123456789012345678','csrf',now+600).run();await db.prepare('INSERT INTO nodes(id,name,token_hash,enabled) VALUES(?,?,?,1)').bind('node-1','Node','unused').run();
     const headers={Cookie:'__Host-farmservers=session',Origin:origin,'X-CSRF-Token':'csrf','Content-Type':'application/json'};
     const url=origin+'/api/manage?node=node-1&operation=save&instance_id=game-1&route=login';

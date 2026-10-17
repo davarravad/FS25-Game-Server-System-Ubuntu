@@ -16,8 +16,60 @@ const gameFixture={
  jobs:[{id:'sync-north',node_id:'north',kind:'sync',status:'waiting',done_bytes:24*1024**3,total_bytes:24*1024**3,detail:'Files downloaded. Stop all game containers on this node to apply.',created:time,updated:time},{id:'sync-retired',node_id:'retired',kind:'sync',status:'running',done_bytes:8*1024**3,total_bytes:24*1024**3,detail:'Downloading data/maps/mapUS/map.i3d',created:time,updated:time}],
  policy:{release_id:'preview-release',auto_bootstrap:1},dlcSettings:[]
 };
+
+// Members, roles and access requests: a small in-memory model so the Users & permissions pages can be exercised.
+const permissionGroups=[{id:'servers',label:'Game servers',items:[
+  {id:'servers.view',label:'View status',detail:'See the server, who is playing and whether it is running.'},
+  {id:'servers.control',label:'Start, stop and restart',detail:'Control the game server.'},
+  {id:'servers.backend',label:'Backend reboot',detail:'Restart the server’s backend services without a full restart.'},
+  {id:'servers.logs',label:'View logs',detail:'Read the server’s recent log output.'},
+  {id:'servers.panel',label:'Open the game web panel',detail:'Open the in-game admin web panel.'},
+  {id:'servers.credentials',label:'See the web panel login',detail:'Show the web panel username and password.'},
+  {id:'servers.console',label:'Open the VNC console',detail:'Remote desktop session for the server.'}]}];
+const roleList=[
+  {id:'admin',name:'Admin',color:'#e74c3c',position:0,is_admin:true,permissions:[],all_servers:true,servers:[],created:time},
+  {id:'game-server-team',name:'Game Server Team',color:'#47d8b0',position:1,is_admin:false,permissions:['servers.view','servers.control','servers.backend','servers.logs','servers.panel','servers.credentials'],all_servers:false,servers:['pilot/game-1','pilot/game-2'],created:time},
+  {id:'viewer',name:'Viewer',color:'#74b6ed',position:2,is_admin:false,permissions:['servers.view'],all_servers:true,servers:[],created:time}];
+const memberList=[
+  {id:'513527870258151439',name:'Local preview administrator',avatarUrl:null,created:time-86400*90,blocked:false,lastLogin:time-60,roles:['admin'],active:true,initialAdmin:true,request:null},
+  {id:'123456789012345678',name:'Riverbend Rick',avatarUrl:null,created:time-86400*30,blocked:false,lastLogin:time-3600*5,roles:['game-server-team'],active:true,initialAdmin:false,request:null},
+  {id:'223456789012345678',name:'Weekend Wendy',avatarUrl:null,created:time-86400*12,blocked:false,lastLogin:time-86400*2,roles:['game-server-team','viewer'],active:true,initialAdmin:false,request:null},
+  {id:'323456789012345678',name:'New Nora',avatarUrl:null,created:time-1800,blocked:false,lastLogin:time-600,roles:[],active:false,initialAdmin:false,request:{status:'open',message:'I help run the Highland co-op server.',created:time-900}},
+  {id:'423456789012345678',name:'Blocked Bart',avatarUrl:null,created:time-86400*40,blocked:true,lastLogin:time-86400*20,roles:[],active:false,initialAdmin:false,request:null}];
+const hasAccessRoles=ids=>ids.some(id=>{const r=roleList.find(x=>x.id===id);return r&&(r.is_admin||r.permissions.length);});
+const memberView=()=>memberList.map(m=>({...m,active:hasAccessRoles(m.roles)}));
+const roleView=()=>roleList.map(r=>({...r,members:memberList.filter(m=>m.roles.includes(r.id)).length}));
+const catalog=nodes.filter(n=>n.snapshot?.servers?.length).map(n=>({id:n.id,name:n.name,servers:n.snapshot.servers.map(s=>({instance:s.instance_id,name:s.server_name}))}));
+const sendJson=(res,data,status=200)=>res.writeHead(status,{'Content-Type':'application/json'}).end(JSON.stringify(data));
+async function membersFixture(req,res,path){
+  const url=new URL(req.url,'http://localhost');let body={};
+  if(req.method==='POST'){let raw='';for await(const chunk of req)raw+=chunk;body=JSON.parse(raw||'{}');}
+  if(path==='/api/members'&&req.method==='GET'){
+    const id=url.searchParams.get('id');
+    if(!id)return sendJson(res,{members:memberView(),roles:roleView(),catalog,permissionGroups});
+    const member=memberView().find(m=>m.id===id);if(!member)return sendJson(res,{error:'Member not found'},404);
+    return sendJson(res,{member,roles:roleView(),permissionGroups,activity:[{ts:time-600,action:'login',target:'discord'},{ts:time-3500,action:'server.restart',target:'pilot/game-1'}],changes:[{ts:time-86400,action:'member.roles',target:id+': game-server-team',actor:'513527870258151439',actor_name:'Local preview administrator'}]});
+  }
+  if(path==='/api/roles'&&req.method==='GET')return sendJson(res,{roles:roleView(),catalog,permissionGroups});
+  if(path==='/api/members/roles'){const m=memberList.find(x=>x.id===body.id);if(!m)return sendJson(res,{error:'Member not found'},404);if(m.initialAdmin&&!body.roles.includes('admin'))body.roles.unshift('admin');m.roles=body.roles;if(m.roles.length)m.request=null;return sendJson(res,{ok:true,roles:m.roles});}
+  if(path==='/api/access-requests/resolve'){const m=memberList.find(x=>x.id===body.id);if(!m)return sendJson(res,{error:'That request is no longer open'},404);if(body.action==='deny')m.request={...m.request,status:'denied'};else{m.roles=[...new Set([...m.roles,...body.roles])];m.request=null;}return sendJson(res,{ok:true});}
+  if(path==='/api/users/create'){memberList.unshift({id:body.id,name:body.name,avatarUrl:null,created:time,blocked:false,lastLogin:null,roles:body.roles,active:false,initialAdmin:false,request:null});return sendJson(res,{ok:true});}
+  if(path==='/api/users/block'){const m=memberList.find(x=>x.id===body.id);if(m){m.blocked=body.blocked;if(!body.blocked)m.roles=[];}return sendJson(res,{ok:true});}
+  if(path==='/api/roles/delete'){const i=roleList.findIndex(r=>r.id===body.id);if(i>0){roleList.splice(i,1);for(const m of memberList)m.roles=m.roles.filter(r=>r!==body.id);}return sendJson(res,{ok:true});}
+  if(path==='/api/roles'&&req.method==='POST'){
+    const id=body.id||body.name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+    const existing=roleList.find(r=>r.id===id),permissions=body.permissions.length&&!body.permissions.includes('servers.view')?['servers.view',...body.permissions]:body.permissions;
+    const next={id,name:body.name,color:body.color,is_admin:existing?.id==='admin'?true:body.is_admin,permissions,all_servers:body.all_servers,servers:body.servers,position:existing?.position??roleList.length,created:time};
+    if(existing)Object.assign(existing,next);else roleList.push(next);return sendJson(res,{ok:true,id});
+  }
+  return false;
+}
+// What the signed-in preview member may do when PREVIEW_ROLE=operator (a limited Game Server Team member).
+const previewAccess=process.env.PREVIEW_ROLE==='operator'?{admin:false,roles:[{id:'game-server-team',name:'Game Server Team',color:'#47d8b0'}],permissions:['servers.view','servers.control','servers.backend','servers.logs','servers.panel','servers.credentials'],allServers:false,servers:['pilot/game-1']}:{admin:true,roles:[{id:'admin',name:'Admin',color:'#e74c3c'}],permissions:permissionGroups[0].items.map(i=>i.id),allServers:true,servers:[]};
+const visibleNodes=()=>previewAccess.admin?nodes:nodes.map(n=>({...n,snapshot:n.snapshot&&{...n.snapshot,servers:(n.snapshot.servers||[]).filter(s=>previewAccess.servers.includes(n.id+'/'+s.instance_id))}})).filter(n=>n.snapshot?.servers?.length);
 createServer(async(req,res)=>{
   const path=new URL(req.url,'http://localhost').pathname;
+  if(/^\/api\/(members|roles|access-requests|users\/(create|block))/.test(path)&&process.env.PREVIEW_ROLE!=='operator'){if(await membersFixture(req,res,path)!==false)return;}
   if(path==='/api/game-status'){
     if(req.method==='POST'){let raw='';for await(const chunk of req)raw+=chunk;const b=JSON.parse(raw);if(b.action==='approve')gameFixture.policy.release_id=b.release;if(b.action==='bootstrap')gameFixture.policy.auto_bootstrap=b.enabled?1:0;if(b.action==='dlcs'){gameFixture.dlcSettings=gameFixture.dlcSettings.filter(s=>s.node_id!==b.node||s.instance_id!==b.instance);gameFixture.dlcSettings.push({node_id:b.node,instance_id:b.instance,packages:JSON.stringify(b.packages)});}res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify({ok:true}));return;}
     res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify(gameFixture));return;
@@ -50,11 +102,11 @@ createServer(async(req,res)=>{
       '/api/cloudflare/oauth/status':{configured:process.env.PREVIEW_OAUTH==='1',connected:false,clientId:'preview-client',scopes:'dns.read dns.write zone.read zone-access.read zone-access.write access-service-token.read access-service-token.write argotunnel.read argotunnel.write openid offline_access',callback:'https://farmservers.sargentweb.com/api/cloudflare/oauth/callback'},
       '/api/cloudflare':{settings:{account:'a'.repeat(32),zone:'b'.repeat(32),domain:'sargentweb.com',hasToken:true,enabled:true},nodes:nodes.map((n,i)=>({...n,stage:i===0?'ready':i===1?'dns':null,error:i===1?'This hostname already has a different DNS record. Existing DNS was left unchanged.':null,updated:time}))},
       '/api/live':{revision:1,editors:process.env.PREVIEW_EDITORS==='1'?[{name:'Another administrator'}]:[]},
-      '/api/me':{id:'preview',name:'Local preview administrator',role:process.env.PREVIEW_ROLE||'admin',csrf:'fixture'},
+      '/api/me':{id:'513527870258151439',name:'Local preview administrator',role:process.env.PREVIEW_ROLE||'admin',csrf:'fixture',access:previewAccess},
       '/api/users':[{id:'preview',name:'Local preview administrator',role:'admin'},{id:'123456789012345678',name:'Farm viewer',role:'viewer'}],
       '/api/notifications':notices,
 
-      '/api/nodes':{nodes},
+      '/api/nodes':{nodes:visibleNodes()},
       '/api/history':{points:Array.from({length:20},(_,i)=>({timestamp:time-1800+i*90,cpu_percent:15+i%5,memory_used_bytes:8589934592,disk_used_bytes:12884901888,network_in_bytes_sec:1048576,network_out_bytes_sec:524288}))},
       '/api/distribution/releases':[{version:'v1.0.0'}],
       '/api/distribution/updates':jobs
@@ -85,7 +137,7 @@ createServer(async(req,res)=>{
     res.writeHead(path in data?200:404,{'Content-Type':'application/json'}).end(JSON.stringify(data[path]||{error:'Fixture endpoint unavailable'}));return;
   }
   const name=path==='/'||path==='/setup.html'||/^\/(nodes|servers|access|users|cloudflare|setup|install|game-status|status)(\/|$)/.test(path)?'index.html':path.slice(1);
-  if(!['favicon.svg','favicon-32.png','apple-touch-icon.png','fs-farmservers-logo.svg','fs-farmservers-logo.png','index.html','live.js','game-status.js','status.js','install.js','management.js','app.js','cloudflare.js','account.js','charts.js','software.js','style.css','node-distribution.txt','central-setup.txt'].includes(name)){res.writeHead(404).end();return;}
+  if(!['favicon.svg','favicon-32.png','apple-touch-icon.png','fs-farmservers-logo.svg','fs-farmservers-logo.png','index.html','live.js','game-status.js','status.js','install.js','management.js','app.js','members.js','login.js','cloudflare.js','account.js','charts.js','software.js','style.css','node-distribution.txt','central-setup.txt'].includes(name)){res.writeHead(404).end();return;}
   const type=name.endsWith('.svg')?'image/svg+xml':name.endsWith('.png')?'image/png':name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':name.endsWith('.html')?'text/html':'text/plain';
   res.writeHead(200,{'Content-Type':type+'; charset=utf-8'}).end(await readFile(new URL('../public/'+name,import.meta.url)));
 }).listen(Number(process.env.PREVIEW_PORT||8766),'127.0.0.1',()=>console.log('Synthetic dashboard: http://127.0.0.1:8766'));

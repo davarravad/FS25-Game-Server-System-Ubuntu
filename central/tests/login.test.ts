@@ -13,6 +13,7 @@ test('site assets and fleet data require current admin or staff approval',async(
     await db.exec(await readFile('migrations/0001_control_plane.sql','utf8'));
     await db.exec(await readFile('migrations/0013_discord_avatar.sql','utf8'));
     await db.exec(await readFile('migrations/0007_blocked_users.sql','utf8'));
+    await db.exec(await readFile('migrations/0019_roles.sql','utf8'));
     const time=Math.floor(Date.now()/1000);
     await db.prepare('INSERT INTO users(id,name,role,created) VALUES(?,?,?,?)').bind('user','Test','pending',time).run();
     await db.prepare('INSERT INTO sessions VALUES(?,?,?,?)').bind(await digest('session'),'user','csrf',time+3600).run();
@@ -31,7 +32,7 @@ test('site assets and fleet data require current admin or staff approval',async(
       else assert.equal(page.headers.get('Cache-Control'),'no-store');
       assert.equal((await mf.dispatchFetch(origin+'/api/nodes',{headers})).status,approved?200:403);
       for(const path of ['/nodes/node-1','/servers/node-1/Game_1','/access','/setup','/install','/setup/','/install/','/setup.html','/users','/status']){
-        const response=await mf.dispatchFetch(origin+path,{headers,redirect:'manual'});const adminPage=['/setup','/install','/setup/','/install/','/setup.html','/users','/status'].includes(path);const canOpen=approved&&(!adminPage||role==='admin')&&(role!=='operator'||path.startsWith('/servers/'));assert.equal((await response.text()).includes('PRIVATE ASSET'),canOpen);if(approved&&adminPage&&role!=='admin')assert.equal(response.status,403);else if(role==='operator'&&!canOpen)assert.equal(response.status,302);
+        const response=await mf.dispatchFetch(origin+path,{headers,redirect:'manual'});const adminPage=['/setup','/install','/setup/','/install/','/setup.html','/users','/status'].includes(path);const canOpen=approved&&(!adminPage||role==='admin')&&(!['operator','viewer'].includes(role)||path.startsWith('/servers/'));assert.equal((await response.text()).includes('PRIVATE ASSET'),canOpen);if(approved&&adminPage&&role!=='admin')assert.equal(response.status,403);else if(['operator','viewer'].includes(role)&&!canOpen)assert.equal(response.status,302);
         if(canOpen){assert.equal(assetPaths.at(-1),'/');assert.equal(response.status,200);assert.equal(response.headers.get('Cache-Control'),'no-store');}
       }
     }

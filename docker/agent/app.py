@@ -14,7 +14,7 @@ import time
 from contextlib import suppress
 from pathlib import Path
 from game_details import collect as collect_game_details
-from container_setup import inspect_setup
+from container_setup import inspect_setup, admin_sftp_report
 
 from flask import Flask, jsonify, request, g
 
@@ -1430,6 +1430,23 @@ def release_game_sync_lock(error=None):
 @app.get("/health")
 def health():
     return jsonify({"ok": True})
+
+
+ADMIN_SFTP_CONTAINER = "fsg-panel-admin-sftp"
+
+
+@app.post("/admin-sftp/status")
+def admin_sftp_status():
+    # Read-only: is the node's admin SFTP container up, does sshd answer inside it, which host
+    # address it is published on (loopback-only means a client needs an SSH tunnel), and whether
+    # the host firewall allows its port.
+    summary = inspect_setup(run_command, ADMIN_SFTP_CONTAINER)
+    banner = ""
+    if summary.get("running"):
+        probe = run_command(["docker", "exec", ADMIN_SFTP_CONTAINER, "sh", "-c", "nc -w 2 127.0.0.1 22 </dev/null | head -c 80"], timeout=10)
+        banner = (probe.get("stdout") or "").strip()
+    firewall = read_host_firewall_state()
+    return jsonify(admin_sftp_report(summary, banner, None if firewall is None else firewall["allowed"]))
 
 
 @app.get("/sftp-guard/status")

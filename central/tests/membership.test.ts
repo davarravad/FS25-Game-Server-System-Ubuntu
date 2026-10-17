@@ -9,7 +9,7 @@ test('Discord membership starts pending; blocking revokes sessions and rejects s
   const mf=new Miniflare(convertV4MiniflareOptions({workers:[{name:'membership',modules:true,scriptPath:'dist/index.js',compatibilityDate:'2026-09-09',compatibilityFlags:['nodejs_compat'],d1Databases:['DB'],bindings:{APP_ORIGIN:origin,BOOTSTRAP_ADMIN_ID:owner,DISCORD_CLIENT_SECRET:'test',DISCORD_CLIENT_ID:'test'},outboundService:async request=>new Response(JSON.stringify(new URL(request.url).pathname.endsWith('/token')?{access_token:'test'}:{id:member,username:'New member',avatar:'a'.repeat(32)}),{headers:{'Content-Type':'application/json'}})}]}));
   try{
     const db=await mf.getD1Database('DB');
-    for(const file of ['0001_control_plane.sql','0013_discord_avatar.sql','0007_blocked_users.sql'])await db.exec(await readFile('migrations/'+file,'utf8'));
+    for(const file of ['0001_control_plane.sql','0013_discord_avatar.sql','0007_blocked_users.sql','0019_roles.sql'])await db.exec(await readFile('migrations/'+file,'utf8'));
     const time=Math.floor(Date.now()/1000);
     await db.prepare('INSERT INTO users(id,name,role,created) VALUES(?,?,?,?)').bind(owner,'Owner','admin',time).run();
     await db.prepare('INSERT INTO sessions VALUES(?,?,?,?)').bind(await digest('owner-session'),owner,'csrf',time+3600).run();

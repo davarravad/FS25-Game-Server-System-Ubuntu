@@ -2,7 +2,7 @@ const discordIcon='<svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColo
 
 export function loginPage(pending: boolean): Response {
   const body = pending
-    ? '<h1>Membership pending</h1><p>You are signed in. Your membership is pending administrator approval. This page checks for approval automatically.</p>'
+    ? '<h1>Membership pending</h1><p id="access-intro">You are signed in, but an administrator has to give you a role before you can see anything here.</p><form id="access-form" hidden><label for="access-message">Anything the team should know? (optional)</label><textarea id="access-message" maxlength="300" rows="3" placeholder="For example: which farm or server you help run"></textarea><button type="submit" class="button">Request access</button></form><p id="access-state" role="status"></p>'
     : '<h1>Welcome back</h1><p>Sign in with Discord to manage your Farming Simulator fleet. New members start pending approval.</p><a class="button login-discord" href="/auth/login">'+discordIcon+'<span>Sign in with Discord</span></a>';
   return new Response(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in — Farm Servers</title><link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="stylesheet" href="/style.css"><script src="/login.js" defer></script><script src="/consent.js" defer></script></head>

@@ -92,7 +92,7 @@ function central_management(): string
     $user = central_gateway_user();
     management_require($user !== null, 'Unauthorized', 401);
     $operation = (string) ($_GET['operation'] ?? '');
-    $reads = ['inventory','server','live','files','export'];
+    $reads = ['inventory','server','live','files','export','sftp-status'];
     $writes = ['create','save','host-save','prepare','unzip','command','reinstall','delete','upload'];
     management_require(in_array($operation, array_merge($reads, $writes), true), 'Unknown management operation', 404);
     management_require($_SERVER['REQUEST_METHOD'] === (in_array($operation, $reads, true) ? 'GET' : 'POST'), 'Method not allowed', 405);
@@ -113,6 +113,12 @@ function central_management(): string
             $result['images'] = fs25_image_options(); $result['sftp'] = local_node_config();
         }
         json_response($result);
+    }
+    if ($operation === 'sftp-status') {
+        $report = agent_post_for_host($host, '/admin-sftp/status', [], 20);
+        $address = trim((string) ($host['access_host'] ?? ''));
+        if ($address === '') $address = (string) (local_node_config()['admin_sftp_host'] ?? '');
+        json_response($report + ['access_host' => $address]);
     }
     if ($operation === 'server') json_response(['ok'=>true,'server'=>array_intersect_key($server, array_flip(array_merge(['instance_id'], management_editable_fields()))),'secrets'=>instance_secrets_for_server($server),'access'=>['host'=>(string) (resolved_access_endpoint($server)['host'] ?? ''),'sftp_url'=>instance_access_url($server, 'sftp')]]);
     if ($operation === 'create' || $operation === 'save') management_save($host, $operation === 'save' ? $server : null);

@@ -1,4 +1,5 @@
 import {allowed, cookie, cookieValue, digest, hmacHex, publicIPv4, randomToken, readJson, roles, safeMetrics, validId, validScope, type Role} from './security';
+import {can, canSee, effectiveRole, legacyAccess, makeAccess, parseRole, publicAccess, type Access, type Permission, type RoleRow} from './access';
 import {publicConsentRoute} from './policies';
 import {gameUrl, rewriteGameHtml} from './game-proxy';
 import {distribution} from './releases';
@@ -11,16 +12,31 @@ import {cachedGateway, readGateway, saveGateway, validGateway, type Gateway} fro
 import {management} from './management';
 import {gameNode,gameAdmin} from './game-sync';
 import {fleetReadiness} from './readiness';
+import {membersApi, requestAccess, requestStatus} from './members';
 
 type Bindings = Env & { DISCORD_CLIENT_SECRET: string; NODE_GATEWAYS: string; RELEASE_PUBLIC_KEY: string; NODE_TOKEN_KEY: string; PRIVACY_CONTACT?: string; CONSENT_KILL_SWITCH?: string };
-type Session = {hash: string; user_id: string; name: string; avatar_url: string|null; role: Role; csrf: string; expires: number};
+type Session = {hash: string; user_id: string; name: string; avatar_url: string|null; role: Role; access: Access; csrf: string; expires: number};
 const now = () => Math.floor(Date.now() / 1000);
 const reply = (data: unknown, status = 200) => Response.json(data, {status, headers: {'Cache-Control':'no-store'}});
 const redirect = (url: string, cookies?: string) => new Response(null, {status:302, headers:{Location:url, 'Cache-Control':'no-store', ...(cookies ? {'Set-Cookie':cookies} : {})}});
 class HttpError extends Error { constructor(public status: number, message: string) { super(message); } }
 function need(condition: unknown, status: number, message: string): asserts condition { if (!condition) throw new HttpError(status, message); }
+// A member's access is the union of their roles. The initial administrator is given the Admin role at every
+// sign-in, and a member with no roles yet keeps whatever their pre-roles account type allowed.
+async function memberAccess(env: Bindings, userId: string, legacyRole: string): Promise<Access> {
+  const rows = (await env.DB.prepare('SELECT r.* FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=? ORDER BY r.position,r.name').bind(userId).all<RoleRow>()).results;
+  return rows.length ? makeAccess(rows.map(parseRole)) : legacyAccess(legacyRole);
+}
 async function session(env: Bindings, hash: string): Promise<Session | null> {
-  return env.DB.prepare('SELECT s.*,u.name,u.role,u.avatar_url FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.hash=? AND s.expires>? AND u.blocked=0').bind(hash, now()).first<Session>();
+  const row = await env.DB.prepare('SELECT s.*,u.name,u.role,u.avatar_url FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.hash=? AND s.expires>? AND u.blocked=0').bind(hash, now()).first<Omit<Session,'access'>>();
+  if (!row) return null;
+  const access = await memberAccess(env, row.user_id, row.role);
+  return {...row, role: effectiveRole(access), access};
+}
+// Administrators may open anything; a console needs the console permission on that exact server.
+function viewerAllowed(user: Session, view: {kind: string; node_id: string; instance: string}): boolean {
+  if (user.role === 'admin') return true;
+  return view.kind === 'vnc' && can(user.access, 'servers.console', view.node_id, view.instance);
 }
 async function audit(env: Bindings, actor: string, action: string, target: string) {
   await env.DB.prepare('INSERT INTO audit(ts,actor,action,target) VALUES(?,?,?,?)').bind(now(), actor, action, target).run();
@@ -90,6 +106,7 @@ async function oauth(request: Request, env: Bindings, url: URL) {
   const avatar=typeof profile.avatar==='string'&&/^(?:a_)?[a-f0-9]{32}$/.test(profile.avatar)?'https://cdn.discordapp.com/avatars/'+profile.id+'/'+profile.avatar+'.webp?size=64':profile.avatar===null?'https://cdn.discordapp.com/embed/avatars/'+(profile.discriminator&&profile.discriminator!=='0'?Number(profile.discriminator)%5:Number((BigInt(profile.id)>>22n)%6n))+'.png':null;
   const role = profile.id === env.BOOTSTRAP_ADMIN_ID ? 'admin' : 'pending';
   await env.DB.prepare("INSERT INTO users(id,name,role,created,avatar_url) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, avatar_url=excluded.avatar_url, role=CASE WHEN excluded.role='admin' THEN 'admin' ELSE users.role END").bind(profile.id, profile.username.slice(0,100), role, now(),avatar).run();
+  if (profile.id === env.BOOTSTRAP_ADMIN_ID) await env.DB.prepare("INSERT OR IGNORE INTO user_roles(user_id,role_id) VALUES(?, 'admin')").bind(profile.id).run();
   const sid = randomToken();
   const created=await env.DB.prepare('INSERT INTO sessions(hash,user_id,csrf,expires) SELECT ?,id,?,? FROM users WHERE id=? AND blocked=0 RETURNING hash').bind(await digest(sid),randomToken(),now()+28800,profile.id).first();
   if(!created){
@@ -181,9 +198,10 @@ async function provisionPendingEndpoints(env:Bindings){
   }
 }
 async function launch(request: Request, env: Bindings, url: URL) {
-  const user = await auth(request,env,'admin');
+  const user = await auth(request,env,'operator');
   const node = url.searchParams.get('node') || '', kind = url.searchParams.get('kind') || 'panel', instance = url.searchParams.get('instance') || '';
   need(request.method === 'POST' && validId(node) && ['panel','vnc','web'].includes(kind) && (kind === 'panel' ? instance === '' || validScope(instance) : validScope(instance)),422,'Invalid viewer');
+  need(user.role==='admin'||(kind==='web'&&can(user.access,'servers.panel',node,instance))||(kind==='vnc'&&can(user.access,'servers.console',node,instance)),403,'Your roles do not allow that on this game server.');
   need(await env.DB.prepare('SELECT id FROM nodes WHERE id=? AND enabled=1').bind(node).first(),404,'Node unavailable');
   if(kind==='panel')return reply({url:env.APP_ORIGIN+(instance?'/servers/'+node+'/'+instance:'/nodes/'+node)+'?tab=settings'});
   await gateway(env,node);
@@ -204,7 +222,7 @@ async function viewer(request: Request, env: Bindings, url: URL): Promise<Respon
     const view = await env.DB.prepare('DELETE FROM tickets WHERE hash=? AND host=? AND expires>? RETURNING *').bind(await digest(ticket),url.hostname,now()).first<View>();
     need(view,401,'Viewer link expired; open a fresh link from the dashboard');
     const user = await session(env,view.session_hash);
-    need(user && allowed(user.role,'admin'),403,'Viewer access revoked');
+    need(user && viewerAllowed(user,view),403,'Viewer access revoked');
     const sid = randomToken();
     await env.DB.prepare('INSERT INTO views(hash,session_hash,node_id,host,kind,instance,expires) VALUES(?,?,?,?,?,?,?)').bind(await digest(sid),view.session_hash,view.node_id,view.host,view.kind,view.instance,Math.min(now()+900,user.expires)).run();
     let target = view.kind === 'panel' && view.instance ? '/?route=server&instance_id='+encodeURIComponent(view.instance) : '/';
@@ -224,7 +242,7 @@ async function viewer(request: Request, env: Bindings, url: URL): Promise<Respon
   need(view,401,'Viewer session expired; open it again from the dashboard');
   need(view.kind!=='panel',410,'Node management has moved to the main site. Open the node there.');
   const user = await session(env,view.session_hash);
-  need(user && allowed(user.role,'admin'),403,'Viewer access revoked');
+  need(user && viewerAllowed(user,view),403,'Viewer access revoked');
   if (view.kind === 'panel' && request.method === 'GET' && ['console','web_admin'].includes(url.searchParams.get('route') || '')) {
     const instance = url.searchParams.get('instance_id') || '';
     need(validScope(instance),422,'Invalid instance');
@@ -274,7 +292,7 @@ async function proxyViewer(request:Request,env:Bindings,url:URL,view:View,user:S
     const authorized = async () => {
       if (!alive || now()>=view.expires) return false;
       if (now()-checked<15) return true;
-      checking ??= (async()=>{const s=await session(env,view.session_hash);const node=await env.DB.prepare('SELECT id FROM nodes WHERE id=? AND enabled=1').bind(view.node_id).first();checked=now();return !!s&&allowed(s.role,'admin')&&!!node;})();
+      checking ??= (async()=>{const s=await session(env,view.session_hash);const node=await env.DB.prepare('SELECT id FROM nodes WHERE id=? AND enabled=1').bind(view.node_id).first();checked=now();return !!s&&viewerAllowed(s,view)&&!!node;})();
       try{return await checking;}finally{checking=undefined;}
     };
     for (const [from,to] of [[relay,backend],[backend,relay]]) {
@@ -338,13 +356,20 @@ async function api(request: Request, env: Bindings, url: URL) {
   if(url.pathname.startsWith('/api/game-node/'))return gameNode(request,env);
   if(url.pathname==='/api/game-status'){const admin=await auth(request,env,'admin');const response=await gameAdmin(request,env);if(request.method==='POST'&&response.ok)await audit(env,admin.user_id,'game.status','game-library');return response;}
   const user = await auth(request,env,'pending');
-  if (url.pathname === '/api/me' && request.method === 'GET') return reply({id:user.user_id,name:user.name,role:user.role,csrf:user.csrf,avatarUrl:user.avatar_url});
+  if (url.pathname === '/api/me' && request.method === 'GET') {
+    const asked = user.role === 'pending' ? await requestStatus(env,user.user_id) : null;
+    return reply({id:user.user_id,name:user.name,role:user.role,csrf:user.csrf,avatarUrl:user.avatar_url,access:publicAccess(user.access),request:asked?{status:asked.status}:null});
+  }
+  if (url.pathname === '/api/access-request' && request.method === 'POST') {
+    need(user.role==='pending',409,'You already have access');
+    return requestAccess(env,user.user_id,await readJson(request,2048),(action,target)=>audit(env,user.user_id,action,target));
+  }
   if (url.pathname === '/api/logout' && request.method === 'POST') {
     await env.DB.prepare('DELETE FROM sessions WHERE hash=?').bind(user.hash).run();
     return new Response(null,{status:204,headers:{'Set-Cookie':cookie('__Host-farmservers','',0),'Cache-Control':'no-store'}});
   }
   need(allowed(user.role,'viewer'),403,'Approved access required');
-  if(user.role==='operator')need(['/api/nodes','/api/action'].includes(url.pathname),403,'Staff access is limited to game server status and start, stop or restart.');
+  if(user.role==='operator')need(['/api/nodes','/api/action','/api/server-credentials'].includes(url.pathname),403,'Staff access is limited to game server status and start, stop or restart.');
   if(url.pathname==='/api/live'&&request.method==='POST'){
     if(user.role==='viewer'){const revision=await env.DB.prepare('SELECT COALESCE(MAX(id),0) AS revision FROM audit').first<{revision:number}>();return reply({editors:[],revision:revision?.revision||0});}
     need(user.role==='admin',403,'Administrator access required');
@@ -352,7 +377,7 @@ async function api(request: Request, env: Bindings, url: URL) {
     need(typeof body.resource==='string'&&/^(node:[a-z0-9-]{1,63}|server:[a-z0-9-]{1,63}:[a-zA-Z0-9_-]{1,64}|page:(overview|servers|access|users|cloudflare|setup|install|game-status))$/.test(body.resource)&&typeof body.editing==='boolean',422,'Invalid editing resource');
     await env.DB.prepare('DELETE FROM edit_presence WHERE expires<? OR session_hash=?').bind(now(),user.hash).run();
     if(body.editing)await env.DB.prepare('INSERT INTO edit_presence(session_hash,resource,expires) VALUES(?,?,?) ON CONFLICT(session_hash) DO UPDATE SET resource=excluded.resource,expires=excluded.expires').bind(user.hash,body.resource,now()+20).run();
-    const editors=await env.DB.prepare("SELECT DISTINCT u.id,u.name FROM edit_presence p JOIN sessions s ON s.hash=p.session_hash JOIN users u ON u.id=s.user_id WHERE p.resource=? AND p.expires>? AND s.expires>? AND u.blocked=0 AND u.role='admin' AND u.id!=?").bind(body.resource,now(),now(),user.user_id).all();
+    const editors=await env.DB.prepare("SELECT DISTINCT u.id,u.name FROM edit_presence p JOIN sessions s ON s.hash=p.session_hash JOIN users u ON u.id=s.user_id WHERE p.resource=? AND p.expires>? AND s.expires>? AND u.blocked=0 AND (u.role='admin' OR u.id=? OR EXISTS(SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=u.id AND r.is_admin=1)) AND u.id!=?").bind(body.resource,now(),now(),env.BOOTSTRAP_ADMIN_ID,user.user_id).all();
     const revision=await env.DB.prepare('SELECT COALESCE(MAX(id),0) AS revision FROM audit').first<{revision:number}>();
     return reply({editors:editors.results,revision:revision?.revision||0});
   }
@@ -398,7 +423,7 @@ async function api(request: Request, env: Bindings, url: URL) {
   }
   if (url.pathname === '/api/nodes' && request.method === 'GET') {
     const {results} = await env.DB.prepare('SELECT id,name,enabled,last_seen,snapshot FROM nodes ORDER BY name').all<{id:string;name:string;enabled:number;last_seen:number|null;snapshot:string|null}>();
-    if(user.role==='operator')return reply({nodes:results.map(n=>({id:n.id,name:n.name,enabled:n.enabled,last_seen:n.last_seen,online:!!n.enabled&&n.last_seen!==null&&now()-n.last_seen<120,snapshot:{servers:((n.snapshot?JSON.parse(n.snapshot):null)?.servers||[]).map((s:{instance_id:string;server_name:string;status:string})=>({instance_id:s.instance_id,server_name:s.server_name,status:s.status,...Object.fromEntries(Object.entries(s).filter(([key])=>['game_version','game_map','server_map','server_region','player_count','player_capacity','server_players','game_sampled_at'].includes(key)))}))}}))});
+    if(user.role==='operator')return reply({nodes:results.map(n=>({id:n.id,name:n.name,enabled:n.enabled,last_seen:n.last_seen,online:!!n.enabled&&n.last_seen!==null&&now()-n.last_seen<120,snapshot:{servers:((n.snapshot?JSON.parse(n.snapshot):null)?.servers||[]).filter((s:{instance_id:string})=>canSee(user.access,n.id,s.instance_id)).map((s:{instance_id:string;server_name:string;status:string})=>({instance_id:s.instance_id,server_name:s.server_name,status:s.status,...Object.fromEntries(Object.entries(s).filter(([key])=>['game_version','game_map','server_map','server_region','player_count','player_capacity','server_players','game_sampled_at'].includes(key)))}))}})).filter(n=>n.snapshot.servers.length>0)});
     return reply({nodes:results.map(n => ({...n,snapshot:n.snapshot ? JSON.parse(n.snapshot) : null,online:!!n.enabled && n.last_seen !== null && now()-n.last_seen < 120}))});
   }
   if (url.pathname === '/api/history' && request.method === 'GET') {
@@ -413,8 +438,9 @@ async function api(request: Request, env: Bindings, url: URL) {
   if (url.pathname === '/api/action' && request.method === 'POST') {
     need(allowed(user.role,'operator'),403,'Operator access required');
     const body = await readJson(request,4096);
-    if(user.role==='operator')need(['start','stop','restart'].includes(String(body.action)),403,'Staff may only start, stop or restart game servers.');
     need(validId(body.node) && validScope(body.instance_id) && ['start','stop','restart','backend_reboot','logs'].includes(String(body.action)),422,'Invalid action');
+    const needed: Permission = body.action==='backend_reboot' ? 'servers.backend' : body.action==='logs' ? 'servers.logs' : 'servers.control';
+    need(can(user.access,needed,body.node,body.instance_id),403,'Your roles do not allow that action on this game server.');
     need(await env.DB.prepare('SELECT id FROM nodes WHERE id=? AND enabled=1').bind(body.node).first(),404,'Node unavailable');
     const g = await gateway(env,body.node), headers = gatewayHeaders(g,user);
     headers.set('Content-Type','application/json');
@@ -422,6 +448,23 @@ async function api(request: Request, env: Bindings, url: URL) {
     const result = await fetch(g.origin+'/?route=api_node_server_action',{method:'POST',headers,body:JSON.stringify({instance_id:body.instance_id,action:body.action}),redirect:'manual',signal:AbortSignal.timeout(60000)});
     need(result.headers.get('Content-Type')?.includes('application/json'),502,'Node gateway returned an unexpected response');
     return new Response(result.body,{status:result.status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
+  }
+  if (url.pathname === '/api/server-credentials' && request.method === 'GET') {
+    const node = url.searchParams.get('node') || '', instance = url.searchParams.get('instance') || '';
+    need(validId(node) && validScope(instance),422,'Invalid game server');
+    need(can(user.access,'servers.credentials',node,instance),403,'Your roles do not include the web panel login.');
+    need(await env.DB.prepare('SELECT id FROM nodes WHERE id=? AND enabled=1').bind(node).first(),404,'Node unavailable');
+    const g = await gateway(env,node), headers = gatewayHeaders(g,user);
+    // The node only lets administrators read server details; permission was checked above and only the web login is passed on.
+    headers.set('X-Central-Role','admin');
+    const target = new URL(g.origin);
+    target.search = new URLSearchParams({route:'api_central_manage',operation:'server',instance_id:instance}).toString();
+    await audit(env,user.user_id,'viewer.credentials',node+'/'+instance);
+    const result = await fetch(target,{headers,redirect:'manual',signal:AbortSignal.timeout(30000)});
+    need(result.ok && result.headers.get('Content-Type')?.includes('application/json'),502,'The node did not return the login. Check that it is online.');
+    const data = await result.json().catch(()=>null) as {server?:{web_username?:unknown;web_password?:unknown}}|null;
+    need(data?.server,502,'The node did not return the login. Check that it is online.');
+    return reply({web_username:String(data.server.web_username ?? ''),web_password:String(data.server.web_password ?? '')});
   }
   if (url.pathname === '/api/nodes/apply-updates' && request.method === 'POST') {
     need(allowed(user.role,'admin'),403,'Administrator access required');
@@ -508,7 +551,7 @@ async function api(request: Request, env: Bindings, url: URL) {
     need(typeof body.id==='string'&&/^\d{17,20}$/.test(body.id)&&typeof body.blocked==='boolean',422,'Invalid user or block status');
     need(body.id!==user.user_id&&body.id!==env.BOOTSTRAP_ADMIN_ID,409,'You cannot block yourself or the initial administrator');
     need(await env.DB.prepare('SELECT id FROM users WHERE id=?').bind(body.id).first(),404,'User not found');
-    await env.DB.batch([env.DB.prepare('UPDATE users SET blocked=?,role=CASE WHEN ?=0 THEN \'pending\' ELSE role END WHERE id=?').bind(body.blocked?1:0,body.blocked?1:0,body.id),env.DB.prepare('DELETE FROM sessions WHERE user_id=?').bind(body.id)]);
+    await env.DB.batch([env.DB.prepare('UPDATE users SET blocked=?,role=CASE WHEN ?=0 THEN \'pending\' ELSE role END WHERE id=?').bind(body.blocked?1:0,body.blocked?1:0,body.id),env.DB.prepare('DELETE FROM sessions WHERE user_id=?').bind(body.id),env.DB.prepare('DELETE FROM user_roles WHERE user_id=? AND ?=0').bind(body.id,body.blocked?1:0)]);
     await audit(env,user.user_id,body.blocked?'user.block':'user.unblock',body.id);return reply({ok:true});
   }
   if (url.pathname === '/api/audit' && request.method === 'GET') {
@@ -520,23 +563,8 @@ async function api(request: Request, env: Bindings, url: URL) {
     const events=rows.slice(0,15);
     return reply({events,actions,nextCursor:rows.length>15?String(events[events.length-1].id):null});
   }
-  if (url.pathname === '/api/users' && request.method === 'POST') {
-    const body = await readJson(request,4096);
-    need(typeof body.id === 'string' && /^\d{17,20}$/.test(body.id) && roles.includes(body.role as Role),422,'Invalid user or role');
-    need(body.id !== env.BOOTSTRAP_ADMIN_ID,409,'The initial administrator is managed in Worker configuration');
-    need(body.id !== user.user_id,409,'You cannot change your own role');
-    need(await env.DB.prepare('SELECT id FROM users WHERE id=?').bind(body.id).first(),404,'User not found');
-    await env.DB.prepare('UPDATE users SET role=? WHERE id=?').bind(body.role,body.id).run();
-    await audit(env,user.user_id,'user.'+body.role,body.id);
-    return reply({ok:true});
-  }
-  if (url.pathname === '/api/users/create' && request.method === 'POST') {
-    const body=await readJson(request,4096);
-    need(typeof body.id==='string'&&/^\d{17,20}$/.test(body.id)&&typeof body.name==='string'&&body.name.trim().length>0&&body.name.length<=100&&roles.includes(body.role as Role),422,'Invalid Discord ID, name or role');
-    const created=await env.DB.prepare('INSERT INTO users(id,name,role,created) VALUES(?,?,?,?) ON CONFLICT(id) DO NOTHING RETURNING id').bind(body.id,body.name.trim(),body.role,now()).first();
-    need(created,409,'This user already exists');
-    await audit(env,user.user_id,'user.create',body.id);return reply({ok:true});
-  }
+  const memberResponse = await membersApi(request,env,url,user,(action,target)=>audit(env,user.user_id,action,target));
+  if (memberResponse) return memberResponse;
   if (url.pathname === '/api/nodes' && request.method === 'POST') {
     const body = await readJson(request,4096);
     need(validId(body.id) && typeof body.name === 'string' && body.name.length>0 && body.name.length<=100,422,'Invalid node');
@@ -588,8 +616,8 @@ export default {
           const user=await session(env,await digest(cookieValue(request,'__Host-farmservers')));
           if (!user || !allowed(user.role,'viewer')) response=loginPage(!!user);
           else {
-            if(['/cloudflare','/users','/setup','/setup.html','/install','/game-status','/status'].includes(url.pathname.replace(/\/$/,'')))need(user.role==='admin',403,'Administrator access required');
-            const appPage = /^\/(?:nodes(?:\/[a-z0-9-]+)?|servers(?:\/[a-z0-9-]+\/[a-zA-Z0-9_-]+)?|access|users|cloudflare|setup|install|game-status|status)\/?$/.test(url.pathname) || url.pathname === '/setup.html';
+            if(['/cloudflare','/users','/setup','/setup.html','/install','/game-status','/status'].includes(url.pathname.replace(/\/$/,''))||url.pathname.startsWith('/users/'))need(user.role==='admin',403,'Administrator access required');
+            const appPage = /^\/(?:nodes(?:\/[a-z0-9-]+)?|servers(?:\/[a-z0-9-]+\/[a-zA-Z0-9_-]+)?|access|users(?:\/(?:\d{17,20}|roles(?:\/[a-z0-9-]+)?))?|cloudflare|setup|install|game-status|status)\/?$/.test(url.pathname) || url.pathname === '/setup.html';
             if(user.role==='operator'&&(appPage||url.pathname==='/'||url.pathname==='/index.html')){if(!/^\/servers(?:\/[a-z0-9-]+\/[a-zA-Z0-9_-]+)?\/?$/.test(url.pathname)||url.searchParams.has('tab')&&url.searchParams.get('tab')!=='overview')return Response.redirect(env.APP_ORIGIN+'/servers',302);}
             if(user.role==='operator'&&url.pathname.endsWith('.txt'))need(false,403,'Administrator access required');
             response=await env.ASSETS.fetch(appPage ? new Request(new URL('/',url.origin),request) : request);
