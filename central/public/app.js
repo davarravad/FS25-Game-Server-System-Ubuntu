@@ -54,6 +54,14 @@ function capacity(data,key,label){
 
 }
 
+// The host's overall CPU, as a share of every core together, drawn like the RAM and disk bars.
+function cpuCapacity(data){
+  const value=data?.cpu_percent,has=Number.isFinite(value)&&value>=0,box=element('div',undefined,'capacity');
+  box.append(element('div','CPU: '+(has?value.toFixed(1)+'%':'—')+' overall','capacity-value'));
+  if(has){const percent=Math.min(100,value),meter=element('progress');meter.max=100;meter.value=percent;meter.setAttribute('aria-label','CPU used');meter.className=percent>=90?'capacity-critical':percent>=75?'capacity-warning':'';box.append(meter,element('p',percent.toFixed(1)+'% used across all cores','muted'));}
+  else box.append(element('p','CPU usage not reported','muted'));
+  return box;
+}
 const metrics=[['cpu_percent','CPU',n=>n==null?'—':n.toFixed(1)+'%'],['memory_used_bytes','Memory',bytes],['disk_used_bytes','Disk',bytes],['network_in_bytes_sec','Network in',n=>n==null?'—':bytes(n)+'/s'],['network_out_bytes_sec','Network out',n=>n==null?'—':bytes(n)+'/s']];
 
 async function api(path,body,options={}){
@@ -151,7 +159,7 @@ function nodeCard(node,admin=false){
 
   head.append(link(node.name,nodeUrl(node),'card-title'),badge(nodeStatus(node)));card.append(head,element('p',node.id,'muted'));
 
-  const current=sample(node);card.append(element('p',`${node.snapshot?.servers?.length||0} game servers · CPU ${metrics[0][2](current?.cpu_percent)}`),capacity(current,'memory','RAM'),capacity(current,'disk','Disk'),element('p','Last seen '+stamp(node.last_seen),'muted'));
+  const current=sample(node);card.append(element('p',`${node.snapshot?.servers?.length||0} game servers`),cpuCapacity(current),capacity(current,'memory','RAM'),capacity(current,'disk','Disk'),element('p','Last seen '+stamp(node.last_seen),'muted'));
 
   const actions=element('div',undefined,'actions');actions.append(link(admin?'View & edit node':'Open node',nodeUrl(node)));card.append(actions);return card;
 

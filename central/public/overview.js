@@ -126,7 +126,7 @@ function renderOverview(root,model){
   for(const row of model.nodes){
     const card=link('',row.href,'ov-node');card.dataset.state=row.state;
     const head=element('div',undefined,'ov-node-head');head.append(element('strong',row.name),element('span',row.label,'ov-pill'));head.lastChild.dataset.state=row.state;
-    card.append(head,element('p',ovPlural(row.servers,'game server')+(row.cpu==null?'':' · CPU '+row.cpu.toFixed(0)+'%'),'muted'),ovMeter(row.memory,'RAM'),ovMeter(row.disk,'Disk'),element('p','Last seen '+stamp(row.lastSeen),'muted'));
+    card.append(head,element('p',ovPlural(row.servers,'game server'),'muted'),ovMeter(row.cpu==null?null:{percent:row.cpu},'CPU'),ovMeter(row.memory,'RAM'),ovMeter(row.disk,'Disk'),element('p','Last seen '+stamp(row.lastSeen),'muted'));
     grid.append(card);
   }
   if(!model.nodes.length)empty(grid,'No nodes yet. Create one in Server Nodes.');
