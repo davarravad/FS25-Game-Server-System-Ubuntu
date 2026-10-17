@@ -292,6 +292,14 @@ prepare_port_server_files() {
 
     mkdir -p "$PORT_SERVER_DIR" "$PORT_X64_DIR"
 
+    # The web panel's TLS certificate pair is not part of the installer; the game client used to create it on its first
+    # run, and that client now often crashes under Wine without a graphics card. A self-signed pair is all the panel needs.
+    if { [ ! -f "${GAME_INSTALL_DIR}/cert.pem" ] || [ ! -f "${GAME_INSTALL_DIR}/pk.pem" ]; } && command -v openssl >/dev/null 2>&1; then
+        echo -e "${YELLOW}INFO: cert.pem or pk.pem is missing; generating a self-signed pair for the web panel.${NOCOLOR}"
+        openssl req -x509 -newkey rsa:2048 -nodes -keyout "${GAME_INSTALL_DIR}/pk.pem" -out "${GAME_INSTALL_DIR}/cert.pem" \
+            -days 3650 -subj "/CN=farmservers-fs25" >/dev/null 2>&1 || rm -f "${GAME_INSTALL_DIR}/pk.pem" "${GAME_INSTALL_DIR}/cert.pem"
+    fi
+
     for required_file in dedicatedServer.exe cert.pem pk.pem; do
         if [ ! -f "${GAME_INSTALL_DIR}/${required_file}" ]; then
             echo -e "${RED}ERROR: Missing ${GAME_INSTALL_DIR}/${required_file}. Install the game first.${NOCOLOR}"

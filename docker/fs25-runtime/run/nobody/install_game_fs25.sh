@@ -81,7 +81,9 @@ ensure_license_files
 install_missing_dlcs
 
 echo -e "${YELLOW}INFO: Checking for updates. If prompted about GPU drivers, choose no.${NOCOLOR}"
-wine ~/.fs25server/drive_c/Program\ Files\ \(x86\)/Farming\ Simulator\ 2025/FarmingSimulator2025.exe
+# The updater starts the game client, which usually crashes under Wine without a graphics card. A dedicated server never
+# runs the client, so that must not stop the final steps that record the install as complete.
+wine ~/.fs25server/drive_c/Program\ Files\ \(x86\)/Farming\ Simulator\ 2025/FarmingSimulator2025.exe || echo -e "${YELLOW}WARNING: The game updater exited with an error. This is expected without a graphics card; continuing.${NOCOLOR}"
 
 refresh_game_version_cache
 touch "$GAME_INSTALL_MARKER"
