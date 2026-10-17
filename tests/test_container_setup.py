@@ -24,6 +24,21 @@ def inspect_output(running=True, networks=('fsg-management', 'fs25-001_default')
 
 
 class ContainerSetupTests(unittest.TestCase):
+    def test_env_values_with_a_dollar_sign_are_quoted_so_compose_keeps_them_literal(self):
+        password = 'E$YCRp1l6yc*cGWUT9JL'
+        written = module.env_file_value(password)
+        self.assertEqual(written, "'" + password + "'")
+        self.assertEqual(module.env_file_read(written), password, 'Reading the file back returns the original password')
+        for plain in ('changeme', 'Riverbend Springs', 'a#b&c*d', '10823', ''):
+            self.assertEqual(module.env_file_value(plain), plain, 'Values without a dollar sign are written exactly as before')
+            self.assertEqual(module.env_file_read(plain), plain)
+        self.assertEqual(module.env_file_read("  'x$y'  "), 'x$y')
+        self.assertEqual(module.env_file_read("'"), "'", 'A lone quote is not a quoted value')
+        with self.assertRaises(ValueError):
+            module.env_file_value("it's $5")
+        with self.assertRaises(ValueError):
+            module.env_file_value("a$b" + chr(10) + "c")
+
     def test_central_mode_container_passes(self):
         summary = module.summarize(inspect_output(), 'fs25-001')
         self.assertTrue(summary['exists'])

@@ -14,7 +14,7 @@ import time
 from contextlib import suppress
 from pathlib import Path
 from game_details import collect as collect_game_details
-from container_setup import inspect_setup, admin_sftp_report, compose_target, set_env_value, source_tree_hash, image_is_stale
+from container_setup import inspect_setup, admin_sftp_report, compose_target, set_env_value, source_tree_hash, image_is_stale, env_file_value, env_file_read
 
 from flask import Flask, jsonify, request, g
 
@@ -288,7 +288,7 @@ def read_env_file(path: Path) -> dict:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        values[key.strip()] = value.strip()
+        values[key.strip()] = env_file_read(value)
     return values
 
 
@@ -387,7 +387,7 @@ def render_instance_files(instance_dir: Path, values: dict, write_env: bool = Fa
 
     if write_env:
         env_tpl = (TEMPLATE_DIR / "server.env.tpl").read_text(encoding="utf-8")
-        write_file(instance_dir / ".env", render_template(env_tpl, values))
+        write_file(instance_dir / ".env", render_template(env_tpl, {key: env_file_value(value) for key, value in values.items()}))
 
     apply_permissions(instance_dir, recursive=True)
 

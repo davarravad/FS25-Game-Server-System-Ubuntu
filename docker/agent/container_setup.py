@@ -54,6 +54,27 @@ def image_is_stale(label: Optional[str], current: str) -> bool:
     return bool(label) and label != current
 
 
+def env_file_value(value) -> str:
+    """How a value is written into an instance .env that Docker Compose loads with `env_file`. Compose expands `$NAME` inside
+    unquoted values, so a password like `E$YCRp1l6y` would reach the container as `E`. Single quotes keep a value literal;
+    values without a dollar sign stay exactly as before. A value holding both a dollar sign and a single quote cannot be
+    written literally, so it is refused rather than silently changed."""
+    text = str(value)
+    if "$" not in text:
+        return text
+    if "'" in text or "\n" in text or "\r" in text:
+        raise ValueError("A value cannot contain a dollar sign together with a single quote or a line break")
+    return "'" + text + "'"
+
+
+def env_file_read(value: str) -> str:
+    """The inverse of env_file_value for one raw .env value."""
+    value = value.strip()
+    if len(value) >= 2 and value[0] == "'" and value[-1] == "'":
+        return value[1:-1]
+    return value
+
+
 def set_env_value(text: str, key: str, value: str) -> str:
     """Return .env text with `key` set to `value`: replaces every existing assignment, or appends one."""
     lines = text.splitlines()
