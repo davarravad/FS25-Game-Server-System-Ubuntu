@@ -50,6 +50,23 @@ async function auth(request: Request, env: Bindings, role: Role = 'viewer') {
   }
   return user;
 }
+// What a team member may know about the fleet: only servers their roles cover, each with the permissions they hold
+// there. Usage samples are included per server only when they may view statistics; host-level samples never are.
+function teamNodes(access: Access, rows: {id:string;name:string;enabled:number;last_seen:number|null;snapshot:string|null}[]) {
+  const fields = ['game_version','game_map','server_map','server_region','player_count','player_capacity','server_players','game_sampled_at'];
+  return rows.map(n => {
+    const snapshot = n.snapshot ? JSON.parse(n.snapshot) : null;
+    const servers = (snapshot?.servers || []).filter((s:{instance_id:string}) => canSee(access,n.id,s.instance_id));
+    const statsFor = new Set<string>(servers.filter((s:{instance_id:string}) => can(access,'servers.stats',n.id,s.instance_id)).map((s:{instance_id:string}) => s.instance_id));
+    return {
+      id:n.id, name:n.name, enabled:n.enabled, last_seen:n.last_seen, online:!!n.enabled && n.last_seen!==null && now()-n.last_seen<120,
+      snapshot:{
+        servers:servers.map((s:{instance_id:string;server_name:string;status:string}) => ({instance_id:s.instance_id,server_name:s.server_name,status:s.status,permissions:allPermissions.filter(p => can(access,p,n.id,s.instance_id)),...Object.fromEntries(Object.entries(s).filter(([key]) => fields.includes(key)))})),
+        samples:(snapshot?.samples || []).filter((sample:{scope:string}) => statsFor.has(sample.scope))
+      }
+    };
+  }).filter(n => n.snapshot.servers.length > 0);
+}
 async function gateway(env: Bindings, id: string): Promise<Gateway> {
   let stored: Gateway|null;
   try { stored=await cachedGateway(env,id); }
@@ -369,7 +386,7 @@ async function api(request: Request, env: Bindings, url: URL) {
     return new Response(null,{status:204,headers:{'Set-Cookie':cookie('__Host-farmservers','',0),'Cache-Control':'no-store'}});
   }
   need(allowed(user.role,'viewer'),403,'Approved access required');
-  if(user.role==='operator')need(['/api/nodes','/api/action','/api/server-credentials'].includes(url.pathname),403,'Staff access is limited to game server status and start, stop or restart.');
+  if(user.role==='operator')need(['/api/nodes','/api/action','/api/server-credentials','/api/history'].includes(url.pathname),403,'Staff access is limited to game server status and start, stop or restart.');
   if(url.pathname==='/api/live'&&request.method==='POST'){
     if(user.role==='viewer'){const revision=await env.DB.prepare('SELECT COALESCE(MAX(id),0) AS revision FROM audit').first<{revision:number}>();return reply({editors:[],revision:revision?.revision||0});}
     need(user.role==='admin',403,'Administrator access required');
@@ -423,12 +440,14 @@ async function api(request: Request, env: Bindings, url: URL) {
   }
   if (url.pathname === '/api/nodes' && request.method === 'GET') {
     const {results} = await env.DB.prepare('SELECT id,name,enabled,last_seen,snapshot FROM nodes ORDER BY name').all<{id:string;name:string;enabled:number;last_seen:number|null;snapshot:string|null}>();
-    if(user.role==='operator')return reply({nodes:results.map(n=>({id:n.id,name:n.name,enabled:n.enabled,last_seen:n.last_seen,online:!!n.enabled&&n.last_seen!==null&&now()-n.last_seen<120,snapshot:{servers:((n.snapshot?JSON.parse(n.snapshot):null)?.servers||[]).filter((s:{instance_id:string})=>canSee(user.access,n.id,s.instance_id)).map((s:{instance_id:string;server_name:string;status:string})=>({instance_id:s.instance_id,server_name:s.server_name,status:s.status,permissions:allPermissions.filter(p=>can(user.access,p,n.id,s.instance_id)),...Object.fromEntries(Object.entries(s).filter(([key])=>['game_version','game_map','server_map','server_region','player_count','player_capacity','server_players','game_sampled_at'].includes(key)))}))}})).filter(n=>n.snapshot.servers.length>0)});
+    if(user.role==='operator')return reply({nodes:teamNodes(user.access,results)});
     return reply({nodes:results.map(n => ({...n,snapshot:n.snapshot ? JSON.parse(n.snapshot) : null,online:!!n.enabled && n.last_seen !== null && now()-n.last_seen < 120}))});
   }
   if (url.pathname === '/api/history' && request.method === 'GET') {
     const id = url.searchParams.get('node') || '', scope = url.searchParams.get('scope') || 'host', hours = Number(url.searchParams.get('hours') || 1);
     need(validId(id) && validScope(scope) && [1,6,24,168,720].includes(hours),422,'Invalid history query');
+    // Team members only ever see usage for an individual server they may view statistics for, never the host.
+    if (user.role==='operator') need(scope!=='host' && can(user.access,'servers.stats',id,scope),403,'Your roles do not include usage statistics for this game server.');
     const bucket = Math.max(30,Math.ceil(hours*3600/359));
     const keys = ['cpu_percent','memory_used_bytes','disk_used_bytes','network_in_bytes_sec','network_out_bytes_sec'];
     const expressions = keys.map(k => `AVG(json_extract(data,'$.${k}')) AS ${k}`).join(',');

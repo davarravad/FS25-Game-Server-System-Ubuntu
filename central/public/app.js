@@ -169,7 +169,7 @@ function serverCard(node,server){
     const item=element('div');item.append(element('dt',label),element('dd',value));game.append(item);
   }
   card.append(game,element('p',fresh?'Game feed checked '+stamp(server.game_sampled_at):'Live player count unavailable','muted'));
-  if(me.role!=='operator')card.append(serverCardStats(node,server));
+  if(me.role!=='operator'||serverCan(server,'servers.stats'))card.append(serverCardStats(node,server));
   card.append(element('p','Last reported '+stamp(node.last_seen),'muted'),link('Open server',serverUrl(node,server)));return card;
 
 }
@@ -414,7 +414,7 @@ async function details(r,version){
 
     const collected=node.snapshot?.samples?.find(item=>item.scope===(server?server.instance_id:'host'))?.timestamp;
 
-    if(me.role!=='operator')liveSummary.append(element('p','Latest telemetry sample: '+stamp(collected),'muted'));
+    if(me.role!=='operator'||server&&serverCan(server,'servers.stats'))liveSummary.append(element('p','Latest telemetry sample: '+stamp(collected),'muted'));
 
     if(!node.online)liveSummary.append(element('p','Node offline. Showing the last received telemetry.','notice'));
 
@@ -442,7 +442,7 @@ async function details(r,version){
   if(!server){const fleet=section('Game servers on this node'),grid=element('div',undefined,'grid');fleet.append(grid);nodeFleet=grid;for(const item of node.snapshot?.servers||[])grid.append(serverCard(node,item));if(!grid.children.length)empty(grid,'No game servers have been reported. Use Create game server to add one.');}
 
   refreshTelemetry();
-  if(me.role==='operator'){if(server)teamSections(node,server);return;}
+  if(me.role==='operator'){if(server){teamSections(node,server);if(serverCan(server,'servers.stats'))await historyPanel(node,server.instance_id,version);}return;}
 
   if(!server)nodeSoftware(node);
 

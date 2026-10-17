@@ -44,7 +44,7 @@ Game server page (`/servers/NODE/INSTANCE`) tabs: **Overview** (start, stop, res
 | --- | --- |
 | No role yet | Sign in and press Request access; nothing else until an administrator assigns a role. |
 | Viewer | See the status of the servers it covers. No actions. |
-| Game Server Team | On the servers it covers: status, start/stop/restart, backend reboot, logs, game web panel and its login. No ports, passwords, settings, files or nodes. Each of these is a switch on the role and can be changed. |
+| Game Server Team | On the servers it covers: status, resource usage and history charts, start/stop/restart, backend reboot, launcher log and the game web panel. The web panel login and VNC console are off by default (team members use their own staff login). SFTP logs, ports, passwords, settings, files and nodes are admin only. Each of these is a switch on the role and can be changed. |
 | Admin | Everything, including every management tab, files, credentials, Cloudflare, the game library, members and roles, releases and updates. Custom roles can be created under Users & permissions → Roles. |
 
 ## Secrets the Worker needs

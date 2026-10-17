@@ -46,7 +46,7 @@ test('roles: new members see only a request, team members are limited to their s
     const time = Math.floor(Date.now() / 1000);
     for (const [id, name] of [[owner, 'Owner'], [team, 'Ann'], [newcomer, 'Bob']]) await db.prepare("INSERT INTO users(id,name,role,created) VALUES(?,?, 'pending',?)").bind(id, name, time).run();
     await db.prepare("INSERT INTO user_roles(user_id,role_id) VALUES(?, 'admin')").bind(owner).run();
-    const snapshot = (servers: string[]) => JSON.stringify({servers: servers.map(id => ({instance_id: id, server_name: 'Server ' + id, status: 'running'}))});
+    const snapshot = (servers: string[]) => JSON.stringify({servers: servers.map(id => ({instance_id: id, server_name: 'Server ' + id, status: 'running'})), samples: [{scope: 'host', timestamp: time, data: {cpu_percent: 1}}, ...servers.map(id => ({scope: id, timestamp: time, data: {cpu_percent: 5}}))]});
     await db.prepare('INSERT INTO nodes(id,name,token_hash,snapshot,last_seen) VALUES(?,?,?,?,?)').bind('node-1', 'Node one', 'h1', snapshot(['game-1', 'game-2']), time).run();
     await db.prepare('INSERT INTO nodes(id,name,token_hash,snapshot,last_seen) VALUES(?,?,?,?,?)').bind('node-2', 'Node two', 'h2', snapshot(['game-3']), time).run();
     const headersFor = async (name: string, user: string) => {
@@ -102,6 +102,16 @@ test('roles: new members see only a request, team members are limited to their s
     assert.equal((await call('/api/launch?node=node-1&kind=panel', visitor, {})).status, 403);
     assert.notEqual((await call('/api/server-credentials?node=node-1&instance=game-1', visitor)).status, 403);
     assert.equal((await call('/api/server-credentials?node=node-1&instance=game-2', visitor)).status, 403);
+
+    // Usage statistics are their own permission, scoped per server, and never include the host or SFTP logs.
+    const samplesOf = async () => ((await json(await call('/api/nodes', visitor))).nodes as {id: string; snapshot: {samples: {scope: string}[]}}[]).find(n => n.id === 'node-1')!.snapshot.samples.map(sample => sample.scope);
+    assert.deepEqual(await samplesOf(), []);
+    assert.equal((await call('/api/history?node=node-1&scope=game-1&hours=1', visitor)).status, 403);
+    assert.equal((await call('/api/roles', admin, {id: farm, name: 'Farm A', color: '#47d8b0', permissions: ['servers.stats', 'servers.control', 'servers.backend', 'servers.logs', 'servers.panel', 'servers.credentials'], all_servers: false, servers: ['node-1/game-1']})).status, 200);
+    assert.deepEqual(await samplesOf(), ['game-1']);
+    assert.equal((await call('/api/history?node=node-1&scope=game-1&hours=1', visitor)).status, 200);
+    for (const scope of ['game-2', 'host']) assert.equal((await call('/api/history?node=node-1&scope=' + scope + '&hours=1', visitor)).status, 403, scope);
+    for (const what of ['sftp_logs', 'docker_logs', 'game_log']) assert.equal((await action(visitor, 'node-1', 'game-1', what)).status, 422, what);
 
     // Roles combine, profiles are readable, and the safeguards hold.
     assert.equal((await call('/api/members/roles', admin, {id: newcomer, roles: [farm, 'game-server-team']})).status, 200);

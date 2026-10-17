@@ -28,8 +28,8 @@ const permissionGroups=[{id:'servers',label:'Game servers',items:[
   {id:'servers.console',label:'Open the VNC console',detail:'Remote desktop session for the server.'}]}];
 const roleList=[
   {id:'admin',name:'Admin',color:'#e74c3c',position:0,is_admin:true,permissions:[],all_servers:true,servers:[],created:time},
-  {id:'game-server-team',name:'Game Server Team',color:'#47d8b0',position:1,is_admin:false,permissions:['servers.view','servers.control','servers.backend','servers.logs','servers.panel','servers.credentials'],all_servers:false,servers:['pilot/game-1','pilot/game-2'],created:time},
-  {id:'viewer',name:'Viewer',color:'#74b6ed',position:2,is_admin:false,permissions:['servers.view'],all_servers:true,servers:[],created:time}];
+  {id:'game-server-team',name:'Game Server Team',color:'#47d8b0',position:1,is_admin:false,permissions:['servers.view','servers.stats','servers.control','servers.backend','servers.logs','servers.panel'],all_servers:false,servers:['pilot/game-1','pilot/game-2'],created:time},
+  {id:'viewer',name:'Viewer',color:'#74b6ed',position:2,is_admin:false,permissions:['servers.view','servers.stats'],all_servers:true,servers:[],created:time}];
 const memberList=[
   {id:'513527870258151439',name:'Local preview administrator',avatarUrl:null,created:time-86400*90,blocked:false,lastLogin:time-60,roles:['admin'],active:true,initialAdmin:true,request:null},
   {id:'123456789012345678',name:'Riverbend Rick',avatarUrl:null,created:time-86400*30,blocked:false,lastLogin:time-3600*5,roles:['game-server-team'],active:true,initialAdmin:false,request:null},
@@ -65,8 +65,8 @@ async function membersFixture(req,res,path){
   return false;
 }
 // What the signed-in preview member may do when PREVIEW_ROLE=operator (a limited Game Server Team member).
-const previewAccess=process.env.PREVIEW_ROLE==='operator'?{admin:false,roles:[{id:'game-server-team',name:'Game Server Team',color:'#47d8b0'}],permissions:['servers.view','servers.control','servers.backend','servers.logs','servers.panel','servers.credentials'],allServers:false,servers:['pilot/game-1']}:{admin:true,roles:[{id:'admin',name:'Admin',color:'#e74c3c'}],permissions:permissionGroups[0].items.map(i=>i.id),allServers:true,servers:[]};
-const visibleNodes=()=>previewAccess.admin?nodes:nodes.map(n=>({...n,snapshot:n.snapshot&&{...n.snapshot,servers:(n.snapshot.servers||[]).filter(s=>previewAccess.servers.includes(n.id+'/'+s.instance_id)).map(s=>({...s,permissions:previewAccess.permissions}))}})).filter(n=>n.snapshot?.servers?.length);
+const previewAccess=process.env.PREVIEW_ROLE==='operator'?{admin:false,roles:[{id:'game-server-team',name:'Game Server Team',color:'#47d8b0'}],permissions:['servers.view','servers.stats','servers.control','servers.backend','servers.logs','servers.panel'],allServers:false,servers:['pilot/game-1']}:{admin:true,roles:[{id:'admin',name:'Admin',color:'#e74c3c'}],permissions:permissionGroups[0].items.map(i=>i.id),allServers:true,servers:[]};
+const visibleNodes=()=>previewAccess.admin?nodes:nodes.map(n=>({...n,snapshot:n.snapshot&&{...n.snapshot,servers:(n.snapshot.servers||[]).filter(s=>previewAccess.servers.includes(n.id+'/'+s.instance_id)).map(s=>({...s,permissions:previewAccess.permissions})),samples:(previewAccess.permissions.includes('servers.stats')?(n.snapshot.samples||[]).filter(sample=>previewAccess.servers.includes(n.id+'/'+sample.scope)):[])}})).filter(n=>n.snapshot?.servers?.length);
 createServer(async(req,res)=>{
   const path=new URL(req.url,'http://localhost').pathname;
   if(/^\/api\/(members|roles|access-requests|users\/(create|block))/.test(path)&&process.env.PREVIEW_ROLE!=='operator'){if(await membersFixture(req,res,path)!==false)return;}

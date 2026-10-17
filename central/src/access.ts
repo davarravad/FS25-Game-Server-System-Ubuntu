@@ -3,11 +3,12 @@
 export const permissionGroups = [
   {id: 'servers', label: 'Game servers', items: [
     {id: 'servers.view', label: 'View status', detail: 'See the server, who is playing and whether it is running.'},
+    {id: 'servers.stats', label: 'View resource usage', detail: 'CPU, memory, disk, network and uptime for the server, with history charts.'},
     {id: 'servers.control', label: 'Start, stop and restart', detail: 'Control the game server.'},
     {id: 'servers.backend', label: 'Backend reboot', detail: 'Restart the server’s backend services without a full restart.'},
-    {id: 'servers.logs', label: 'View logs', detail: 'Read the server’s recent log output.'},
+    {id: 'servers.logs', label: 'View logs', detail: 'Read the server’s launcher log. SFTP logs are never included.'},
     {id: 'servers.panel', label: 'Open the game web panel', detail: 'Open the in-game admin web panel.'},
-    {id: 'servers.credentials', label: 'See the web panel login', detail: 'Show the web panel username and password.'},
+    {id: 'servers.credentials', label: 'See the web panel login', detail: 'Show the web panel admin username and password. Off by default so team members sign in with their own staff login.'},
     {id: 'servers.console', label: 'Open the VNC console', detail: 'Remote desktop session for the server, including its VNC password.'}
   ]}
 ] as const;

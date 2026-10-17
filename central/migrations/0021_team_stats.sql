@@ -1,0 +1,2 @@
+UPDATE roles SET permissions='["servers.view","servers.stats","servers.control","servers.backend","servers.logs","servers.panel"]' WHERE id='game-server-team' AND permissions='["servers.view","servers.control","servers.backend","servers.logs","servers.panel","servers.credentials"]';
+UPDATE roles SET permissions='["servers.view","servers.stats"]' WHERE id='viewer' AND permissions='["servers.view"]';
