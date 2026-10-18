@@ -150,7 +150,8 @@ if ($route === 'api_node_readiness') {
     if (!$local) {
         json_response(['ok' => false, 'error' => 'Local host record unavailable'], 503);
     }
-    $stmt = db()->prepare('SELECT instance_id, server_name, status, is_enabled FROM server_instances WHERE host_id = ? ORDER BY instance_id ASC');
+    // is_enabled lives on managed_hosts, not server_instances; selecting it here made every node answer this route with a fatal error.
+    $stmt = db()->prepare('SELECT instance_id, server_name, status FROM server_instances WHERE host_id = ? ORDER BY instance_id ASC');
     $stmt->execute([(int) $local['id']]);
     $servers = $stmt->fetchAll();
     $inspection = $servers
@@ -166,7 +167,7 @@ if ($route === 'api_node_readiness') {
             'instance_id' => (string) $server['instance_id'],
             'server_name' => (string) $server['server_name'],
             'status' => (string) $server['status'],
-            'is_enabled' => (bool) (int) $server['is_enabled'],
+            'is_enabled' => (bool) (int) ($local['is_enabled'] ?? 1),
             'container' => $containers[(string) $server['instance_id']] ?? null,
         ], $servers),
     ]);
