@@ -8,7 +8,7 @@ async function gameStatusPage(){
   let busy=false,signature='';const dirtyDlc=new Set();
   const action=async body=>{message.textContent='Saving request…';try{const result=await api('game-status',body);if(body.action==='dlcs')dirtyDlc.delete(body.node+'/'+body.instance);message.textContent=result.mode==='publish'?result.source+' is preparing its game files first. This node starts downloading them automatically when that finishes.':result.mode==='download'?'Download queued. Progress shows on the node card and resumes by itself after interruptions.':'Request saved. Nodes pick up work automatically.';signature='';await draw();}catch(e){message.textContent=e.message;}};
   const draw=async()=>{
-    if(busy||!intro.isConnected||document.hidden)return;busy=true;
+    if(busy||!intro.isConnected||!pageActive())return;busy=true;
     try{
       const data=await api('game-status');
       if(!intro.isConnected)return;
@@ -40,5 +40,5 @@ async function gameStatusPage(){
       signature=next;
     }catch(e){message.textContent='Game status unavailable: '+e.message;}finally{busy=false;}
   };
-  await draw();const timer=setInterval(()=>{if(!intro.isConnected){clearInterval(timer);return;}void draw();},5000);
+  await draw();const timer=setInterval(()=>{if(!intro.isConnected){clearInterval(timer);return;}void draw();},5000);onPageActive(()=>{if(!intro.isConnected)return false;void draw();});
 }

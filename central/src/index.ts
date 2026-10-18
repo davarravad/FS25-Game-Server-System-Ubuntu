@@ -635,7 +635,7 @@ export default {
         // else except sign-in assets requires a current approved staff session.
         const consent=publicConsentRoute(url.pathname,request,env);
         if (consent) response=consent;
-        else if (['/style.css','/consent.js','/login.js','/install.py','/favicon.svg','/favicon-32.png','/apple-touch-icon.png','/fs-farmservers-logo.svg','/fs-farmservers-logo.png'].includes(url.pathname)) response=await env.ASSETS.fetch(request);
+        else if (['/style.css','/consent.js','/attention.js','/login.js','/install.py','/favicon.svg','/favicon-32.png','/apple-touch-icon.png','/fs-farmservers-logo.svg','/fs-farmservers-logo.png'].includes(url.pathname)) response=await env.ASSETS.fetch(request);
         else {
           const user=await session(env,await digest(cookieValue(request,'__Host-farmservers')));
           if (!user || !allowed(user.role,'viewer')) response=loginPage(!!user);

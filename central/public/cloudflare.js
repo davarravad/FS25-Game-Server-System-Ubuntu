@@ -57,8 +57,8 @@ async function cloudflarePage(){
     for(const [id,entry] of cards)if(!seen.has(id)){entry.card.remove();cards.delete(id);}
     none.hidden=rows.length>0;
   };
-  const refresh=async()=>{if(!fleet.isConnected||document.hidden)return;try{const result=await api('cloudflare');if(fleet.isConnected){draw(result.nodes);status.textContent='';pulse.textContent='Live: progress updates automatically. Last checked '+new Date().toLocaleTimeString()+'.';}}catch(e){status.textContent='Unable to refresh progress: '+e.message+'. Retrying automatically.';}};
-  draw(data.nodes);const timer=setInterval(()=>{if(!fleet.isConnected){clearInterval(timer);return;}void refresh();},5000);
+  const refresh=async()=>{if(!fleet.isConnected||!pageActive())return;try{const result=await api('cloudflare');if(fleet.isConnected){draw(result.nodes);status.textContent='';pulse.textContent='Live: progress updates automatically. Last checked '+new Date().toLocaleTimeString()+'.';}}catch(e){status.textContent='Unable to refresh progress: '+e.message+'. Retrying automatically.';}};
+  draw(data.nodes);const timer=setInterval(()=>{if(!fleet.isConnected){clearInterval(timer);return;}void refresh();},5000);onPageActive(()=>{if(!fleet.isConnected)return false;void refresh();});
   const setup=section('Existing Ubuntu nodes');setup.append(element('p','Existing nodes need a signed node software release containing connection automation. Install that release from the Node software section on the node’s Overview tab, or from Node updates. New installations using that release configure themselves after enrollment. Setup briefly restarts the web control panel; running game servers remain active.'));
 }
 async function nodeConnectionPanel(node){
@@ -70,7 +70,7 @@ async function nodeConnectionPanel(node){
   retry.hidden=true;error.hidden=true;
   card.append(element('h3',node.name),progress,error,activity,retry,paused);panel.append(card,message,element('p','Progress updates live. The node checks in about every 30 seconds, so each step can take up to a minute.','muted'),link('Cloudflare settings','/cloudflare'));
   const refresh=async()=>{
-    if(busy||retrying||document.hidden||!panel.isConnected)return;busy=true;
+    if(busy||retrying||!pageActive()||!panel.isConnected)return;busy=true;
     try{const data=await api('cloudflare',undefined,{signal:AbortSignal.timeout(15000)});if(!panel.isConnected)return;
       const row=data.nodes.find(n=>n.id===node.id);progress.update(row||{enabled:true});
       error.textContent=row?.error||'';error.hidden=!row?.error;retry.hidden=!row?.error;retry.disabled=retrying||!row?.enabled;
@@ -78,7 +78,7 @@ async function nodeConnectionPanel(node){
       paused.textContent=data.settings?.enabled?'':'Automatic connections are paused. Enable them on the Cloudflare page to continue setup.';
     }catch(e){message.textContent='Unable to refresh connection progress: '+e.message+'. Retrying automatically.';}finally{busy=false;}
   };
-  await refresh();const timer=setInterval(()=>{if(!panel.isConnected){clearInterval(timer);return;}void refresh();},5000);
+  await refresh();const timer=setInterval(()=>{if(!panel.isConnected){clearInterval(timer);return;}void refresh();},5000);onPageActive(()=>{if(!panel.isConnected)return false;void refresh();});
 }
 
 async function gatewayCredentialsPanel(node){

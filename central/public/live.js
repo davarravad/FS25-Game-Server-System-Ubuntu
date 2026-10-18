@@ -7,10 +7,10 @@ function setupLive(){
   document.addEventListener('focusin',event=>{if(me.role==='admin'&&event.target.closest('#page form, #users')){editActive=true;void refreshLive();}});
   document.addEventListener('focusout',()=>{setTimeout(()=>{editActive=!!document.activeElement?.closest('#page form, #users');},0);});
   // Presence leases last 20 seconds on the server; refreshing every 10 keeps them alive.
-  void refreshLive();setInterval(()=>void refreshLive(),10000);
+  void refreshLive();setInterval(()=>void refreshLive(),10000);onPageActive(()=>void refreshLive());
 }
 async function refreshLive(){
-  if(!['admin','viewer'].includes(me.role)||liveBusy||document.hidden)return;liveBusy=true;
+  if(!['admin','viewer'].includes(me.role)||liveBusy||!pageActive())return;liveBusy=true;
   try{
     const data=await api('live',{resource:liveResource(),editing:editActive||editDirty||dirty},{signal:AbortSignal.timeout(15000)});
     if(liveRevision!==undefined&&data.revision!==liveRevision)liveChanged=true;

@@ -255,7 +255,7 @@ function tokenControls(node,parent){
 
   const hide=()=>{value.textContent='••••••••••••••••';view.textContent='View token';view.setAttribute('aria-expanded','false');copy.hidden=true;};
 
-  const view=button('View token',async()=>{if(view.getAttribute('aria-expanded')==='true'){hide();return;}view.disabled=true;message.textContent='';try{const data=await api('nodes/token',{id:node.id});if(!box.isConnected||document.hidden)return;value.textContent=data.token;view.textContent='Hide token';view.setAttribute('aria-expanded','true');copy.hidden=false;}catch(e){message.textContent=e.message;}finally{view.disabled=false;}});
+  const view=button('View token',async()=>{if(view.getAttribute('aria-expanded')==='true'){hide();return;}view.disabled=true;message.textContent='';try{const data=await api('nodes/token',{id:node.id});if(!box.isConnected||!pageActive())return;value.textContent=data.token;view.textContent='Hide token';view.setAttribute('aria-expanded','true');copy.hidden=false;}catch(e){message.textContent=e.message;}finally{view.disabled=false;}});
 
   const copy=button('Copy token',async()=>{try{await navigator.clipboard.writeText(value.textContent);message.textContent='Token copied.';}catch{message.textContent='Select the visible token and copy it manually.';}});hide();
 
@@ -533,14 +533,14 @@ function setLiveStatus(state,message,ping=false){
   dot.setAttribute('aria-hidden','true');status.dataset.state=state;
   status.replaceChildren(dot,document.createTextNode(message));
   status.title=state==='healthy'?'Live data connection is healthy':state==='error'?'Live data connection failed; displayed values may be stale':'Live updates are paused';
-  if(ping&&!document.hidden)dot.classList.add('live-status-ping');
+  if(ping&&pageActive())dot.classList.add('live-status-ping');
 }
 
 async function load(){({nodes}=await api('nodes'));await render();setLiveStatus('healthy','Live - checked '+new Date().toLocaleTimeString(),true);}
 
 async function refresh(){
 
-  if(pending||document.hidden||refreshHistory&&!document.hasFocus())return;pending=true;
+  if(pending||!pageActive()||refreshHistory&&!document.hasFocus())return;pending=true;
 
   try{const current=await api('me',undefined,{signal:AbortSignal.timeout(15000)});if(current.role!==me.role){location.reload();return;}me=current;updateAccountAvatar();$('user-name').textContent=me.name;({nodes}=await api('nodes',undefined,{signal:AbortSignal.timeout(15000)}));
 
@@ -565,7 +565,9 @@ async function refresh(){
 
 }
 
-document.addEventListener('visibilitychange',()=>{if(document.hidden){setLiveStatus('paused','Live updates paused while this tab is hidden');for(const box of document.querySelectorAll('.token-controls'))box.hideToken();}else void refresh();});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)for(const box of document.querySelectorAll('.token-controls'))box.hideToken();});
+onPageIdle(()=>setLiveStatus('paused',document.hidden?'Live updates paused while this tab is hidden':'Live updates paused while you are away. Move the mouse to resume.'));
+onPageActive(()=>void refresh());
 
 window.addEventListener('focus',()=>{if(refreshHistory)void refresh();});
 

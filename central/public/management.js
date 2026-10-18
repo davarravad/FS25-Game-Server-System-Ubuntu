@@ -141,7 +141,7 @@ function managementLogs(panel,node,server){
     if(atBottom)output.scrollTop=output.scrollHeight;
   };
   const updateMessage=()=>{message.textContent=lastUpdated?'Updated '+timeAgo(Date.now()-lastUpdated):'';};
-  const refresh=async()=>{if(busy||!panel.isConnected||document.hidden)return;busy=true;try{
+  const refresh=async()=>{if(busy||!panel.isConnected||!pageActive())return;busy=true;try{
       const data=await manageApi(node,'live',server,undefined,{include_docker_logs:activeView==='docker'?'1':'0',include_sftp_logs:activeView==='sftp'?'1':'0',include_game_log:activeView==='game'?'1':'0'});
       if(!panel.isConnected)return;
       const all=data.metrics?.containers||[],runtimeState=data.metrics?.runtime_state||{};
@@ -165,7 +165,7 @@ function managementLogs(panel,node,server){
   const tabsRow=element('div',undefined,'log-tabs-row');tabsRow.append(tabsNav,toolbar);
   panel.append(tabsRow,gameSection,sftpSection,consoleSection,dockerSection,message);
   showView('console');
-  const dataTimer=setInterval(()=>{if(!panel.isConnected){clearInterval(dataTimer);return;}void refresh();},5000);
+  const dataTimer=setInterval(()=>{if(!panel.isConnected){clearInterval(dataTimer);return;}void refresh();},5000);onPageActive(()=>{if(!panel.isConnected)return false;void refresh();});
   const clockTimer=setInterval(()=>{if(!panel.isConnected){clearInterval(clockTimer);return;}updateMessage();},5000);
 }
 function managementFiles(panel,node,server){
@@ -274,12 +274,12 @@ function adminSftpPanel(parent,node,credentials){
     showCredentials('127.0.0.1');
   };
   const refresh=async manual=>{
-    if(busy||!box.isConnected||document.hidden&&!manual)return;busy=true;check.disabled=true;
+    if(busy||!box.isConnected||!pageActive()&&!manual)return;busy=true;check.disabled=true;
     try{const report=await manageApi(node,'sftp-status'),signature=JSON.stringify(report);if(signature!==lastSignature){lastSignature=signature;render(report);}checked.textContent='Checked '+new Date().toLocaleTimeString()+'. Updates automatically every 10 seconds.';}
     catch(e){const text=/latest software|Unknown management/i.test(e.message)?'This node’s software is too old to report SFTP status. Update it from Node updates to see live status.':e.message;if('error:'+text!==lastSignature){lastSignature='error:'+text;fallback(text);}checked.textContent='Checked '+new Date().toLocaleTimeString()+'.';}
     finally{busy=false;check.disabled=false;}
   };
   const check=button('Check again',()=>void refresh(true));
   box.append(head,body,accessNote,checked,check,creds);parent.append(box);
-  void refresh(true);const timer=setInterval(()=>{if(!box.isConnected){clearInterval(timer);return;}void refresh(false);},10000);
+  void refresh(true);const timer=setInterval(()=>{if(!box.isConnected){clearInterval(timer);return;}void refresh(false);},10000);onPageActive(()=>{if(!box.isConnected)return false;void refresh(false);});
 }

@@ -18,7 +18,7 @@ function setupHeader(){
   const read=async ids=>{try{for(let offset=0;offset<ids.length;offset+=200)await api('notifications/read',{ids:ids.slice(offset,offset+200)});signature='';await refreshNotices();}catch(e){$('notification-status').textContent=e.message;}};
   $('notifications-read').onclick=()=>read(notices.filter(n=>!n.read).map(n=>n.id));
   async function refreshNotices(){
-    if(busy||document.hidden)return;busy=true;
+    if(busy||!pageActive())return;busy=true;
     try{const data=await api('notifications');const next=JSON.stringify(data);if(next===signature)return;signature=next;notices=data;
       const count=data.filter(n=>!n.read).length;$('notification-count').textContent=count;$('notification-count').hidden=!count;$('notifications-read').disabled=!count;$('notifications-read').hidden=!count;
       $('notification-status').textContent=count?`${count} unread`:'All caught up';$('notifications-list').replaceChildren();
@@ -27,7 +27,7 @@ function setupHeader(){
     }catch(e){$('notification-status').textContent='Notifications unavailable: '+e.message;}finally{busy=false;}
   }
   if(me.role==='operator'){for(const item of document.querySelectorAll('[data-nav],.nav-group'))item.hidden=item.dataset.nav!=='servers';$('notifications-menu').hidden=true;document.querySelector('.navbar-brand').href='/servers';return;}
-  void refreshNotices();setInterval(refreshNotices,20000);
+  void refreshNotices();setInterval(refreshNotices,20000);onPageActive(()=>void refreshNotices());
 }
 async function auditLog(users){
   const panel=section('Audit log'),status=element('p',undefined,'muted'),wrap=element('div',undefined,'update-table-wrap'),table=element('table',undefined,'update-table'),head=element('thead'),heading=element('tr'),rows=element('tbody');

@@ -159,8 +159,13 @@ function serverStatusBoard(node,server){
   // every 30 seconds and runs the full check every 5 minutes while the page is open.
   const timer=setInterval(()=>{
     if(!panel.isConnected){clearInterval(timer);return;}
-    if(document.hidden||busy)return;
+    if(!pageActive()||busy)return;
     if(Date.now()-checkedAt>300000)void runCheck();else if(Date.now()-liveAt>=30000)void refreshLive();
   },10000);
+  onPageActive(()=>{
+    if(!panel.isConnected)return false;
+    if(busy)return;
+    if(Date.now()-checkedAt>300000)void runCheck();else if(Date.now()-liveAt>=30000)void refreshLive();
+  });
 }
 if(typeof module!=='undefined')module.exports={buildServerStatus,statusGroups};

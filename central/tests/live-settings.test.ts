@@ -25,7 +25,7 @@ function fixture(type:string,search:string){
   let revision=0;
   runInNewContext(source+'\nexpose(refreshLive);',{
     URLSearchParams,AbortSignal,location:{search},me:{role:'admin'},dirty:false,
-    document:{hidden:false,activeElement:null},route:()=>({type}),
+    document:{hidden:false,activeElement:null},pageActive:()=>true,route:()=>({type}),
     $:(id:string)=>id==='collaboration-status'?banner:id==='page'?{contains:()=>false}:null,
     api:async()=>({revision:++revision,editors:[]}),render:async()=>{state.renders++;},
     element:(_tag:string,text:string)=>({text}),button:(text:string,action:()=>void)=>({text,action}),

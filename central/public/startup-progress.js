@@ -100,8 +100,9 @@ function startupProgressPanel(node,server){
     catch{ /* The node may be busy building; the next poll tries again. */ }
     finally{busy=false;}
   };
-  const schedule=()=>{clearTimeout(timer);if(!panel.isConnected)return;timer=setTimeout(async()=>{if(!document.hidden)await refresh();schedule();},panel.hidden?15000:4000);};
+  const schedule=()=>{clearTimeout(timer);if(!panel.isConnected)return;timer=setTimeout(async()=>{if(pageActive())await refresh();schedule();},panel.hidden?15000:4000);};
   startupKick=()=>{void refresh().then(schedule);};
+  onPageActive(()=>{if(!panel.isConnected)return false;void refresh().then(schedule);});
   void refresh().then(schedule);
 }
 if(typeof module!=='undefined')module.exports={parseStartup,startupSteps};

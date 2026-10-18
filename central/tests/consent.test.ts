@@ -136,7 +136,7 @@ test('nothing optional is deployed: pages load only same-origin resources and no
   }
   assert.equal(OPTIONAL_CATEGORIES.some(c => USED_OPTIONAL.includes(c)), USED_OPTIONAL.length > 0);
   assert.equal(USED_OPTIONAL.length, 0, 'adding an optional technology requires a consent integration, tests and a policy update');
-  for (const file of ['app.js', 'account.js', 'live.js', 'login.js', 'management.js', 'consent.js']) {
+  for (const file of ['app.js', 'account.js', 'live.js', 'login.js', 'management.js', 'consent.js', 'attention.js']) {
     assert.doesNotMatch(await readFile('public/' + file, 'utf8'), /localStorage|sessionStorage|indexedDB|sendBeacon|serviceWorker/, file);
   }
 });

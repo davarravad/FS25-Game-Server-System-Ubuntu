@@ -172,7 +172,8 @@ function overviewPage(version){
     draw();
   };
   void loadSlow();void loadProgress();
-  const timer=setInterval(()=>{if(!root.isConnected){clearInterval(timer);return;}if(!document.hidden)void loadProgress();},15000);
-  const slowTimer=setInterval(()=>{if(!root.isConnected){clearInterval(slowTimer);return;}if(!document.hidden)void loadSlow();},120000);
+  const timer=setInterval(()=>{if(!root.isConnected){clearInterval(timer);return;}if(pageActive())void loadProgress();},15000);
+  const slowTimer=setInterval(()=>{if(!root.isConnected){clearInterval(slowTimer);return;}if(pageActive())void loadSlow();},120000);
+  onPageActive(()=>{if(!root.isConnected)return false;void loadProgress();void loadSlow();});
 }
 if(typeof module!=='undefined')module.exports={overviewModel,ovServerState};

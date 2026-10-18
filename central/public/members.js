@@ -27,10 +27,10 @@ function usersTabs(active){
 }
 // Re-run fn while the page is still showing; it never overlaps itself and pauses while the tab is hidden.
 function pollWhile(host,fn,ms=6000){
-  let busy=false;const timer=setInterval(async()=>{
-    if(!host.isConnected){clearInterval(timer);return;}
-    if(busy||document.hidden)return;busy=true;try{await fn();}catch{ /* The next poll retries. */ }finally{busy=false;}
-  },ms);
+  let busy=false;
+  const tick=async()=>{if(busy||!pageActive())return;busy=true;try{await fn();}catch{ /* The next poll retries. */ }finally{busy=false;}};
+  const timer=setInterval(()=>{if(!host.isConnected){clearInterval(timer);return;}void tick();},ms);
+  onPageActive(()=>{if(!host.isConnected)return false;void tick();});
 }
 function pickChips(roles,selected,onchange){
   const box=element('div',undefined,'role-picks');

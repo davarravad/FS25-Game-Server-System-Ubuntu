@@ -5,7 +5,7 @@ function nodeSoftware(node){
   const contents=element('div'),message=element('p');message.setAttribute('role','status');message.setAttribute('aria-live','polite');panel.append(contents,message);
   let loading=false,acting=false,previousStatus='';
   const refresh=async()=>{
-    if(loading||acting||!panel.isConnected||document.hidden)return;loading=true;
+    if(loading||acting||!panel.isConnected||!pageActive())return;loading=true;
     try{
       const data=await api('nodes/software?'+new URLSearchParams({node:node.id}));if(!panel.isConnected)return;
       const current=data.installed_version,releases=data.releases.sort((a,b)=>compareVersions(b.version,a.version)),latest=releases[0],active=data.jobs.find(j=>['queued','running'].includes(j.status));
@@ -38,6 +38,7 @@ function nodeSoftware(node){
     }catch(e){message.textContent=e.message+' — retrying automatically.';}finally{loading=false;}
   };
   const timer=setInterval(()=>{if(!panel.isConnected){clearInterval(timer);return;}void refresh();},15000);
+  onPageActive(()=>{if(!panel.isConnected)return false;void refresh();});
   void refresh();
 }
 
@@ -93,6 +94,7 @@ async function software(){
   all.onclick=()=>{if(latest&&confirm('Update all eligible enabled nodes to '+latest+'? Control services may briefly disconnect. Offline nodes will update when they reconnect.'))void run(async()=>{const result=await api('distribution/update-all',{version:latest});return result.queued+' node update(s) queued for '+result.version+'. Nodes already current, disabled or updating were skipped.';});};
   withdraw.onclick=()=>{if(release.value&&confirm('Withdraw '+release.value+'? New downloads stop and queued jobs fail.'))void run(async()=>{await api('distribution/withdraw',{version:release.value});return 'Release withdrawn.';});};
   panel.refreshUpdates=refresh;
-  const timer=setInterval(()=>{if(!panel.isConnected){clearInterval(timer);return;}if(!document.hidden&&!acting)void refresh().catch(e=>{message.textContent=e.message+' — retrying automatically.';});},15000);
+  const timer=setInterval(()=>{if(!panel.isConnected){clearInterval(timer);return;}if(pageActive()&&!acting)void refresh().catch(e=>{message.textContent=e.message+' — retrying automatically.';});},15000);
+  onPageActive(()=>{if(!panel.isConnected)return false;if(!acting)void refresh().catch(e=>{message.textContent=e.message+' — retrying automatically.';});});
   await refresh();
 }

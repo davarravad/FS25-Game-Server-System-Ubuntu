@@ -1,11 +1,16 @@
 "use strict";
-let loginBusy=false,loginUser,wasSignedIn=false;
+let loginBusy=false,loginUser,wasSignedIn=false,membershipTimer;
 async function checkMembership(){
-  if(loginBusy||document.hidden)return;loginBusy=true;
+  if(loginBusy||!pageActive())return;loginBusy=true;
   const message=document.getElementById('login-message'),button=document.getElementById('signout');
   try{
     const response=await fetch('/api/me',{cache:'no-store',signal:AbortSignal.timeout(10000)});
-    if(response.status===401){if(wasSignedIn)location.replace('/');return;}
+    if(response.status===401){
+      // Signed out: a Discord sign-in is a full page navigation, so there is nothing to wait for.
+      // Only someone who was signed in (pending approval) keeps polling, and a lost session sends them home.
+      if(wasSignedIn)location.replace('/');else{clearInterval(membershipTimer);membershipTimer=undefined;}
+      return;
+    }
     if(!response.ok)throw new Error();
     loginUser=await response.json();wasSignedIn=true;button.hidden=false;
     if(loginUser.role!=='pending'){location.replace(loginUser.role==='operator'?'/servers':'/');return;}
@@ -33,5 +38,6 @@ function showRequest(status){
     };
   }
 }
-void checkMembership();setInterval(checkMembership,5000);
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)void checkMembership();});
+void checkMembership();membershipTimer=setInterval(checkMembership,5000);
+// Check straight away when the visitor returns, but stop listening once the page is known to be signed out.
+onPageActive(()=>{if(!membershipTimer)return false;void checkMembership();});
