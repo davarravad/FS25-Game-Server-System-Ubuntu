@@ -297,7 +297,9 @@ async function proxyViewer(request:Request,env:Bindings,url:URL,view:View,user:S
     const value = request.headers.get(name); if (value) headers.set(name,value);
   }
   // Game and PHP session cookies stay confined to this individual viewer origin.
-  const cookies = (request.headers.get('Cookie')||'').split(';').filter(c => !c.trim().startsWith('__Host-')).join(';');
+  // Cloudflare Access cookies belong to the Worker's own tunnel connection; a visitor must neither
+  // keep them nor send a stale one back into Access on a later request.
+  const cookies = (request.headers.get('Cookie')||'').split(';').filter(c => !/^(?:__Host-|CF_Authorization=|CF_AppSession=|CF_Binding=)/i.test(c.trim())).join(';');
   if (cookies) headers.set('Cookie',cookies);
   const path = view.kind === 'panel' ? url.pathname : '/central/view/'+view.instance+'/'+view.kind+url.pathname;
   const upstream = await fetch(g.origin+path+url.search,{method:request.method,headers,body:['GET','HEAD'].includes(request.method)?undefined:request.body,redirect:'manual'});
@@ -323,10 +325,13 @@ async function proxyViewer(request:Request,env:Bindings,url:URL,view:View,user:S
     }
     return new Response(null,{status:101,webSocket:client});
   }
+  // A bare 403 in the browser says nothing about which hop refused it (the game's own web server,
+  // the node's nginx/PHP viewer check, or Cloudflare Access), so record that for the tail.
+  if(upstream.status===403||upstream.status===401)console.warn('viewer upstream refused',JSON.stringify({status:upstream.status,node:view.node_id,instance:view.instance,kind:view.kind,method:request.method,path:url.pathname,user:!!user,cookies:(request.headers.get('Cookie')||'').split(';').map(c=>c.split('=')[0].trim()).filter(c=>c&&!c.startsWith('__Host-')),contentType:upstream.headers.get('Content-Type'),contentLength:upstream.headers.get('Content-Length'),server:upstream.headers.get('Server'),gameOrigin:upstream.headers.get('X-Farmservers-Upstream-Origin'),cfRay:upstream.headers.get('CF-RAY')}));
   const out = new Headers();
   for(const name of ['Content-Type','Content-Length','Content-Encoding','Content-Disposition','Accept-Ranges','Content-Range']){const value=upstream.headers.get(name);if(value)out.set(name,value);}
   for (const value of upstream.headers.getSetCookie()) {
-    if (/^__Host-/i.test(value)) continue;
+    if (/^(?:__Host-|CF_Authorization=|CF_AppSession=|CF_Binding=)/i.test(value)) continue;
     out.append('Set-Cookie',value.replace(/;\s*Domain=[^;]*/ig,'').replace(/;\s*Path=[^;]*/ig,'; Path=/')+'; Secure');
   }
   const gameOrigin = view.kind === 'web' ? upstream.headers.get('X-Farmservers-Upstream-Origin') : null;
