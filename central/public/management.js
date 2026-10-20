@@ -97,9 +97,11 @@ async function managementPage(node,server,tab){
         const confirm=element('details',undefined,'maintenance-confirm');confirm.append(element('summary',item.operation==='delete'?'Review deletion & confirm':'Review & confirm'));
         const form=element('form',undefined,'maintenance-form'),code=field(form,'Type '+server.instance_id+' to confirm','code','',{required:true,autocomplete:'off',spellcheck:false,placeholder:server.instance_id});
         code.setAttribute('aria-label','Confirm '+item.title+' by typing '+server.instance_id);
+        const codeLabel=code.parentElement,codeControl=element('span',undefined,'host-secret-control'),copyCode=button('Copy',async()=>{try{await navigator.clipboard.writeText(server.instance_id);copyCode.textContent='Copied';}catch{copyCode.textContent='Copy failed';}finally{setTimeout(()=>{copyCode.textContent='Copy';},1500);}});
+        copyCode.className='maintenance-copy';copyCode.setAttribute('aria-label','Copy '+server.instance_id+' to paste into the confirmation');codeControl.append(code,copyCode);codeLabel.append(codeControl);
         const submit=element('button',item.label),message=element('p');message.setAttribute('role','status');message.className='maintenance-message';submit.disabled=true;form.append(submit,message);confirm.append(form);card.append(confirm);cards.append(card);
         const validate=()=>{submit.disabled=active||code.value!==server.instance_id;};code.oninput=validate;
-        form.onsubmit=async event=>{event.preventDefault();if(active||code.value!==server.instance_id)return;active=true;for(const b of cards.querySelectorAll('button'))b.disabled=true;message.textContent=item.pending;card.setAttribute('aria-busy','true');
+        form.onsubmit=async event=>{event.preventDefault();if(active||code.value!==server.instance_id)return;active=true;for(const b of cards.querySelectorAll('button:not(.maintenance-copy)'))b.disabled=true;message.textContent=item.pending;card.setAttribute('aria-busy','true');
           try{await manageApi(node,item.operation,server,{action:item.action,delete_code:code.value,reinstall_code:code.value});message.textContent=item.done;code.value='';if(item.operation==='delete'){dirty=false;location.href=nodeUrl(node);}}
           catch(e){message.textContent=e.message;}
           finally{active=false;card.removeAttribute('aria-busy');for(const input of cards.querySelectorAll('input'))input.oninput();}
