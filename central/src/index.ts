@@ -515,6 +515,13 @@ async function api(request: Request, env: Bindings, url: URL) {
     return row?.detected_public_ip ?? null;
   });
   need(allowed(user.role,'admin'),403,'Administrator access required');
+  if(url.pathname==='/api/server-table/endpoints'&&request.method==='GET'){
+    // Hostnames for the server table. Only endpoints that are already provisioned and ready are listed.
+    const {results}=await env.DB.prepare('SELECT host,node_id,instance,kind FROM game_endpoints WHERE ready=1').all<{host:string;node_id:string;instance:string;kind:string}>();
+    const endpoints:Record<string,{web?:string;vnc?:string}>={};
+    for(const row of results)(endpoints[row.node_id+'/'+row.instance]??={})[row.kind as 'web'|'vnc']=row.host;
+    return reply({endpoints});
+  }
   if(url.pathname==='/api/nodes/notes'&&['GET','POST'].includes(request.method)){
     const body=request.method==='POST'?await readJson(request,65536):null;
     const id=body?.id??url.searchParams.get('id');
@@ -645,8 +652,8 @@ export default {
           const user=await session(env,await digest(cookieValue(request,'__Host-farmservers')));
           if (!user || !allowed(user.role,'viewer')) response=loginPage(!!user);
           else {
-            if(['/cloudflare','/users','/setup','/setup.html','/install','/game-status','/status'].includes(url.pathname.replace(/\/$/,''))||url.pathname.startsWith('/users/'))need(user.role==='admin',403,'Administrator access required');
-            const appPage = /^\/(?:nodes(?:\/[a-z0-9-]+)?|servers(?:\/[a-z0-9-]+\/[a-zA-Z0-9_-]+)?|access|users(?:\/(?:\d{17,20}|roles(?:\/[a-z0-9-]+)?))?|cloudflare|setup|install|game-status|status)\/?$/.test(url.pathname) || url.pathname === '/setup.html';
+            if(['/cloudflare','/users','/setup','/setup.html','/install','/game-status','/status','/servers/table'].includes(url.pathname.replace(/\/$/,''))||url.pathname.startsWith('/users/'))need(user.role==='admin',403,'Administrator access required');
+            const appPage = /^\/(?:nodes(?:\/[a-z0-9-]+)?|servers(?:\/table|\/[a-z0-9-]+\/[a-zA-Z0-9_-]+)?|access|users(?:\/(?:\d{17,20}|roles(?:\/[a-z0-9-]+)?))?|cloudflare|setup|install|game-status|status)\/?$/.test(url.pathname) || url.pathname === '/setup.html';
             if(user.role==='operator'&&(appPage||url.pathname==='/'||url.pathname==='/index.html')){if(!/^\/servers(?:\/[a-z0-9-]+\/[a-zA-Z0-9_-]+)?\/?$/.test(url.pathname)||url.searchParams.has('tab')&&url.searchParams.get('tab')!=='overview')return Response.redirect(env.APP_ORIGIN+'/servers',302);}
             if(user.role==='operator'&&url.pathname.endsWith('.txt'))need(false,403,'Administrator access required');
             response=await env.ASSETS.fetch(appPage ? new Request(new URL('/',url.origin),request) : request);

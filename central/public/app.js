@@ -84,6 +84,8 @@ function route(){
 
   if(parts[0]==='nodes'&&parts.length===2)return {type:'node',id:parts[1]};
 
+  if(parts[0]==='servers'&&parts.length===2&&parts[1]==='table')return {type:'servers-table'};
+
   if(parts[0]==='servers'&&parts.length===3)return {type:'server',id:parts[1],instance:parts[2]};
 
   if(parts[0]==='users'&&parts[1]==='roles'&&parts.length<=3)return parts.length===2?{type:'users',tab:'roles'}:{type:'users',tab:'role',id:parts[2]};
@@ -512,7 +514,9 @@ async function render(){
 
   if(r.type==='overview'){title('Overview','Everything happening across your servers, at a glance.','overview');overviewPage(version);}
 
-  else if(r.type==='servers'){title('Game Servers','Every game server across your fleet, with its latest reported status.','servers');const servers=nodes.flatMap(n=>n.snapshot?.servers||[]);$('page').append(summary([['Game servers',servers.length],['Reporting nodes',nodes.filter(n=>n.online).length]]));if(me.role==='admin'){const create=section('Create a game server'),actions=element('div',undefined,'create-server-actions');create.append(actions);for(const node of nodes.filter(n=>n.enabled))actions.append(link('Create on '+node.name,managementUrl(node,null,'create')));}redrawFleet=browse('servers');}
+  else if(r.type==='servers'){title('Game Servers','Every game server across your fleet, with its latest reported status.','servers');const servers=nodes.flatMap(n=>n.snapshot?.servers||[]);$('page').append(summary([['Game servers',servers.length],['Reporting nodes',nodes.filter(n=>n.online).length]]));if(me.role==='admin'){const tools=element('div',undefined,'actions server-table-link');tools.append(link('Open server table','/servers/table'),element('span','A sortable table of every server with choosable columns and copy buttons.','muted'));$('page').append(tools);const create=section('Create a game server'),actions=element('div',undefined,'create-server-actions');create.append(actions);for(const node of nodes.filter(n=>n.enabled))actions.append(link('Create on '+node.name,managementUrl(node,null,'create')));}redrawFleet=browse('servers');}
+
+  else if(r.type==='servers-table')serverTablePage();
 
   else if(r.type==='node'||r.type==='server')await details(r,version);
 

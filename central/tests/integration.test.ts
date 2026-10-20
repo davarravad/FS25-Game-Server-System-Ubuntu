@@ -68,6 +68,14 @@ test('D1 heartbeat, CSRF, approval and one-use viewer tickets',async()=>{
     await db.prepare('INSERT INTO sessions VALUES(?,?,?,?)').bind(await digest('viewer-session'),'123456789012345678','viewer-csrf',time+3600).run();
     const viewerHeaders={Cookie:'__Host-farmservers=viewer-session',Origin:origin,'X-CSRF-Token':'viewer-csrf','Content-Type':'application/json'};
     assert.equal((await mf.dispatchFetch(origin+'/api/nodes',{headers:viewerHeaders})).status,200);
+    // The server table lists only hostnames that are already provisioned, and only for administrators.
+    await db.exec(await readFile('migrations/0016_game_endpoints.sql','utf8'));
+    await db.prepare('INSERT INTO game_endpoints(host,node_id,instance,kind,ready) VALUES(?,?,?,?,?),(?,?,?,?,?),(?,?,?,?,?)').bind('game-fs25-0001.sargentweb.com','node-1','fs25-0001','web',1,'console-fs25-0001.sargentweb.com','node-1','fs25-0001','vnc',1,'game-fs25-0002.sargentweb.com','node-1','fs25-0002','web',0).run();
+    r=await mf.dispatchFetch(origin+'/api/server-table/endpoints',{headers});assert.equal(r.status,200);
+    assert.deepEqual(await r.json(),{endpoints:{'node-1/fs25-0001':{web:'game-fs25-0001.sargentweb.com',vnc:'console-fs25-0001.sargentweb.com'}}});
+    assert.equal((await mf.dispatchFetch(origin+'/api/server-table/endpoints',{headers:viewerHeaders})).status,403);
+    assert.equal((await mf.dispatchFetch(origin+'/servers/table',{headers:{Cookie:viewerHeaders.Cookie}})).status,403);
+    await db.exec('DELETE FROM game_endpoints');
     assert.equal((await mf.dispatchFetch(origin+'/api/users',{headers:viewerHeaders})).status,403);
     assert.equal((await mf.dispatchFetch(origin+'/api/nodes/notes?id=node-1',{headers:viewerHeaders})).status,403);
     assert.equal((await notes({id:'node-1',notes:'forbidden',version:2},viewerHeaders)).status,403);

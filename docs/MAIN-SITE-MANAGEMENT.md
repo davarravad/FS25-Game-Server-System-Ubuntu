@@ -23,6 +23,7 @@ does not expose the node's gateway credentials or forward its session cookies.
 | In-game name, join/admin passwords, player limit, region, map and game tuning | Seeded at creation only; afterwards Server → Overview → Game admin. Settings never overwrites them |
 | VNC credential reveal | Server → Settings → Connection credentials |
 | Per-server SFTP host address, port, username and password with copy buttons | Server → Overview → SFTP access |
+| Sort, filter and copy details for every server in one table (panel URL, game admin login, VNC password, SFTP address, user and password; choose the columns) | Game Servers → Open server table (administrators) |
 | Start, stop and restart | Server → Overview |
 | Game process restart, game/SFTP container reinstall | Server → Maintenance |
 | Fix a stuck game update in one step (stop, empty the updater folder, start) | Server → Maintenance, with exact instance-ID confirmation |
