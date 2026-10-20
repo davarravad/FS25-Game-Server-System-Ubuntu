@@ -108,6 +108,10 @@ function title(text,description,nav){
 
 function section(text,parent=$('page')){const s=element('section');s.append(element('h2',text));parent.append(s);return s;}
 
+// Game servers are always listed alphabetically by name (numbers in natural order), never by node or instance ID.
+const serverNameCompare=(a,b)=>String(a.server_name||'').localeCompare(String(b.server_name||''),undefined,{numeric:true,sensitivity:'base'})||String(a.instance_id||'').localeCompare(String(b.instance_id||''),undefined,{numeric:true});
+const sortedServers=node=>[...(node.snapshot?.servers||[])].sort(serverNameCompare);
+const serverPairs=()=>nodes.flatMap(node=>sortedServers(node).map(server=>[node,server])).sort(([an,a],[bn,b])=>serverNameCompare(a,b)||String(an.name).localeCompare(String(bn.name)));
 function fleetSwitcher(r){
   $('fleet-switcher')?.remove();
   const servers=['server','servers'].includes(r.type);
@@ -121,14 +125,14 @@ function fleetSwitcher(r){
   const draw=()=>{
     results.replaceChildren();const query=search.value.trim().toLowerCase();
     const tab=['node','server'].includes(r.type)?new URLSearchParams(location.search).get('tab'):null;
-    for(const node of nodes){for(const server of servers?(node.snapshot?.servers||[]):[null]){
+    for(const [node,server] of servers?serverPairs():nodes.map(node=>[node,null])){
       const name=server?server.server_name:node.name,detail=server?`${node.name} · ${node.id} / ${server.instance_id}`:node.id;
       if(!`${name} ${detail}`.toLowerCase().includes(query))continue;
       const href=(server?serverUrl(node,server):nodeUrl(node))+(tab?'?'+new URLSearchParams({tab}):'');
       const option=link('',href,'fleet-switcher-option');option.append(element('strong',name),element('span',detail,'muted'));
       if(node.id===r.id&&(!server||server.instance_id===r.instance)){option.setAttribute('aria-current','page');option.append(element('span','Selected','muted'));}
       results.append(option);
-    }}
+    }
     if(!results.children.length)empty(results,servers?'No matching game servers.':'No matching server nodes.');
   };
   search.oninput=draw;
@@ -211,11 +215,11 @@ function browse(kind,parent=$('page')){
 
   for(const value of statuses){const option=element('option',value);option.value=value;filter.append(option);}toolbar.append(search,filter);parent.append(toolbar,grid);
 
-  const draw=()=>{grid.replaceChildren();const q=search.value.toLowerCase();for(const node of nodes){
+  const draw=()=>{grid.replaceChildren();const q=search.value.toLowerCase();if(kind==='servers'){for(const [node,server] of serverPairs()){if(!`${server.server_name} ${server.instance_id} ${node.name} ${node.id}`.toLowerCase().includes(q)||filter.value!=='All statuses'&&serverStatus(node,server)!==filter.value)continue;grid.append(serverCard(node,server));}}
 
-    if(kind==='servers'){for(const server of node.snapshot?.servers||[]){if(!`${server.server_name} ${server.instance_id} ${node.name} ${node.id}`.toLowerCase().includes(q)||filter.value!=='All statuses'&&serverStatus(node,server)!==filter.value)continue;grid.append(serverCard(node,server));}}
+  else for(const node of nodes){
 
-    else if(`${node.name} ${node.id}`.toLowerCase().includes(q)&&(filter.value==='All statuses'||filter.value===nodeStatus(node)))grid.append(nodeCard(node,kind==='admin'));
+    if(`${node.name} ${node.id}`.toLowerCase().includes(q)&&(filter.value==='All statuses'||filter.value===nodeStatus(node)))grid.append(nodeCard(node,kind==='admin'));
 
   }if(!grid.children.length)empty(grid,kind==='servers'?'No matching game servers. Nodes publish their inventory when connected.':'No matching nodes. Try another search or create a node in Server Nodes.');};
 
@@ -432,7 +436,7 @@ async function details(r,version){
 
     if(!node.online)liveSummary.append(element('p','Node offline. Showing the last received telemetry.','notice'));
 
-    if(nodeFleet){nodeFleet.replaceChildren();for(const item of node.snapshot?.servers||[])nodeFleet.append(serverCard(node,item));if(!nodeFleet.children.length)empty(nodeFleet,'No game servers have been reported.');}
+    if(nodeFleet){nodeFleet.replaceChildren();for(const item of sortedServers(node))nodeFleet.append(serverCard(node,item));if(!nodeFleet.children.length)empty(nodeFleet,'No game servers have been reported.');}
 
   };
 
@@ -454,7 +458,7 @@ async function details(r,version){
     sftpSection(node,server,loadCredentials);
   }
 
-  if(!server){const fleet=section('Game servers on this node'),grid=element('div',undefined,'grid');fleet.append(grid);nodeFleet=grid;for(const item of node.snapshot?.servers||[])grid.append(serverCard(node,item));if(!grid.children.length)empty(grid,'No game servers have been reported. Use Create game server to add one.');}
+  if(!server){const fleet=section('Game servers on this node'),grid=element('div',undefined,'grid');fleet.append(grid);nodeFleet=grid;for(const item of sortedServers(node))grid.append(serverCard(node,item));if(!grid.children.length)empty(grid,'No game servers have been reported. Use Create game server to add one.');}
 
   refreshTelemetry();
   if(me.role==='operator'){if(server){teamSections(node,server);if(serverCan(server,'servers.stats'))await historyPanel(node,server.instance_id,version);}return;}
