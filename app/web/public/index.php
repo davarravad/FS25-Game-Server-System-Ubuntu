@@ -32,7 +32,63 @@ function server_command_actions(): array
 
 function server_reinstall_actions(): array
 {
-    return ['reinstall_game', 'reinstall_sftp', 'clear_updater'];
+    return ['reinstall_game', 'reinstall_sftp', 'clear_updater', 'clear_updater_restart'];
+}
+
+// Stops the server, empties the game updater folder and starts it again so a stuck update retries from scratch.
+// Configuration is synced first so a sync problem is reported before any player is disconnected, and the server
+// is only started again when the folder was cleared; otherwise it is left stopped with the reason spelled out.
+function perform_updater_recovery(array $server): array
+{
+    $instanceId = (string) ($server['instance_id'] ?? '');
+    $action = 'clear_updater_restart';
+    $fail = fn(string $error, array $steps) => [
+        'ok' => false,
+        'action' => $action,
+        'instance_id' => $instanceId,
+        'panel_status' => (string) ((find_instance_with_host($instanceId) ?: $server)['status'] ?? 'unknown'),
+        'message' => 'Action failed.',
+        'steps' => $steps,
+        'error' => $error,
+    ];
+
+    $sync = sync_instance_config_for_server($server);
+    if (!($sync['ok'] ?? false)) {
+        return $fail('Config sync failed; nothing was stopped: ' . ($sync['error'] ?? 'Unknown error'), []);
+    }
+
+    $steps = [];
+    $stop = agent_post_for_host($server, '/instance/action', ['instance_id' => $instanceId, 'action' => 'stop'], 45);
+    $steps['stop'] = (bool) ($stop['ok'] ?? false);
+    if (!$steps['stop']) {
+        return $fail('Could not stop the server, so nothing was cleared: ' . ($stop['error'] ?? 'Agent did not complete'), $steps);
+    }
+
+    $clear = agent_post_for_host($server, '/instance/action', ['instance_id' => $instanceId, 'action' => 'clear_updater'], 30);
+    $steps['clear_updater'] = (bool) ($clear['ok'] ?? false);
+    if (!$steps['clear_updater']) {
+        return $fail('The server is stopped, but the updater folder could not be cleared: ' . ($clear['error'] ?? 'Agent did not complete'), $steps);
+    }
+
+    $start = agent_post_for_host($server, '/instance/action', ['instance_id' => $instanceId, 'action' => 'start'], 45);
+    $steps['start'] = (bool) ($start['ok'] ?? false);
+    if (!$steps['start']) {
+        return $fail('The updater folder was cleared, but the server did not start: ' . ($start['error'] ?? 'Agent did not complete'), $steps);
+    }
+
+    $stmt = db()->prepare('UPDATE server_instances SET status = ? WHERE instance_id = ?');
+    $stmt->execute(['start', $instanceId]);
+
+    return [
+        'ok' => true,
+        'action' => $action,
+        'instance_id' => $instanceId,
+        'panel_status' => 'start',
+        'message' => 'Updater folder cleared and the server is starting.',
+        'steps' => $steps,
+        'result' => $clear['result'] ?? null,
+        'error' => null,
+    ];
 }
 
 function perform_server_lifecycle_action(array $server, string $action, bool $syncBeforeAction = true): array
@@ -44,6 +100,10 @@ function perform_server_lifecycle_action(array $server, string $action, bool $sy
 
     if (!(int) ($server['is_enabled'] ?? 0)) {
         return ['ok' => false, 'error' => 'Managed host for this server is missing or disabled.'];
+    }
+
+    if ($action === 'clear_updater_restart') {
+        return perform_updater_recovery($server);
     }
 
     if ($syncBeforeAction && in_array($action, ['start', 'restart', 'resync', 'reinstall_game', 'reinstall_sftp'], true)) {

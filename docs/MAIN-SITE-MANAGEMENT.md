@@ -25,6 +25,7 @@ does not expose the node's gateway credentials or forward its session cookies.
 | Per-server SFTP host address, port, username and password with copy buttons | Server → Overview → SFTP access |
 | Start, stop and restart | Server → Overview |
 | Game process restart, game/SFTP container reinstall | Server → Maintenance |
+| Fix a stuck game update in one step (stop, empty the updater folder, start) | Server → Maintenance, with exact instance-ID confirmation |
 | Clear a stuck game update (empties the updater folder; server must be stopped) | Server → Maintenance, with exact instance-ID confirmation |
 | Delete instance and its files | Server → Maintenance, with exact instance-ID confirmation |
 | Live game logs, optional Docker logs and container status/health | Server → Logs & containers |
