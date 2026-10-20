@@ -14,6 +14,7 @@ import time
 from contextlib import suppress
 from pathlib import Path
 from game_details import collect as collect_game_details
+from updater_cleanup import clear_updater_folder
 from container_setup import inspect_setup, admin_sftp_report, compose_target, set_env_value, source_tree_hash, image_is_stale, env_file_value, env_file_read
 
 from flask import Flask, jsonify, request, g
@@ -1658,6 +1659,8 @@ def instance_action():
         append_runtime_log(instance_id, "Console: Backend reboot requested. Killing dedicatedServer.exe so the watchdog can restart it...")
     elif action == "reinstall_sftp":
         append_runtime_log(instance_id, "Console: SFTP reinstall requested. Recreating SFTP container...")
+    elif action == "clear_updater":
+        append_runtime_log(instance_id, "Console: Clearing the game updater folder requested...")
 
     if action in {"start", "restart", "rebuild", "resync", "reinstall_game"}:
         needs_build = image_name == FS25_RUNTIME_IMAGE and (action == "rebuild" or not image_exists(image_name))
@@ -1703,6 +1706,20 @@ def instance_action():
             return jsonify(reboot_result)
         append_runtime_log(instance_id, f"Console: Backend reboot failed: {reboot_result.get('error', 'Unknown error')}")
         return jsonify(reboot_result), 500
+
+    if action == "clear_updater":
+        # The updater may have these files open, so the game container has to be stopped first.
+        if inspect_container(instance_id).get("running"):
+            message = "Stop the server before clearing the updater folder. Its files may still be in use."
+            append_runtime_log(instance_id, f"Console: Updater folder not cleared: {message}")
+            return jsonify({"ok": False, "error": message}), 409
+        clear_result = clear_updater_folder(instance_dir)
+        if clear_result.get("ok"):
+            count = clear_result.get("removed_items", 0)
+            append_runtime_log(instance_id, f"Console: Updater folder cleared ({count} item{'' if count == 1 else 's'} removed). Start the server to retry the update.")
+        else:
+            append_runtime_log(instance_id, f"Console: Clearing the updater folder failed: {clear_result.get('error', 'unknown error')}")
+        return jsonify(clear_result), (200 if clear_result.get("ok") else 500)
 
     action_map = {
         "start": compose_cmd("-f", str(compose_file), "up", "-d"),

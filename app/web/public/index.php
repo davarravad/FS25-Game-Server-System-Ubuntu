@@ -32,7 +32,7 @@ function server_command_actions(): array
 
 function server_reinstall_actions(): array
 {
-    return ['reinstall_game', 'reinstall_sftp'];
+    return ['reinstall_game', 'reinstall_sftp', 'clear_updater'];
 }
 
 function perform_server_lifecycle_action(array $server, string $action, bool $syncBeforeAction = true): array
@@ -59,7 +59,9 @@ function perform_server_lifecycle_action(array $server, string $action, bool $sy
         'action' => $action,
     ], $agentTimeout);
 
-    if (($agent['ok'] ?? false) && $action !== 'logs') {
+    // Clearing the updater folder leaves the server stopped, so it never changes the recorded status.
+    $changesStatus = !in_array($action, ['logs', 'clear_updater'], true);
+    if (($agent['ok'] ?? false) && $changesStatus) {
         $stmt = db()->prepare('UPDATE server_instances SET status = ? WHERE instance_id = ?');
         $stmt->execute([$action, $instanceId]);
     }
@@ -70,7 +72,7 @@ function perform_server_lifecycle_action(array $server, string $action, bool $sy
         'ok' => (bool) ($agent['ok'] ?? false),
         'action' => $action,
         'instance_id' => $instanceId,
-        'panel_status' => $action !== 'logs' && ($agent['ok'] ?? false)
+        'panel_status' => $changesStatus && ($agent['ok'] ?? false)
             ? $action
             : (string) ($updatedServer['status'] ?? 'unknown'),
         'message' => ($agent['ok'] ?? false) ? 'Action completed.' : 'Action failed.',
