@@ -390,3 +390,4 @@ button.danger{border-color:#6b3535;background:#3d2323;color:#f3a3a3}button.dange
 @media(max-width:1100px){.ov-hide-md{display:none}}
 @media(max-width:800px){.ov-hide-sm{display:none}.ov-item{grid-template-columns:14px minmax(0,1fr)}.ov-chevron{display:none}}
 .ov-pill::first-letter{text-transform:uppercase}
+.confirm-caption{display:flex;align-items:center;flex-wrap:wrap;gap:4px}.confirm-caption strong{font-weight:600;color:#e8eef5}.maintenance-form button.maintenance-copy{width:26px;height:26px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;background:transparent;border:1px solid transparent;color:#9fb3c8;cursor:pointer}.maintenance-form button.maintenance-copy:hover,.maintenance-form button.maintenance-copy:focus-visible{border-color:#40d4d0;color:#e8eef5}
